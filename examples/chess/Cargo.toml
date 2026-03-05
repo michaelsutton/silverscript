@@ -1,0 +1,4 @@
+[workspace]
+members = ["chess-covenant"]
+resolver = "2"
+
