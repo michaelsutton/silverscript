@@ -22,7 +22,7 @@ fn default_constructor_args() -> Vec<Expr<'static>> {
         0x0c, 0x0a, 0x0b, 0x0d, 0x0e, 0x0b, 0x0a, 0x0c, // y = 7 (black)
     ];
 
-    vec![Expr::bytes(vec![1u8; 32]), Expr::bytes(vec![2u8; 32]), Expr::bytes(standard_board)]
+    vec![Expr::bytes(vec![1u8; 32]), Expr::bytes(vec![2u8; 32]), Expr::bytes(standard_board), Expr::int(0), Expr::int(0)]
 }
 
 #[test]
@@ -34,6 +34,8 @@ fn chess_contract_compiles_with_singleton_transition_entrypoint() {
     assert!(compiled.without_selector, "covenant declarations should compile without selector");
     assert_eq!(compiled.abi.len(), 1);
     assert_eq!(compiled.abi[0].name, "play");
+    let input_names = compiled.abi[0].inputs.iter().map(|i| i.name.clone()).collect::<Vec<_>>();
+    assert_eq!(input_names, vec!["from_x", "from_y", "to_x", "to_y", "proposed_board", "pk"]);
     assert!(compiled.ast.functions.iter().any(|f| f.name == "__covenant_policy_play" && !f.entrypoint));
     assert!(compiled.ast.functions.iter().any(|f| f.name == "play" && f.entrypoint));
 }
