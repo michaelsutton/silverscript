@@ -713,7 +713,6 @@ name = "chess-covenant"
 version = "0.1.0"
 dependencies = [
  "blake2b_simd",
- "debugger-session",
  "kaspa-consensus-core",
  "kaspa-txscript",
  "kaspa-txscript-errors",
@@ -921,19 +920,6 @@ dependencies = [
  "dispatch2",
  "nix 0.31.2",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "debugger-session"
-version = "0.1.0"
-dependencies = [
- "faster-hex 0.10.0",
- "kaspa-consensus-core",
- "kaspa-txscript",
- "kaspa-txscript-errors",
- "serde",
- "serde_json",
- "silverscript-lang",
 ]
 
 [[package]]

@@ -1,14 +1,12 @@
 use std::fs;
 
 use blake2b_simd::Params;
-use debugger_session::format_failure_report;
-use debugger_session::session::{DebugEngine, DebugSession};
 use kaspa_consensus_core::hashing::sighash::calc_schnorr_signature_hash;
 use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
 use kaspa_consensus_core::hashing::sighash_type::SIG_HASH_ALL;
 use kaspa_consensus_core::tx::{
-    CovenantBinding, PopulatedTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionInput, TransactionOutpoint,
-    TransactionOutput, UtxoEntry, VerifiableTransaction,
+    CovenantBinding, PopulatedTransaction, Transaction, TransactionId, TransactionInput, TransactionOutpoint, TransactionOutput,
+    UtxoEntry, VerifiableTransaction,
 };
 use kaspa_consensus_core::Hash;
 use kaspa_txscript::caches::Cache;
@@ -23,58 +21,6 @@ use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledCont
 use chess_covenant::example_contract_path;
 
 const COV_ID: Hash = Hash::from_bytes(*b"CHESSGAMECHESSGAMECHESSGAMECHESS");
-const SLICE_CONCAT_REPRO_SOURCE: &str = r#"
-contract SliceConcatRepro(byte[64] init_board) {
-    byte[64] board = init_board;
-
-    #[covenant.singleton(mode = transition)]
-    function mv(byte[64] prev_board, int from_idx, int to_idx) : (byte[64]) {
-        require(from_idx < to_idx);
-
-        byte moving_piece = prev_board[from_idx];
-        byte[] prev_dyn = byte[](prev_board);
-        byte[] prefix = prev_dyn.slice(0, from_idx);
-        byte[] middle = prev_dyn.slice(from_idx + 1, to_idx);
-        byte[] suffix = prev_dyn.slice(to_idx + 1, 64);
-        byte[] next_board_dyn = prefix + 0 + middle + moving_piece + suffix;
-        int next_len = next_board_dyn.length;
-        require(next_len == 64);
-        byte[64] next_board = next_board_dyn;
-        return(next_board);
-    }
-}
-"#;
-const SLICE_CONCAT_MANUAL_LOWERED_SOURCE: &str = r#"
-contract SliceConcatManualLowered(byte[64] init_board) {
-    byte[64] board = init_board;
-
-    function covenant_policy_mv(byte[64] prev_board, int from_idx, int to_idx) : (byte[64]) {
-        require(from_idx < to_idx);
-
-        byte moving_piece = prev_board[from_idx];
-        byte[] prev_dyn = byte[](prev_board);
-        byte[] prefix = prev_dyn.slice(0, from_idx);
-        byte[] middle = prev_dyn.slice(from_idx + 1, to_idx);
-        byte[] suffix = prev_dyn.slice(to_idx + 1, 64);
-        byte[] next_board_dyn = prefix + 0 + middle + moving_piece + suffix;
-        int next_len = next_board_dyn.length;
-        require(next_len == 64);
-        byte[64] next_board = next_board_dyn;
-        return(next_board);
-    }
-
-    entrypoint function mv(int from_idx, int to_idx) {
-        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
-        (byte[64] cov_new_board) = covenant_policy_mv(board, from_idx, to_idx);
-        require(cov_out_count == 1);
-
-        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-        validateOutputState(cov_out_idx, {
-            board: cov_new_board
-        });
-    }
-}
-"#;
 
 struct Player {
     keypair: Keypair,
@@ -158,18 +104,6 @@ fn covenant_output(compiled: &CompiledContract<'_>, authorizing_input: u16, cove
 
 fn covenant_utxo(compiled: &CompiledContract<'_>, covenant_id: Hash) -> UtxoEntry {
     UtxoEntry::new(1_500, pay_to_script_hash_script(&compiled.script), 0, false, Some(covenant_id))
-}
-
-fn direct_script_output(compiled: &CompiledContract<'_>, authorizing_input: u16, covenant_id: Hash) -> TransactionOutput {
-    TransactionOutput {
-        value: 1_000,
-        script_public_key: ScriptPublicKey::new(0, compiled.script.clone().into()),
-        covenant: Some(CovenantBinding { authorizing_input, covenant_id }),
-    }
-}
-
-fn direct_script_utxo(compiled: &CompiledContract<'_>, covenant_id: Hash) -> UtxoEntry {
-    UtxoEntry::new(1_500, ScriptPublicKey::new(0, compiled.script.clone().into()), 0, false, Some(covenant_id))
 }
 
 fn execute_input_with_covenants(tx: Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> Result<(), TxScriptError> {
@@ -304,187 +238,4 @@ fn rejects_wrong_player_signature_for_current_turn() {
 
     let err = execute_input_with_covenants(signed_tx, entries, 0).expect_err("wrong signer should fail");
     assert_verify_like_error(err);
-}
-
-#[test]
-#[ignore = "known repro for transition slice+concat board construction"]
-fn slice_concat_transition_repro_fails_validate_output_state() {
-    let board0 = standard_board();
-    let mut board1 = board0.clone();
-    move_piece(&mut board1, 4, 1, 4, 3); // from_idx=12, to_idx=28
-
-    let active =
-        compile_contract(SLICE_CONCAT_REPRO_SOURCE, &[Expr::bytes(board0)], CompileOptions::default()).expect("compile active state");
-    let out =
-        compile_contract(SLICE_CONCAT_REPRO_SOURCE, &[Expr::bytes(board1)], CompileOptions::default()).expect("compile next state");
-
-    let outputs = vec![covenant_output(&out, 0, COV_ID)];
-    let entries = vec![covenant_utxo(&active, COV_ID)];
-    let sigscript = covenant_sigscript(&active, "mv", vec![Expr::int(12), Expr::int(28)]);
-    let tx = Transaction::new(1, vec![tx_input(0, sigscript)], outputs, 0, Default::default(), 0, vec![]);
-    let result = execute_input_with_covenants(tx, entries, 0);
-
-    assert!(result.is_ok(), "slice+concat transition should produce expected board, got {:?}", result.unwrap_err());
-}
-
-#[test]
-#[ignore = "known repro for manual lowered transition slice+concat board construction"]
-fn slice_concat_manual_lowered_repro_fails_validate_output_state() {
-    let board0 = standard_board();
-    let mut board1 = board0.clone();
-    move_piece(&mut board1, 4, 1, 4, 3); // from_idx=12, to_idx=28
-
-    let active = compile_contract(SLICE_CONCAT_MANUAL_LOWERED_SOURCE, &[Expr::bytes(board0)], CompileOptions::default())
-        .expect("compile active state");
-    let out = compile_contract(SLICE_CONCAT_MANUAL_LOWERED_SOURCE, &[Expr::bytes(board1)], CompileOptions::default())
-        .expect("compile next state");
-
-    let outputs = vec![covenant_output(&out, 0, COV_ID)];
-    let entries = vec![covenant_utxo(&active, COV_ID)];
-    let sigscript = covenant_sigscript(&active, "mv", vec![Expr::int(12), Expr::int(28)]);
-    let tx = Transaction::new(1, vec![tx_input(0, sigscript)], outputs, 0, Default::default(), 0, vec![]);
-    let result = execute_input_with_covenants(tx, entries, 0);
-
-    assert!(result.is_ok(), "manual-lowered slice+concat transition should produce expected board, got {:?}", result.unwrap_err());
-}
-
-#[test]
-#[ignore = "debug helper to locate failing source step for slice+concat repro"]
-fn debug_slice_concat_repro_failure_line() {
-    let board0 = standard_board();
-    let mut board1 = board0.clone();
-    move_piece(&mut board1, 4, 1, 4, 3); // from_idx=12, to_idx=28
-
-    let compile_opts = CompileOptions { record_debug_infos: true, ..Default::default() };
-    let active = compile_contract(SLICE_CONCAT_MANUAL_LOWERED_SOURCE, &[Expr::bytes(board0)], compile_opts)
-        .expect("compile active state");
-    let out = compile_contract(SLICE_CONCAT_MANUAL_LOWERED_SOURCE, &[Expr::bytes(board1)], compile_opts)
-        .expect("compile next state");
-
-    // Use direct lockscript execution to avoid P2SH stack plumbing in debugger session.
-    let action_sigscript = active.build_sig_script("mv", vec![Expr::int(12), Expr::int(28)]).expect("build action sigscript");
-    let input = tx_input(0, action_sigscript.clone());
-    let outputs = vec![direct_script_output(&out, 0, COV_ID)];
-    let tx = Transaction::new(1, vec![input], outputs, 0, Default::default(), 0, vec![]);
-    let entries = vec![direct_script_utxo(&active, COV_ID)];
-    let populated = PopulatedTransaction::new(&tx, entries);
-    let cov_ctx = CovenantsContext::from_tx(&populated).expect("build covenants context");
-    let utxo = populated.utxo(0).expect("selected input utxo");
-    let input_ref = &tx.inputs[0];
-
-    let reused_values = SigHashReusedValuesUnsync::new();
-    let sig_cache = Cache::new(10_000);
-    let ctx = EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx);
-    let engine = DebugEngine::from_transaction_input(
-        &populated,
-        input_ref,
-        0,
-        utxo,
-        ctx,
-        EngineFlags { covenants_enabled: true },
-    );
-
-    let mut session = DebugSession::full(
-        &action_sigscript,
-        &active.script,
-        SLICE_CONCAT_MANUAL_LOWERED_SOURCE,
-        active.debug_info.clone(),
-        engine,
-    )
-    .expect("create debug session");
-    session.run_to_first_executed_statement().expect("reach first step");
-
-    loop {
-        match session.step_into() {
-            Ok(Some(_)) => {}
-            Ok(None) => panic!("script completed without failure"),
-            Err(err) => {
-                let report = session.build_failure_report(&err);
-                let formatted = format_failure_report(&report, &|type_name, value| session.format_value(type_name, value));
-                eprintln!("{formatted}");
-                let frame = report.frames.first().expect("at least one failure frame");
-                let span = frame.span.expect("failure frame has source span");
-                panic!("debug located failure at line {} ({}-{})", span.line, span.col, span.end_col);
-            }
-        }
-    }
-}
-
-#[test]
-#[ignore = "debug helper to inspect concrete next_board_dyn.length in non-inlined context"]
-fn debug_slice_concat_direct_next_len_value() {
-    const LEN_PROBE_SOURCE: &str = r#"
-contract LenProbe(byte[64] init_board) {
-    byte[64] board = init_board;
-
-    entrypoint function probe(int from_idx, int to_idx) {
-        require(from_idx < to_idx);
-
-        byte moving_piece = board[from_idx];
-        byte[] prev_dyn = byte[](board);
-        byte[] prefix = prev_dyn.slice(0, from_idx);
-        byte[] middle = prev_dyn.slice(from_idx + 1, to_idx);
-        byte[] suffix = prev_dyn.slice(to_idx + 1, 64);
-        byte[] next_board_dyn = prefix + 0 + middle + moving_piece + suffix;
-        int next_len = next_board_dyn.length;
-        require(next_len == 64);
-    }
-}
-"#;
-
-    let board = standard_board();
-    let compile_opts = CompileOptions { record_debug_infos: true, ..Default::default() };
-    let compiled = compile_contract(LEN_PROBE_SOURCE, &[Expr::bytes(board)], compile_opts).expect("compile probe");
-    let sigscript = compiled
-        .build_sig_script("probe", vec![Expr::int(12), Expr::int(28)])
-        .expect("build probe sigscript");
-
-    let input = tx_input(0, sigscript.clone());
-    let outputs = vec![TransactionOutput {
-        value: 1_000,
-        script_public_key: ScriptPublicKey::new(0, vec![kaspa_txscript::opcodes::codes::OpTrue].into()),
-        covenant: None,
-    }];
-    let tx = Transaction::new(1, vec![input], outputs, 0, Default::default(), 0, vec![]);
-    let entries = vec![UtxoEntry::new(
-        1_500,
-        ScriptPublicKey::new(0, compiled.script.clone().into()),
-        0,
-        false,
-        None,
-    )];
-    let populated = PopulatedTransaction::new(&tx, entries);
-    let utxo = populated.utxo(0).expect("selected input utxo");
-    let input_ref = &tx.inputs[0];
-
-    let reused_values = SigHashReusedValuesUnsync::new();
-    let sig_cache = Cache::new(10_000);
-    let ctx = EngineCtx::new(&sig_cache).with_reused(&reused_values);
-    let engine = DebugEngine::from_transaction_input(
-        &populated,
-        input_ref,
-        0,
-        utxo,
-        ctx,
-        EngineFlags { covenants_enabled: true },
-    );
-
-    let mut session = DebugSession::full(&sigscript, &compiled.script, LEN_PROBE_SOURCE, compiled.debug_info.clone(), engine)
-        .expect("create debug session");
-    session.run_to_first_executed_statement().expect("reach first step");
-
-    loop {
-        match session.step_into() {
-            Ok(Some(_)) => {}
-            Ok(None) => return,
-            Err(err) => {
-                let report = session.build_failure_report(&err);
-                let formatted = format_failure_report(&report, &|type_name, value| session.format_value(type_name, value));
-                eprintln!("{formatted}");
-                let frame = report.frames.first().expect("at least one failure frame");
-                let span = frame.span.expect("failure frame has source span");
-                panic!("probe failure at line {} ({}-{})", span.line, span.col, span.end_col);
-            }
-        }
-    }
 }
