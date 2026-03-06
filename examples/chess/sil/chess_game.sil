@@ -28,6 +28,7 @@ contract ChessGame(
         int from_y,
         int to_x,
         int to_y,
+        sig s,
         pubkey pk
     ) : (byte[32], byte[32], byte[64], int, int) {
         require(prev_status == 0);
@@ -42,6 +43,7 @@ contract ChessGame(
         } else {
             require(blake2b(pk) == prev_black_player);
         }
+        require(checkSig(s, pk));
 
         bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
         bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;

@@ -35,7 +35,7 @@ fn chess_contract_compiles_with_singleton_transition_entrypoint() {
     assert_eq!(compiled.abi.len(), 1);
     assert_eq!(compiled.abi[0].name, "play");
     let input_names = compiled.abi[0].inputs.iter().map(|i| i.name.clone()).collect::<Vec<_>>();
-    assert_eq!(input_names, vec!["from_x", "from_y", "to_x", "to_y", "pk"]);
+    assert_eq!(input_names, vec!["from_x", "from_y", "to_x", "to_y", "s", "pk"]);
     assert!(compiled.ast.functions.iter().any(|f| f.name == "__covenant_policy_play" && !f.entrypoint));
     assert!(compiled.ast.functions.iter().any(|f| f.name == "play" && f.entrypoint));
 }
