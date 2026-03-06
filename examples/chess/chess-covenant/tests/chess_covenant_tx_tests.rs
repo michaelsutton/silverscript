@@ -3,7 +3,9 @@ use std::fs;
 use blake2b_simd::Params;
 use debugger_session::format_failure_report;
 use debugger_session::session::{DebugEngine, DebugSession};
+use kaspa_consensus_core::hashing::sighash::calc_schnorr_signature_hash;
 use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
+use kaspa_consensus_core::hashing::sighash_type::SIG_HASH_ALL;
 use kaspa_consensus_core::tx::{
     CovenantBinding, PopulatedTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionInput, TransactionOutpoint,
     TransactionOutput, UtxoEntry, VerifiableTransaction,
@@ -14,7 +16,7 @@ use kaspa_txscript::covenants::CovenantsContext;
 use kaspa_txscript::script_builder::ScriptBuilder;
 use kaspa_txscript::{pay_to_script_hash_script, EngineCtx, EngineFlags, TxScriptEngine};
 use kaspa_txscript_errors::TxScriptError;
-use secp256k1::{Keypair, Secp256k1, SecretKey};
+use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledContract};
 
@@ -75,6 +77,7 @@ contract SliceConcatManualLowered(byte[64] init_board) {
 "#;
 
 struct Player {
+    keypair: Keypair,
     pubkey_bytes: Vec<u8>,
     pubkey_hash: Vec<u8>,
 }
@@ -86,7 +89,7 @@ fn player_from_seed(seed: u8) -> Player {
     let (x_only, _) = keypair.x_only_public_key();
     let pubkey_bytes = x_only.serialize().to_vec();
     let pubkey_hash = Params::new().hash_length(32).to_state().update(&pubkey_bytes).finalize().as_bytes().to_vec();
-    Player { pubkey_bytes, pubkey_hash }
+    Player { keypair, pubkey_bytes, pubkey_hash }
 }
 
 fn load_chess_source() -> &'static str {
@@ -141,7 +144,7 @@ fn tx_input(index: u32, signature_script: Vec<u8>) -> TransactionInput {
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([index as u8 + 1; 32]), index },
         signature_script,
         sequence: 0,
-        sig_op_count: 0,
+        sig_op_count: 1,
     }
 }
 
@@ -195,6 +198,7 @@ fn play_sigscript(
     from_y: i64,
     to_x: i64,
     to_y: i64,
+    sig: Vec<u8>,
 ) -> Vec<u8> {
     covenant_sigscript(
         active,
@@ -204,9 +208,22 @@ fn play_sigscript(
             Expr::int(from_y),
             Expr::int(to_x),
             Expr::int(to_y),
+            Expr::bytes(sig),
             Expr::bytes(player.pubkey_bytes.clone()),
         ],
     )
+}
+
+fn sign_tx_input_schnorr(tx: &Transaction, entries: &[UtxoEntry], input_idx: usize, player: &Player) -> Vec<u8> {
+    let reused_values = SigHashReusedValuesUnsync::new();
+    let populated = PopulatedTransaction::new(tx, entries.to_vec());
+    let sig_hash = calc_schnorr_signature_hash(&populated, input_idx, SIG_HASH_ALL, &reused_values);
+    let msg = Message::from_digest_slice(sig_hash.as_bytes().as_slice()).expect("valid sighash message");
+    let sig = player.keypair.sign_schnorr(msg);
+    let mut signature = Vec::new();
+    signature.extend_from_slice(sig.as_ref());
+    signature.push(SIG_HASH_ALL.to_u8());
+    signature
 }
 
 fn assert_verify_like_error(err: TxScriptError) {
@@ -225,8 +242,11 @@ fn assert_move_succeeds(
 ) {
     let outputs = vec![covenant_output(next, 0, COV_ID)];
     let entries = vec![covenant_utxo(active, COV_ID)];
-    let sigscript = play_sigscript(active, signer, from_x, from_y, to_x, to_y);
-    let signed_tx = Transaction::new(1, vec![tx_input(0, sigscript)], outputs, 0, Default::default(), 0, vec![]);
+    let placeholder_sig = vec![0u8; 65];
+    let placeholder_sigscript = play_sigscript(active, signer, from_x, from_y, to_x, to_y, placeholder_sig);
+    let mut signed_tx = Transaction::new(1, vec![tx_input(0, placeholder_sigscript)], outputs, 0, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&signed_tx, &entries, 0, signer);
+    signed_tx.inputs[0].signature_script = play_sigscript(active, signer, from_x, from_y, to_x, to_y, sig);
 
     let result = execute_input_with_covenants(signed_tx, entries, 0);
     assert!(result.is_ok(), "{label} should succeed: {:?}", result.unwrap_err());
@@ -276,8 +296,11 @@ fn rejects_wrong_player_signature_for_current_turn() {
     let entries = vec![covenant_utxo(&active, COV_ID)];
 
     // Use white pubkey while it's black's turn.
-    let wrong_sigscript = play_sigscript(&active, &white, 4, 6, 4, 4);
-    let signed_tx = Transaction::new(1, vec![tx_input(0, wrong_sigscript)], outputs, 0, Default::default(), 0, vec![]);
+    let placeholder_sig = vec![0u8; 65];
+    let placeholder_sigscript = play_sigscript(&active, &white, 4, 6, 4, 4, placeholder_sig);
+    let mut signed_tx = Transaction::new(1, vec![tx_input(0, placeholder_sigscript)], outputs, 0, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&signed_tx, &entries, 0, &white);
+    signed_tx.inputs[0].signature_script = play_sigscript(&active, &white, 4, 6, 4, 4, sig);
 
     let err = execute_input_with_covenants(signed_tx, entries, 0).expect_err("wrong signer should fail");
     assert_verify_like_error(err);
