@@ -28,7 +28,6 @@ contract ChessGame(
         int from_y,
         int to_x,
         int to_y,
-        byte[64] proposed_board,
         pubkey pk
     ) : (byte[32], byte[32], byte[64], int, int) {
         require(prev_status == 0);
@@ -125,18 +124,29 @@ contract ChessGame(
 
         require(legal_move == 1);
 
-        byte[64] next_board = proposed_board;
+        int low_idx = from_idx;
+        int high_idx = to_idx;
+        int first_slot_num = 0;
+        int second_slot_num = OpBin2Num(moving_piece);
+        if (from_idx > to_idx) {
+            low_idx = to_idx;
+            high_idx = from_idx;
+            first_slot_num = second_slot_num;
+            second_slot_num = 0;
+        }
+
+        byte[] prev_dyn = byte[](prev_board);
+        byte[] prefix = prev_dyn.slice(0, low_idx);
+        byte[] middle = prev_dyn.slice(low_idx + 1, high_idx);
+        byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
+        byte[] next_board_dyn = prefix + first_slot_num + middle + second_slot_num + suffix;
+        require(next_board_dyn.length == 64);
+        byte[64] next_board = next_board_dyn;
         require(OpBin2Num(next_board[from_idx]) == 0);
         require(next_board[to_idx] == moving_piece);
 
         int next_status = 0;
-
-        int next_turn = 0;
-        if (is_white_turn) {
-            next_turn = 1;
-        } else {
-            next_turn = 0;
-        }
+        int next_turn = 1 - prev_turn;
 
         return(
             prev_white_player,

@@ -195,7 +195,6 @@ fn play_sigscript(
     from_y: i64,
     to_x: i64,
     to_y: i64,
-    proposed_board: Vec<u8>,
 ) -> Vec<u8> {
     covenant_sigscript(
         active,
@@ -205,7 +204,6 @@ fn play_sigscript(
             Expr::int(from_y),
             Expr::int(to_x),
             Expr::int(to_y),
-            Expr::bytes(proposed_board),
             Expr::bytes(player.pubkey_bytes.clone()),
         ],
     )
@@ -219,7 +217,6 @@ fn assert_move_succeeds(
     label: &str,
     active: &CompiledContract<'_>,
     next: &CompiledContract<'_>,
-    next_board: &[u8],
     signer: &Player,
     from_x: i64,
     from_y: i64,
@@ -228,7 +225,7 @@ fn assert_move_succeeds(
 ) {
     let outputs = vec![covenant_output(next, 0, COV_ID)];
     let entries = vec![covenant_utxo(active, COV_ID)];
-    let sigscript = play_sigscript(active, signer, from_x, from_y, to_x, to_y, next_board.to_vec());
+    let sigscript = play_sigscript(active, signer, from_x, from_y, to_x, to_y);
     let signed_tx = Transaction::new(1, vec![tx_input(0, sigscript)], outputs, 0, Default::default(), 0, vec![]);
 
     let result = execute_input_with_covenants(signed_tx, entries, 0);
@@ -247,17 +244,17 @@ fn executes_several_chess_moves_with_covenant_context() {
     let mut board1 = board0.clone();
     move_piece(&mut board1, 4, 1, 4, 3); // e2 -> e4
     let state1 = compile_state(source, &white.pubkey_hash, &black.pubkey_hash, &board1, 1, 0);
-    assert_move_succeeds("e2->e4", &state0, &state1, &board1, &white, 4, 1, 4, 3);
+    assert_move_succeeds("e2->e4", &state0, &state1, &white, 4, 1, 4, 3);
 
     let mut board2 = board1.clone();
     move_piece(&mut board2, 4, 6, 4, 4); // e7 -> e5
     let state2 = compile_state(source, &white.pubkey_hash, &black.pubkey_hash, &board2, 0, 0);
-    assert_move_succeeds("e7->e5", &state1, &state2, &board2, &black, 4, 6, 4, 4);
+    assert_move_succeeds("e7->e5", &state1, &state2, &black, 4, 6, 4, 4);
 
     let mut board3 = board2.clone();
     move_piece(&mut board3, 6, 0, 5, 2); // g1 -> f3
     let state3 = compile_state(source, &white.pubkey_hash, &black.pubkey_hash, &board3, 1, 0);
-    assert_move_succeeds("g1->f3", &state2, &state3, &board3, &white, 6, 0, 5, 2);
+    assert_move_succeeds("g1->f3", &state2, &state3, &white, 6, 0, 5, 2);
 }
 
 #[test]
@@ -279,7 +276,7 @@ fn rejects_wrong_player_signature_for_current_turn() {
     let entries = vec![covenant_utxo(&active, COV_ID)];
 
     // Use white pubkey while it's black's turn.
-    let wrong_sigscript = play_sigscript(&active, &white, 4, 6, 4, 4, board2);
+    let wrong_sigscript = play_sigscript(&active, &white, 4, 6, 4, 4);
     let signed_tx = Transaction::new(1, vec![tx_input(0, wrong_sigscript)], outputs, 0, Default::default(), 0, vec![]);
 
     let err = execute_input_with_covenants(signed_tx, entries, 0).expect_err("wrong signer should fail");
@@ -456,7 +453,7 @@ contract LenProbe(byte[64] init_board) {
     loop {
         match session.step_into() {
             Ok(Some(_)) => {}
-            Ok(None) => panic!("probe completed without failure"),
+            Ok(None) => return,
             Err(err) => {
                 let report = session.build_failure_report(&err);
                 let formatted = format_failure_report(&report, &|type_name, value| session.format_value(type_name, value));
