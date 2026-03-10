@@ -19,29 +19,25 @@ contract ChessGame(
 
     #[covenant.singleton(mode = transition)]
     function play(
-        byte[32] prev_white_player,
-        byte[32] prev_black_player,
-        byte[64] prev_board,
-        int prev_turn,
-        int prev_status,
+        State prev_state,
         int from_x,
         int from_y,
         int to_x,
         int to_y,
         sig s,
         pubkey pk
-    ) : (byte[32], byte[32], byte[64], int, int) {
-        require(prev_status == 0);
-        require(prev_board.length == 64);
+    ) : (State) {
+        require(prev_state.status == 0);
+        require(prev_state.board.length == 64);
 
-        bool is_white_turn = prev_turn == 0;
-        bool is_black_turn = prev_turn == 1;
+        bool is_white_turn = prev_state.turn == 0;
+        bool is_black_turn = prev_state.turn == 1;
         require(is_white_turn || is_black_turn);
 
         if (is_white_turn) {
-            require(blake2b(pk) == prev_white_player);
+            require(blake2b(pk) == prev_state.white_player);
         } else {
-            require(blake2b(pk) == prev_black_player);
+            require(blake2b(pk) == prev_state.black_player);
         }
         require(checkSig(s, pk));
 
@@ -53,8 +49,8 @@ contract ChessGame(
         int to_idx = to_y * 8 + to_x;
         require(from_idx != to_idx);
 
-        byte moving_piece = prev_board[from_idx];
-        byte target_piece = prev_board[to_idx];
+        byte moving_piece = prev_state.board[from_idx];
+        byte target_piece = prev_state.board[to_idx];
         int moving_num = OpBin2Num(moving_piece);
         int target_num = OpBin2Num(target_piece);
         require(moving_num != 0);
@@ -95,7 +91,7 @@ contract ChessGame(
                 bool two_step = false;
                 if (from_y == 1 && to_x == from_x && up_two && target_is_empty) {
                     int mid_idx = (from_y + 1) * 8 + from_x;
-                    two_step = OpBin2Num(prev_board[mid_idx]) == 0;
+                    two_step = OpBin2Num(prev_state.board[mid_idx]) == 0;
                 }
                 bool capture = side_adjacent && up_one && target_is_black;
                 if (one_step || two_step || capture) {
@@ -106,7 +102,7 @@ contract ChessGame(
                 bool two_step = false;
                 if (from_y == 6 && to_x == from_x && down_two && target_is_empty) {
                     int mid_idx = (from_y + -1) * 8 + from_x;
-                    two_step = OpBin2Num(prev_board[mid_idx]) == 0;
+                    two_step = OpBin2Num(prev_state.board[mid_idx]) == 0;
                 }
                 bool capture = side_adjacent && down_one && target_is_white;
                 if (one_step || two_step || capture) {
@@ -137,7 +133,7 @@ contract ChessGame(
             second_slot_num = 0;
         }
 
-        byte[] prev_dyn = byte[](prev_board);
+        byte[] prev_dyn = byte[](prev_state.board);
         byte[] prefix = prev_dyn.slice(0, low_idx);
         byte[] middle = prev_dyn.slice(low_idx + 1, high_idx);
         byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
@@ -148,14 +144,14 @@ contract ChessGame(
         require(next_board[to_idx] == moving_piece);
 
         int next_status = 0;
-        int next_turn = 1 - prev_turn;
+        int next_turn = 1 - prev_state.turn;
 
-        return(
-            prev_white_player,
-            prev_black_player,
-            next_board,
-            next_turn,
-            next_status
-        );
+        return({
+            white_player: prev_state.white_player,
+            black_player: prev_state.black_player,
+            board: next_board,
+            turn: next_turn,
+            status: next_status
+        });
     }
 }
