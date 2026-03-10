@@ -16,7 +16,7 @@ use kaspa_txscript::{pay_to_script_hash_script, EngineCtx, EngineFlags, TxScript
 use kaspa_txscript_errors::TxScriptError;
 use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use silverscript_lang::ast::Expr;
-use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledContract};
+use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledContract, CovenantDeclCallOptions};
 
 use chess_covenant::example_contract_path;
 
@@ -79,8 +79,10 @@ fn compile_state(
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile chess state")
 }
 
-fn covenant_sigscript(compiled: &CompiledContract<'_>, entrypoint: &str, args: Vec<Expr<'_>>) -> Vec<u8> {
-    let mut sigscript = compiled.build_sig_script(entrypoint, args).expect("build sigscript");
+fn covenant_sigscript(compiled: &CompiledContract<'_>, function_name: &str, args: Vec<Expr<'_>>) -> Vec<u8> {
+    let mut sigscript = compiled
+        .build_sig_script_for_covenant_decl(function_name, args, CovenantDeclCallOptions { is_leader: false })
+        .expect("build sigscript");
     sigscript.extend_from_slice(&ScriptBuilder::new().add_data(&compiled.script).expect("push redeem script").drain());
     sigscript
 }
