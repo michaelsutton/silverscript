@@ -124,20 +124,20 @@ contract ChessGame(
 
         int low_idx = from_idx;
         int high_idx = to_idx;
-        int first_slot_num = 0;
-        int second_slot_num = OpBin2Num(moving_piece);
+        byte first_slot = byte(0x00);
+        byte second_slot = moving_piece;
         if (from_idx > to_idx) {
             low_idx = to_idx;
             high_idx = from_idx;
-            first_slot_num = second_slot_num;
-            second_slot_num = 0;
+            first_slot = moving_piece;
+            second_slot = byte(0x00);
         }
 
         byte[] prev_dyn = byte[](prev_state.board);
         byte[] prefix = prev_dyn.slice(0, low_idx);
         byte[] middle = prev_dyn.slice(low_idx + 1, high_idx);
         byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
-        byte[] next_board_dyn = prefix + first_slot_num + middle + second_slot_num + suffix;
+        byte[] next_board_dyn = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
         require(next_board_dyn.length == 64);
         byte[64] next_board = next_board_dyn;
         require(OpBin2Num(next_board[from_idx]) == 0);
