@@ -137,11 +137,7 @@ contract ChessGame(
         byte[] prefix = prev_dyn.slice(0, low_idx);
         byte[] middle = prev_dyn.slice(low_idx + 1, high_idx);
         byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
-        byte[] next_board_dyn = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
-        require(next_board_dyn.length == 64);
-        byte[64] next_board = next_board_dyn;
-        require(OpBin2Num(next_board[from_idx]) == 0);
-        require(next_board[to_idx] == moving_piece);
+        byte[64] next_board = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
 
         int next_status = 0;
         int next_turn = 1 - prev_state.turn;
