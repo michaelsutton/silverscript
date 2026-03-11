@@ -27,6 +27,7 @@ contract ChessGame(
         sig s,
         pubkey pk
     ) : (State) {
+        // Stage 1: basic game-state and player authorization checks.
         require(prev_state.status == 0);
         require(prev_state.board.length == 64);
 
@@ -41,6 +42,7 @@ contract ChessGame(
         }
         require(checkSig(s, pk));
 
+        // Stage 2: board bounds, source/target lookup, and side ownership checks.
         bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
         bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
         require(from_in_bounds && to_in_bounds);
@@ -71,6 +73,7 @@ contract ChessGame(
             require(!target_is_black);
         }
 
+        // Stage 3: simplified piece-specific move validation.
         bool side_step_right = to_x == from_x + 1;
         bool side_step_left = to_x + 1 == from_x;
         bool side_step_two_right = to_x == from_x + 2;
@@ -122,6 +125,7 @@ contract ChessGame(
 
         require(legal_move == 1);
 
+        // Stage 4: reconstruct the next board and emit the next state.
         int low_idx = from_idx;
         int high_idx = to_idx;
         byte first_slot = byte(0x00);
