@@ -1,0 +1,17 @@
+contract A(byte[32] initMuxHash, byte[32] initAHash, byte[32] initBHash, int initValue) {
+    byte[32] muxHash = initMuxHash;
+    byte[32] aHash = initAHash;
+    byte[32] bHash = initBHash;
+    int value = initValue;
+
+    // Worker A performs a transition and always routes back to Mux.
+    entrypoint function apply(byte[] muxPrefix, byte[] muxSuffix) {
+        validateOutputStateWithTemplate(
+            0,
+            {muxHash: muxHash, aHash: aHash, bHash: bHash, value: value + 1},
+            muxPrefix,
+            muxSuffix,
+            muxHash
+        );
+    }
+}
