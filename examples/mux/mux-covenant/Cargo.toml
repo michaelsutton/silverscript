@@ -1,0 +1,14 @@
+[package]
+name = "mux-covenant"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+silverscript-lang = { path = "../../../silverscript-lang" }
+
+[dev-dependencies]
+blake2b_simd = "1.0.2"
+kaspa-consensus-core = { git = "https://github.com/kaspanet/rusty-kaspa", branch = "tn12" }
+kaspa-txscript = { git = "https://github.com/kaspanet/rusty-kaspa", branch = "tn12" }
+kaspa-txscript-errors = { git = "https://github.com/kaspanet/rusty-kaspa", branch = "tn12" }

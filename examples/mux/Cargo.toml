@@ -1,0 +1,3 @@
+[workspace]
+members = ["mux-covenant"]
+resolver = "2"
