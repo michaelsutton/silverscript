@@ -61,6 +61,22 @@ struct GameStateArgs<'a> {
     pending_to_y: i64,
 }
 
+fn packed_route_hashes(fix: &MuxChessFixture) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32 * 11);
+    out.extend_from_slice(&fix.pawn.hash);
+    out.extend_from_slice(&fix.knight.hash);
+    out.extend_from_slice(&fix.vert_up.hash);
+    out.extend_from_slice(&fix.vert_down.hash);
+    out.extend_from_slice(&fix.horiz_left.hash);
+    out.extend_from_slice(&fix.horiz_right.hash);
+    out.extend_from_slice(&fix.diag_up_right.hash);
+    out.extend_from_slice(&fix.diag_up_left.hash);
+    out.extend_from_slice(&fix.diag_down_right.hash);
+    out.extend_from_slice(&fix.diag_down_left.hash);
+    out.extend_from_slice(&fix.king.hash);
+    out
+}
+
 fn player_from_seed(seed: u8) -> Player {
     let secp = Secp256k1::new();
     let secret = SecretKey::from_slice(&[seed; 32]).expect("valid deterministic secret key");
@@ -119,17 +135,7 @@ fn build_fixture() -> MuxChessFixture {
     let dummy_board = standard_board();
     let ctor = vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(vec![0x12u8; 32]),
-        Expr::bytes(vec![0x13u8; 32]),
-        Expr::bytes(vec![0x14u8; 32]),
-        Expr::bytes(vec![0x15u8; 32]),
-        Expr::bytes(vec![0x16u8; 32]),
-        Expr::bytes(vec![0x17u8; 32]),
-        Expr::bytes(vec![0x18u8; 32]),
-        Expr::bytes(vec![0x19u8; 32]),
-        Expr::bytes(vec![0x1au8; 32]),
-        Expr::bytes(vec![0x1bu8; 32]),
-        Expr::bytes(vec![0x1cu8; 32]),
+        Expr::bytes(vec![0x33u8; 32 * 11]),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(dummy_board),
@@ -166,17 +172,7 @@ fn compile_state(
 ) -> CompiledContract<'static> {
     let ctor = vec![
         Expr::bytes(fix.mux.hash.clone()),
-        Expr::bytes(fix.pawn.hash.clone()),
-        Expr::bytes(fix.knight.hash.clone()),
-        Expr::bytes(fix.vert_up.hash.clone()),
-        Expr::bytes(fix.vert_down.hash.clone()),
-        Expr::bytes(fix.horiz_left.hash.clone()),
-        Expr::bytes(fix.horiz_right.hash.clone()),
-        Expr::bytes(fix.diag_up_right.hash.clone()),
-        Expr::bytes(fix.diag_up_left.hash.clone()),
-        Expr::bytes(fix.diag_down_right.hash.clone()),
-        Expr::bytes(fix.diag_down_left.hash.clone()),
-        Expr::bytes(fix.king.hash.clone()),
+        Expr::bytes(packed_route_hashes(fix)),
         Expr::bytes(white_hash.to_vec()),
         Expr::bytes(black_hash.to_vec()),
         Expr::bytes(state.board.to_vec()),
