@@ -1,6 +1,6 @@
 pragma silverscript ^0.1.0;
 
-contract ChessKnight(
+contract ChessRankLeft(
     byte[32] init_mux_hash,
     byte[32] init_pawn_hash,
     byte[32] init_knight_hash,
@@ -54,13 +54,9 @@ contract ChessKnight(
         int to_x = pending_to_x;
         int to_y = pending_to_y;
 
-        bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
-        bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
-        require(from_in_bounds && to_in_bounds);
-
-        bool is_white_turn = turn == 0;
-        bool is_black_turn = turn == 1;
-        require(is_white_turn || is_black_turn);
+        require(from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8);
+        require(to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8);
+        require(turn == 0 || turn == 1);
 
         int from_idx = from_y * 8 + from_x;
         int to_idx = to_y * 8 + to_x;
@@ -71,34 +67,33 @@ contract ChessKnight(
         byte target_piece = prev_board[to_idx];
         int moving_num = OpBin2Num(moving_piece);
         int target_num = OpBin2Num(target_piece);
-        require(moving_num == 2 || moving_num == 10);
+        require(moving_num == 4 || moving_num == 5 || moving_num == 12 || moving_num == 13);
 
-        bool moving_is_white = moving_num == 2;
-        bool moving_is_black = moving_num == 10;
         bool target_is_white = target_num >= 1 && target_num <= 6;
         bool target_is_black = target_num >= 9 && target_num <= 14;
-
-        if (is_white_turn) {
-            require(moving_is_white);
+        if (turn == 0) {
+            require(moving_num == 4 || moving_num == 5);
             require(!target_is_white);
         } else {
-            require(moving_is_black);
+            require(moving_num == 12 || moving_num == 13);
             require(!target_is_black);
         }
 
-        bool side_step_right = to_x == from_x + 1;
-        bool side_step_left = to_x + 1 == from_x;
-        bool side_step_two_right = to_x == from_x + 2;
-        bool side_step_two_left = to_x + 2 == from_x;
-        bool side_adjacent = side_step_right || side_step_left;
-        bool up_one = to_y == from_y + 1;
-        bool down_one = to_y + 1 == from_y;
-        bool up_two = to_y == from_y + 2;
-        bool down_two = to_y + 2 == from_y;
+        require(to_y == from_y && to_x < from_x);
 
-        bool shape_1 = side_adjacent && (up_two || down_two);
-        bool shape_2 = (side_step_two_right || side_step_two_left) && (up_one || down_one);
-        require(shape_1 || shape_2);
+        int distance = from_x - to_x;
+        int clear = 1;
+        for (i, 0, 7, 7) {
+            if (i < distance + -1) {
+                int scan_x = from_x - i - 1;
+                int scan_y = from_y;
+                int scan_idx = scan_y * 8 + scan_x;
+                if (OpBin2Num(prev_board[scan_idx]) != 0) {
+                    clear = 0;
+                }
+            }
+        }
+        require(clear == 1);
 
         int low_idx = from_idx;
         int high_idx = to_idx;
@@ -143,13 +138,6 @@ contract ChessKnight(
 
         require(cov_out_count == 1);
         int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-
-        validateOutputStateWithTemplate(
-            cov_out_idx,
-            next_state,
-            mux_prefix,
-            mux_suffix,
-            mux_hash
-        );
+        validateOutputStateWithTemplate(cov_out_idx, next_state, mux_prefix, mux_suffix, mux_hash);
     }
 }
