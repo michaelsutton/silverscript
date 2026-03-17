@@ -76,6 +76,8 @@ struct MuxFixture {
     b_prefix: Vec<u8>,
     b_suffix: Vec<u8>,
     b_hash: Vec<u8>,
+    next_a_hash: Vec<u8>,
+    next_b_hash: Vec<u8>,
 }
 
 fn build_mux_fixture() -> MuxFixture {
@@ -89,6 +91,8 @@ fn build_mux_fixture() -> MuxFixture {
         template_parts_and_hash(&a_source, &[vec![0x41u8; 32].into(), vec![0x51u8; 32].into(), vec![0x61u8; 32].into(), 5.into()]);
     let (b_prefix, b_suffix, b_hash) =
         template_parts_and_hash(&b_source, &[vec![0x71u8; 32].into(), vec![0x81u8; 32].into(), vec![0x91u8; 32].into(), 5.into()]);
+    let next_a_hash = vec![0xa1u8; 32];
+    let next_b_hash = vec![0xb2u8; 32];
 
     MuxFixture {
         mux_source,
@@ -103,6 +107,8 @@ fn build_mux_fixture() -> MuxFixture {
         b_prefix,
         b_suffix,
         b_hash,
+        next_a_hash,
+        next_b_hash,
     }
 }
 
@@ -110,25 +116,38 @@ fn build_mux_fixture() -> MuxFixture {
 fn mux_routes_and_workers_return_to_mux() {
     let fix = build_mux_fixture();
     let state = [fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), 5.into()];
+    let a_reward = 3;
+    let b_gain = 5;
+    let b_fee = 1;
 
     let mux = compile_contract(&fix.mux_source, &state, CompileOptions::default()).expect("compile mux succeeds");
     let a = compile_contract(&fix.a_source, &state, CompileOptions::default()).expect("compile A succeeds");
     let b = compile_contract(&fix.b_source, &state, CompileOptions::default()).expect("compile B succeeds");
     let mux_after_a = compile_contract(
         &fix.mux_source,
-        &[fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), 6.into()],
+        &[fix.mux_hash.clone().into(), fix.next_a_hash.clone().into(), fix.b_hash.clone().into(), (5 + a_reward).into()],
         CompileOptions::default(),
     )
     .expect("compile mux after A succeeds");
     let mux_after_b = compile_contract(
         &fix.mux_source,
-        &[fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), 7.into()],
+        &[fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.next_b_hash.clone().into(), (5 + b_gain - b_fee).into()],
         CompileOptions::default(),
     )
     .expect("compile mux after B succeeds");
 
     run_p2sh_transition(&mux, "route", vec![0.into(), fix.a_prefix.clone().into(), fix.a_suffix.clone().into()], &a);
     run_p2sh_transition(&mux, "route", vec![1.into(), fix.b_prefix.clone().into(), fix.b_suffix.clone().into()], &b);
-    run_p2sh_transition(&a, "apply", vec![fix.mux_prefix.clone().into(), fix.mux_suffix.clone().into()], &mux_after_a);
-    run_p2sh_transition(&b, "apply", vec![fix.mux_prefix.into(), fix.mux_suffix.into()], &mux_after_b);
+    run_p2sh_transition(
+        &a,
+        "apply",
+        vec![a_reward.into(), fix.next_a_hash.into(), fix.mux_prefix.clone().into(), fix.mux_suffix.clone().into()],
+        &mux_after_a,
+    );
+    run_p2sh_transition(
+        &b,
+        "apply",
+        vec![b_gain.into(), b_fee.into(), fix.next_b_hash.into(), fix.mux_prefix.into(), fix.mux_suffix.into()],
+        &mux_after_b,
+    );
 }
