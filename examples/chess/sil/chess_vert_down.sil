@@ -46,7 +46,6 @@ contract ChessVertDown(
     int pending_to_y = init_pending_to_y;
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
-        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
         require(status == 0);
 
         int from_x = pending_from_x;
@@ -135,9 +134,7 @@ contract ChessVertDown(
             pending_to_x: -1,
             pending_to_y: -1
         };
-
-        require(cov_out_count == 1);
-        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-        validateOutputStateWithTemplate(cov_out_idx, next_state, mux_prefix, mux_suffix, mux_hash);
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        validateOutputStateWithTemplate(OpAuthOutputIdx(this.activeInputIndex, 0), next_state, mux_prefix, mux_suffix, mux_hash);
     }
 }
