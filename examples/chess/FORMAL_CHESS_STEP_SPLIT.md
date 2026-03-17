@@ -54,10 +54,10 @@ Minimal meaning:
 
 ```text
 phase = 0  idle at mux
-phase = 1  file_up verified, waiting for finalize
-phase = 2  file_down verified, waiting for finalize
-phase = 3  rank_left verified, waiting for finalize
-phase = 4  rank_right verified, waiting for finalize
+phase = 1  vert_up verified, waiting for finalize
+phase = 2  vert_down verified, waiting for finalize
+phase = 3  horiz_left verified, waiting for finalize
+phase = 4  horiz_right verified, waiting for finalize
 phase = 5  diag_up_right verified, waiting for finalize
 phase = 6  diag_up_left verified, waiting for finalize
 phase = 7  diag_down_right verified, waiting for finalize
