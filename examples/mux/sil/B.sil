@@ -4,13 +4,31 @@ contract B(byte[32] initMuxHash, byte[32] initAHash, byte[32] initBHash, int ini
     byte[32] bHash = initBHash;
     int value = initValue;
 
-    // Worker B updates its own worker hash and applies a net value change from two args.
-    entrypoint function apply(int gain, int fee, byte[32] nextBHash, byte[] muxPrefix, byte[] muxSuffix) {
+    // Worker B policy applies a net value change from two args.
+    function policy_apply(State prev_state, int gain, int fee) : (State) {
         require(gain > fee);
 
+        return({
+            muxHash: prev_state.muxHash,
+            aHash: prev_state.aHash,
+            bHash: prev_state.bHash,
+            value: prev_state.value + gain - fee
+        });
+    }
+
+    // The wrapper reconstructs State, enforces singleton continuation, and validates the return path to Mux.
+    entrypoint function apply(int gain, int fee, byte[] muxPrefix, byte[] muxSuffix) {
+        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
+
+        State prev_state = { muxHash: muxHash, aHash: aHash, bHash: bHash, value: value };
+        (State cov_new_state) = policy_apply(prev_state, gain, fee);
+
+        require(cov_out_count == 1);
+        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+
         validateOutputStateWithTemplate(
-            0,
-            {muxHash: muxHash, aHash: aHash, bHash: nextBHash, value: value + gain - fee},
+            cov_out_idx,
+            cov_new_state,
             muxPrefix,
             muxSuffix,
             muxHash

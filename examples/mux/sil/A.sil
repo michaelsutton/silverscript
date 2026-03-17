@@ -4,14 +4,32 @@ contract A(byte[32] initMuxHash, byte[32] initAHash, byte[32] initBHash, int ini
     byte[32] bHash = initBHash;
     int value = initValue;
 
-    // Worker A updates its own worker hash and increments value by a caller-chosen reward.
-    entrypoint function apply(int reward, byte[32] nextAHash, byte[] muxPrefix, byte[] muxSuffix) {
+    // Worker A policy increments value by a caller-chosen reward.
+    function policy_apply(State prev_state, int reward) : (State) {
         require(reward > 0);
         require(reward < 10);
 
+        return({
+            muxHash: prev_state.muxHash,
+            aHash: prev_state.aHash,
+            bHash: prev_state.bHash,
+            value: prev_state.value + reward
+        });
+    }
+
+    // The wrapper reconstructs State, enforces singleton continuation, and validates the return path to Mux.
+    entrypoint function apply(int reward, byte[] muxPrefix, byte[] muxSuffix) {
+        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
+
+        State prev_state = { muxHash: muxHash, aHash: aHash, bHash: bHash, value: value };
+        (State cov_new_state) = policy_apply(prev_state, reward);
+
+        require(cov_out_count == 1);
+        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+
         validateOutputStateWithTemplate(
-            0,
-            {muxHash: muxHash, aHash: nextAHash, bHash: bHash, value: value + reward},
+            cov_out_idx,
+            cov_new_state,
             muxPrefix,
             muxSuffix,
             muxHash
