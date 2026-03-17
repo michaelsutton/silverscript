@@ -34,6 +34,7 @@ contract ChessKing(
     }
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
+        // Workers only accept active move proofs routed out of ChessMux.
         require(status == 0);
 
         int from_x = pending_from_x;
@@ -41,16 +42,19 @@ contract ChessKing(
         int to_x = pending_to_x;
         int to_y = pending_to_y;
 
+        // The committed move endpoints must still be valid board coordinates.
         bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
         bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
         require(from_in_bounds && to_in_bounds);
 
+        // Chess alternates between white (0) and black (1).
         bool is_white_turn = turn == 0;
         bool is_black_turn = turn == 1;
         require(is_white_turn || is_black_turn);
 
         int from_idx = from_y * 8 + from_x;
         int to_idx = to_y * 8 + to_x;
+        // A move must actually change squares.
         require(from_idx != to_idx);
 
         byte[64] prev_board = board;
@@ -58,6 +62,8 @@ contract ChessKing(
         byte target_piece = prev_board[to_idx];
         int moving_num = OpBin2Num(moving_piece);
         int target_num = OpBin2Num(target_piece);
+        // This route only accepts kings:
+        // white king = 6, black king = 14.
         require(moving_num == 6 || moving_num == 14);
 
         bool moving_is_white = moving_num == 6;
@@ -65,6 +71,8 @@ contract ChessKing(
         bool target_is_white = target_num >= 1 && target_num <= 6;
         bool target_is_black = target_num >= 9 && target_num <= 14;
 
+        // The side to move must move its own king and cannot capture its own
+        // color on the destination square.
         if (is_white_turn) {
             require(moving_is_white);
             require(!target_is_white);
@@ -77,8 +85,13 @@ contract ChessKing(
         int dy = to_y - from_y;
         (int abs_dx) = abs_int(dx);
         (int abs_dy) = abs_int(dy);
+        // A normal king move changes by at most one square in each dimension.
+        // Castling is intentionally excluded from this worker.
         require(abs_dx <= 1 && abs_dy <= 1);
 
+        // Rewrite the board by clearing the source square and filling the
+        // destination square, using low/high index order to keep the splice
+        // logic simple for both move directions.
         int low_idx = from_idx;
         int high_idx = to_idx;
         byte first_slot = byte(0x00);
@@ -96,6 +109,8 @@ contract ChessKing(
         byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
         byte[64] next_board = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
 
+        // Return to ChessMux with the updated board, the turn flipped, and the
+        // pending move cleared.
         State next_state = {
             mux_hash: mux_hash,
             route_hashes: route_hashes,
@@ -109,6 +124,8 @@ contract ChessKing(
             pending_to_x: -1,
             pending_to_y: -1
         };
+        // The worker must produce exactly one authorized covenant output back to
+        // the mux template with the new state above.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(
             OpAuthOutputIdx(this.activeInputIndex, 0),
