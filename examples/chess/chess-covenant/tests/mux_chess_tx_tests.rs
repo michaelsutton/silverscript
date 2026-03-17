@@ -460,6 +460,51 @@ fn muxed_chess_routes_all_move_families() {
     );
     run_worker_apply("vert_up", &vert_up, &mux4, covenant_id3, &fix.mux);
 
+    let mut board4q = vec![0u8; 64];
+    board4q[0] = 0x05;
+    let mux4q = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board4q,
+            turn: 0,
+            status: 0,
+            pending_from_x: -1,
+            pending_from_y: -1,
+            pending_to_x: -1,
+            pending_to_y: -1,
+        },
+    );
+    let covenant_id4q = populate_single_output_genesis_covenant(&mux4q);
+    let vert_up_queen = compile_state(
+        fix.vert_up.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs { board: &board4q, turn: 0, status: 0, pending_from_x: 0, pending_from_y: 0, pending_to_x: 0, pending_to_y: 3 },
+    );
+    run_route(&mux4q, 2, 0, 0, 0, 3, &white, &fix.vert_up, &vert_up_queen, covenant_id4q);
+    let mut board4q_next = board4q.clone();
+    move_piece(&mut board4q_next, 0, 0, 0, 3);
+    let mux4q_next = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board4q_next,
+            turn: 1,
+            status: 0,
+            pending_from_x: -1,
+            pending_from_y: -1,
+            pending_to_x: -1,
+            pending_to_y: -1,
+        },
+    );
+    run_worker_apply("vert_up_queen", &vert_up_queen, &mux4q_next, covenant_id4q, &fix.mux);
+
     let mut board5 = vec![0u8; 64];
     board5[56] = 0x0c;
     let mux5 = compile_state(
@@ -639,6 +684,51 @@ fn muxed_chess_routes_all_move_families() {
         },
     );
     run_worker_apply("diag_up_right", &diag_up_right, &mux12, covenant_id11, &fix.mux);
+
+    let mut board12q = vec![0u8; 64];
+    board12q[0] = 0x05;
+    let mux12q = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board12q,
+            turn: 0,
+            status: 0,
+            pending_from_x: -1,
+            pending_from_y: -1,
+            pending_to_x: -1,
+            pending_to_y: -1,
+        },
+    );
+    let covenant_id12q = populate_single_output_genesis_covenant(&mux12q);
+    let diag_up_right_queen = compile_state(
+        fix.diag_up_right.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs { board: &board12q, turn: 0, status: 0, pending_from_x: 0, pending_from_y: 0, pending_to_x: 3, pending_to_y: 3 },
+    );
+    run_route(&mux12q, 6, 0, 0, 3, 3, &white, &fix.diag_up_right, &diag_up_right_queen, covenant_id12q);
+    let mut board12q_next = board12q.clone();
+    move_piece(&mut board12q_next, 0, 0, 3, 3);
+    let mux12q_next = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board12q_next,
+            turn: 1,
+            status: 0,
+            pending_from_x: -1,
+            pending_from_y: -1,
+            pending_to_x: -1,
+            pending_to_y: -1,
+        },
+    );
+    run_worker_apply("diag_up_right_queen", &diag_up_right_queen, &mux12q_next, covenant_id12q, &fix.mux);
 
     let mut board13 = vec![0u8; 64];
     board13[7] = 0x03;
