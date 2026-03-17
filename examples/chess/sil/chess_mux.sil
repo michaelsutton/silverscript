@@ -2,17 +2,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessMux(
     byte[32] init_mux_hash,
-    byte[32] init_pawn_hash,
-    byte[32] init_knight_hash,
-    byte[32] init_vert_up_hash,
-    byte[32] init_vert_down_hash,
-    byte[32] init_horiz_left_hash,
-    byte[32] init_horiz_right_hash,
-    byte[32] init_diag_up_right_hash,
-    byte[32] init_diag_up_left_hash,
-    byte[32] init_diag_down_right_hash,
-    byte[32] init_diag_down_left_hash,
-    byte[32] init_king_hash,
+    byte[352] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -24,17 +14,7 @@ contract ChessMux(
     int init_pending_to_y
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[32] pawn_hash = init_pawn_hash;
-    byte[32] knight_hash = init_knight_hash;
-    byte[32] vert_up_hash = init_vert_up_hash;
-    byte[32] vert_down_hash = init_vert_down_hash;
-    byte[32] horiz_left_hash = init_horiz_left_hash;
-    byte[32] horiz_right_hash = init_horiz_right_hash;
-    byte[32] diag_up_right_hash = init_diag_up_right_hash;
-    byte[32] diag_up_left_hash = init_diag_up_left_hash;
-    byte[32] diag_down_right_hash = init_diag_down_right_hash;
-    byte[32] diag_down_left_hash = init_diag_down_left_hash;
-    byte[32] king_hash = init_king_hash;
+    byte[352] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -73,44 +53,26 @@ contract ChessMux(
         bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
         require(from_in_bounds && to_in_bounds);
 
-        byte[32] target_hash = pawn_hash;
-        if (selector == 1) {
-            target_hash = knight_hash;
-        } else if (selector == 2) {
-            target_hash = vert_up_hash;
-        } else if (selector == 3) {
-            target_hash = vert_down_hash;
-        } else if (selector == 4) {
-            target_hash = horiz_left_hash;
-        } else if (selector == 5) {
-            target_hash = horiz_right_hash;
-        } else if (selector == 6) {
-            target_hash = diag_up_right_hash;
-        } else if (selector == 7) {
-            target_hash = diag_up_left_hash;
-        } else if (selector == 8) {
-            target_hash = diag_down_right_hash;
-        } else if (selector == 9) {
-            target_hash = diag_down_left_hash;
-        } else if (selector == 10) {
-            target_hash = king_hash;
-        } else {
-            require(selector == 0);
-        }
+        // route_hashes layout by selector:
+        // 0  -> pawn
+        // 1  -> knight
+        // 2  -> vert_up
+        // 3  -> vert_down
+        // 4  -> horiz_left
+        // 5  -> horiz_right
+        // 6  -> diag_up_right
+        // 7  -> diag_up_left
+        // 8  -> diag_down_right
+        // 9  -> diag_down_left
+        // 10 -> king
+        require(selector >= 0 && selector < 11);
+        int hash_start = selector * 32;
+        int hash_end = hash_start + 32;
+        byte[32] target_hash = route_hashes.slice(hash_start, hash_end);
 
         State next_state = {
             mux_hash: mux_hash,
-            pawn_hash: pawn_hash,
-            knight_hash: knight_hash,
-            vert_up_hash: vert_up_hash,
-            vert_down_hash: vert_down_hash,
-            horiz_left_hash: horiz_left_hash,
-            horiz_right_hash: horiz_right_hash,
-            diag_up_right_hash: diag_up_right_hash,
-            diag_up_left_hash: diag_up_left_hash,
-            diag_down_right_hash: diag_down_right_hash,
-            diag_down_left_hash: diag_down_left_hash,
-            king_hash: king_hash,
+            route_hashes: route_hashes,
             white_player: white_player,
             black_player: black_player,
             board: board,

@@ -189,20 +189,14 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x0c, 0x0a, 0x0b, 0x0d, 0x0e, 0x0b, 0x0a,
         0x0c,
     ];
+    let mut route_hashes = Vec::with_capacity(32 * 11);
+    for byte in 0x12u8..=0x1cu8 {
+        route_hashes.extend_from_slice(&[byte; 32]);
+    }
 
     vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(vec![0x12u8; 32]),
-        Expr::bytes(vec![0x13u8; 32]),
-        Expr::bytes(vec![0x14u8; 32]),
-        Expr::bytes(vec![0x15u8; 32]),
-        Expr::bytes(vec![0x16u8; 32]),
-        Expr::bytes(vec![0x17u8; 32]),
-        Expr::bytes(vec![0x18u8; 32]),
-        Expr::bytes(vec![0x19u8; 32]),
-        Expr::bytes(vec![0x1au8; 32]),
-        Expr::bytes(vec![0x1bu8; 32]),
-        Expr::bytes(vec![0x1cu8; 32]),
+        Expr::bytes(route_hashes),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(standard_board),
