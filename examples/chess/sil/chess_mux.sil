@@ -45,95 +45,6 @@ contract ChessMux(
     int pending_to_x = init_pending_to_x;
     int pending_to_y = init_pending_to_y;
 
-    function policy_route(
-        State prev_state,
-        int selector,
-        int from_x,
-        int from_y,
-        int to_x,
-        int to_y,
-        sig s,
-        pubkey pk
-    ) : (State, byte[32]) {
-        require(prev_state.status == 0);
-
-        bool is_white_turn = prev_state.turn == 0;
-        bool is_black_turn = prev_state.turn == 1;
-        require(is_white_turn || is_black_turn);
-
-        if (is_white_turn) {
-            require(blake2b(pk) == prev_state.white_player);
-        } else {
-            require(blake2b(pk) == prev_state.black_player);
-        }
-        require(checkSig(s, pk));
-
-        bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
-        bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
-        require(from_in_bounds && to_in_bounds);
-
-        byte[32] pawn_hash_local = prev_state.pawn_hash;
-        byte[32] knight_hash_local = prev_state.knight_hash;
-        byte[32] vert_up_hash_local = prev_state.vert_up_hash;
-        byte[32] vert_down_hash_local = prev_state.vert_down_hash;
-        byte[32] horiz_left_hash_local = prev_state.horiz_left_hash;
-        byte[32] horiz_right_hash_local = prev_state.horiz_right_hash;
-        byte[32] diag_up_right_hash_local = prev_state.diag_up_right_hash;
-        byte[32] diag_up_left_hash_local = prev_state.diag_up_left_hash;
-        byte[32] diag_down_right_hash_local = prev_state.diag_down_right_hash;
-        byte[32] diag_down_left_hash_local = prev_state.diag_down_left_hash;
-        byte[32] king_hash_local = prev_state.king_hash;
-
-        byte[32] target_hash = pawn_hash_local;
-        if (selector == 1) {
-            target_hash = knight_hash_local;
-        } else if (selector == 2) {
-            target_hash = vert_up_hash_local;
-        } else if (selector == 3) {
-            target_hash = vert_down_hash_local;
-        } else if (selector == 4) {
-            target_hash = horiz_left_hash_local;
-        } else if (selector == 5) {
-            target_hash = horiz_right_hash_local;
-        } else if (selector == 6) {
-            target_hash = diag_up_right_hash_local;
-        } else if (selector == 7) {
-            target_hash = diag_up_left_hash_local;
-        } else if (selector == 8) {
-            target_hash = diag_down_right_hash_local;
-        } else if (selector == 9) {
-            target_hash = diag_down_left_hash_local;
-        } else if (selector == 10) {
-            target_hash = king_hash_local;
-        } else {
-            require(selector == 0);
-        }
-
-        return({
-            mux_hash: prev_state.mux_hash,
-            pawn_hash: prev_state.pawn_hash,
-            knight_hash: prev_state.knight_hash,
-            vert_up_hash: prev_state.vert_up_hash,
-            vert_down_hash: prev_state.vert_down_hash,
-            horiz_left_hash: prev_state.horiz_left_hash,
-            horiz_right_hash: prev_state.horiz_right_hash,
-            diag_up_right_hash: prev_state.diag_up_right_hash,
-            diag_up_left_hash: prev_state.diag_up_left_hash,
-            diag_down_right_hash: prev_state.diag_down_right_hash,
-            diag_down_left_hash: prev_state.diag_down_left_hash,
-            king_hash: prev_state.king_hash,
-            white_player: prev_state.white_player,
-            black_player: prev_state.black_player,
-            board: prev_state.board,
-            turn: prev_state.turn,
-            status: prev_state.status,
-            pending_from_x: from_x,
-            pending_from_y: from_y,
-            pending_to_x: to_x,
-            pending_to_y: to_y
-        }, target_hash);
-    }
-
     entrypoint function route(
         int selector,
         int from_x,
@@ -146,8 +57,49 @@ contract ChessMux(
         byte[] target_suffix
     ) {
         int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
+        require(status == 0);
 
-        State prev_state = {
+        bool is_white_turn = turn == 0;
+        bool is_black_turn = turn == 1;
+        require(is_white_turn || is_black_turn);
+
+        if (is_white_turn) {
+            require(blake2b(pk) == white_player);
+        } else {
+            require(blake2b(pk) == black_player);
+        }
+        require(checkSig(s, pk));
+
+        bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
+        bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
+        require(from_in_bounds && to_in_bounds);
+
+        byte[32] target_hash = pawn_hash;
+        if (selector == 1) {
+            target_hash = knight_hash;
+        } else if (selector == 2) {
+            target_hash = vert_up_hash;
+        } else if (selector == 3) {
+            target_hash = vert_down_hash;
+        } else if (selector == 4) {
+            target_hash = horiz_left_hash;
+        } else if (selector == 5) {
+            target_hash = horiz_right_hash;
+        } else if (selector == 6) {
+            target_hash = diag_up_right_hash;
+        } else if (selector == 7) {
+            target_hash = diag_up_left_hash;
+        } else if (selector == 8) {
+            target_hash = diag_down_right_hash;
+        } else if (selector == 9) {
+            target_hash = diag_down_left_hash;
+        } else if (selector == 10) {
+            target_hash = king_hash;
+        } else {
+            require(selector == 0);
+        }
+
+        State next_state = {
             mux_hash: mux_hash,
             pawn_hash: pawn_hash,
             knight_hash: knight_hash,
@@ -165,12 +117,11 @@ contract ChessMux(
             board: board,
             turn: turn,
             status: status,
-            pending_from_x: pending_from_x,
-            pending_from_y: pending_from_y,
-            pending_to_x: pending_to_x,
-            pending_to_y: pending_to_y
+            pending_from_x: from_x,
+            pending_from_y: from_y,
+            pending_to_x: to_x,
+            pending_to_y: to_y
         };
-        (State next_state, byte[32] target_hash) = policy_route(prev_state, selector, from_x, from_y, to_x, to_y, s, pk);
 
         require(cov_out_count == 1);
         int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
