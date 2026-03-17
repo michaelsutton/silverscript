@@ -4,10 +4,10 @@ contract ChessMux(
     byte[32] init_mux_hash,
     byte[32] init_pawn_hash,
     byte[32] init_knight_hash,
-    byte[32] init_file_up_hash,
-    byte[32] init_file_down_hash,
-    byte[32] init_rank_left_hash,
-    byte[32] init_rank_right_hash,
+    byte[32] init_vert_up_hash,
+    byte[32] init_vert_down_hash,
+    byte[32] init_horiz_left_hash,
+    byte[32] init_horiz_right_hash,
     byte[32] init_diag_up_right_hash,
     byte[32] init_diag_up_left_hash,
     byte[32] init_diag_down_right_hash,
@@ -26,10 +26,10 @@ contract ChessMux(
     byte[32] mux_hash = init_mux_hash;
     byte[32] pawn_hash = init_pawn_hash;
     byte[32] knight_hash = init_knight_hash;
-    byte[32] file_up_hash = init_file_up_hash;
-    byte[32] file_down_hash = init_file_down_hash;
-    byte[32] rank_left_hash = init_rank_left_hash;
-    byte[32] rank_right_hash = init_rank_right_hash;
+    byte[32] vert_up_hash = init_vert_up_hash;
+    byte[32] vert_down_hash = init_vert_down_hash;
+    byte[32] horiz_left_hash = init_horiz_left_hash;
+    byte[32] horiz_right_hash = init_horiz_right_hash;
     byte[32] diag_up_right_hash = init_diag_up_right_hash;
     byte[32] diag_up_left_hash = init_diag_up_left_hash;
     byte[32] diag_down_right_hash = init_diag_down_right_hash;
@@ -74,10 +74,10 @@ contract ChessMux(
 
         byte[32] pawn_hash_local = prev_state.pawn_hash;
         byte[32] knight_hash_local = prev_state.knight_hash;
-        byte[32] file_up_hash_local = prev_state.file_up_hash;
-        byte[32] file_down_hash_local = prev_state.file_down_hash;
-        byte[32] rank_left_hash_local = prev_state.rank_left_hash;
-        byte[32] rank_right_hash_local = prev_state.rank_right_hash;
+        byte[32] vert_up_hash_local = prev_state.vert_up_hash;
+        byte[32] vert_down_hash_local = prev_state.vert_down_hash;
+        byte[32] horiz_left_hash_local = prev_state.horiz_left_hash;
+        byte[32] horiz_right_hash_local = prev_state.horiz_right_hash;
         byte[32] diag_up_right_hash_local = prev_state.diag_up_right_hash;
         byte[32] diag_up_left_hash_local = prev_state.diag_up_left_hash;
         byte[32] diag_down_right_hash_local = prev_state.diag_down_right_hash;
@@ -88,13 +88,13 @@ contract ChessMux(
         if (selector == 1) {
             target_hash = knight_hash_local;
         } else if (selector == 2) {
-            target_hash = file_up_hash_local;
+            target_hash = vert_up_hash_local;
         } else if (selector == 3) {
-            target_hash = file_down_hash_local;
+            target_hash = vert_down_hash_local;
         } else if (selector == 4) {
-            target_hash = rank_left_hash_local;
+            target_hash = horiz_left_hash_local;
         } else if (selector == 5) {
-            target_hash = rank_right_hash_local;
+            target_hash = horiz_right_hash_local;
         } else if (selector == 6) {
             target_hash = diag_up_right_hash_local;
         } else if (selector == 7) {
@@ -113,10 +113,10 @@ contract ChessMux(
             mux_hash: prev_state.mux_hash,
             pawn_hash: prev_state.pawn_hash,
             knight_hash: prev_state.knight_hash,
-            file_up_hash: prev_state.file_up_hash,
-            file_down_hash: prev_state.file_down_hash,
-            rank_left_hash: prev_state.rank_left_hash,
-            rank_right_hash: prev_state.rank_right_hash,
+            vert_up_hash: prev_state.vert_up_hash,
+            vert_down_hash: prev_state.vert_down_hash,
+            horiz_left_hash: prev_state.horiz_left_hash,
+            horiz_right_hash: prev_state.horiz_right_hash,
             diag_up_right_hash: prev_state.diag_up_right_hash,
             diag_up_left_hash: prev_state.diag_up_left_hash,
             diag_down_right_hash: prev_state.diag_down_right_hash,
@@ -151,10 +151,10 @@ contract ChessMux(
             mux_hash: mux_hash,
             pawn_hash: pawn_hash,
             knight_hash: knight_hash,
-            file_up_hash: file_up_hash,
-            file_down_hash: file_down_hash,
-            rank_left_hash: rank_left_hash,
-            rank_right_hash: rank_right_hash,
+            vert_up_hash: vert_up_hash,
+            vert_down_hash: vert_down_hash,
+            horiz_left_hash: horiz_left_hash,
+            horiz_right_hash: horiz_right_hash,
             diag_up_right_hash: diag_up_right_hash,
             diag_up_left_hash: diag_up_left_hash,
             diag_down_right_hash: diag_down_right_hash,

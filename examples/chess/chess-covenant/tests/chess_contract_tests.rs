@@ -8,8 +8,8 @@ use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
 use chess_covenant::{
     diag_down_left_contract_path, diag_down_right_contract_path, diag_up_left_contract_path, diag_up_right_contract_path,
-    example_contract_path, file_down_contract_path, file_up_contract_path, king_contract_path, knight_contract_path, pawn_contract_path,
-    rank_left_contract_path, rank_right_contract_path,
+    example_contract_path, horiz_left_contract_path, horiz_right_contract_path, king_contract_path, knight_contract_path,
+    pawn_contract_path, vert_down_contract_path, vert_up_contract_path,
 };
 
 fn load_contract_source() -> String {
@@ -91,7 +91,8 @@ fn isolated_rook_path_loop_bound_sweep() {
 fn chess_pawn_reports_script_size_and_opcode_count() {
     let path = pawn_contract_path();
     let source = fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"));
-    let compiled = compile_contract(&source, &pawn_constructor_args(), CompileOptions::default()).expect("pawn contract should compile");
+    let compiled =
+        compile_contract(&source, &pawn_constructor_args(), CompileOptions::default()).expect("pawn contract should compile");
     let opcode_count = parse_script::<PopulatedTransaction<'static>, SigHashReusedValuesUnsync>(&compiled.script).count();
 
     eprintln!("chess_pawn script_len={} opcode_count={}", compiled.script.len(), opcode_count);
@@ -103,10 +104,10 @@ fn chess_workers_report_script_size_and_opcode_count() {
     let workers = [
         ("knight", knight_contract_path()),
         ("king", king_contract_path()),
-        ("file_up", file_up_contract_path()),
-        ("file_down", file_down_contract_path()),
-        ("rank_left", rank_left_contract_path()),
-        ("rank_right", rank_right_contract_path()),
+        ("vert_up", vert_up_contract_path()),
+        ("vert_down", vert_down_contract_path()),
+        ("horiz_left", horiz_left_contract_path()),
+        ("horiz_right", horiz_right_contract_path()),
         ("diag_up_right", diag_up_right_contract_path()),
         ("diag_up_left", diag_up_left_contract_path()),
         ("diag_down_right", diag_down_right_contract_path()),
