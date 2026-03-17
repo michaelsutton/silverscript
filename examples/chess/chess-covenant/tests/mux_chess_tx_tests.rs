@@ -906,3 +906,59 @@ fn muxed_chess_routes_all_move_families() {
     );
     run_worker_apply("king", &king, &mux20, covenant_id19, &fix.mux);
 }
+
+#[test]
+fn capturing_enemy_king_sets_terminal_status() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[0] = 0x05;
+    board0[24] = 0x0e;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            pending_from_x: -1,
+            pending_from_y: -1,
+            pending_to_x: -1,
+            pending_to_y: -1,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let vert_up = compile_state(
+        fix.vert_up.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs { board: &board0, turn: 0, status: 0, pending_from_x: 0, pending_from_y: 0, pending_to_x: 0, pending_to_y: 3 },
+    );
+    run_route(&mux0, 2, 0, 0, 0, 3, &white, &fix.vert_up, &vert_up, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 0, 0, 0, 3);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 1,
+            pending_from_x: -1,
+            pending_from_y: -1,
+            pending_to_x: -1,
+            pending_to_y: -1,
+        },
+    );
+    run_worker_apply("vert_up_king_capture", &vert_up, &mux1, covenant_id, &fix.mux);
+}

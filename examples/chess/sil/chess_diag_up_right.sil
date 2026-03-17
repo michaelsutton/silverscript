@@ -107,6 +107,17 @@ contract ChessDiagUpRight(
         byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
         byte[64] next_board = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
 
+        // Capturing the enemy king is the on-chain terminal condition.
+        // Off-chain clients may enforce stricter classical no-self-check rules,
+        // but on chain a king capture conclusively proves the winner.
+        int next_status = status;
+        if (turn == 0 && target_num == 14) {
+            next_status = 1;
+        }
+        if (turn == 1 && target_num == 6) {
+            next_status = 2;
+        }
+
         // Return to ChessMux with the updated board, the turn flipped, and the
         // pending move cleared.
         State next_state = {
@@ -116,7 +127,7 @@ contract ChessDiagUpRight(
             black_player: black_player,
             board: next_board,
             turn: 1 - turn,
-            status: status,
+            status: next_status,
             pending_from_x: -1,
             pending_from_y: -1,
             pending_to_x: -1,
