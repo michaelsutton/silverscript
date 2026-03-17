@@ -36,12 +36,18 @@ contract ChessMux(
         byte[] target_prefix,
         byte[] target_suffix
     ) {
+        // Only idle mux states may start a new move. Workers return here after
+        // they have validated and applied exactly one committed move.
         require(status == 0);
 
+        // Chess alternates between white (0) and black (1); no other turn value
+        // is meaningful.
         bool is_white_turn = turn == 0;
         bool is_black_turn = turn == 1;
         require(is_white_turn || is_black_turn);
 
+        // The side to move authorizes the route once here. Downstream workers
+        // rely on the committed pending move and do not repeat signature checks.
         if (is_white_turn) {
             require(blake2b(pk) == white_player);
         } else {
@@ -49,6 +55,7 @@ contract ChessMux(
         }
         require(checkSig(s, pk));
 
+        // The mux only commits moves whose endpoints are on the 8x8 board.
         bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
         bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
         require(from_in_bounds && to_in_bounds);
@@ -70,6 +77,8 @@ contract ChessMux(
         int hash_end = hash_start + 32;
         byte[32] target_hash = route_hashes.slice(hash_start, hash_end);
 
+        // Routing does not mutate the board. It only commits the pending move so
+        // the selected worker can validate and apply it.
         State next_state = {
             mux_hash: mux_hash,
             route_hashes: route_hashes,
@@ -83,6 +92,8 @@ contract ChessMux(
             pending_to_x: to_x,
             pending_to_y: to_y
         };
+        // The mux must produce exactly one authorized covenant output and it
+        // must use the template selected by the route selector above.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(
             OpAuthOutputIdx(this.activeInputIndex, 0),

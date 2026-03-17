@@ -26,6 +26,7 @@ contract ChessDiagUpLeft(
     int pending_to_y = init_pending_to_y;
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
+        // Workers only accept active move proofs routed out of ChessMux.
         require(status == 0);
 
         int from_x = pending_from_x;
@@ -33,12 +34,15 @@ contract ChessDiagUpLeft(
         int to_x = pending_to_x;
         int to_y = pending_to_y;
 
+        // The committed move endpoints must still be valid board coordinates.
         require(from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8);
         require(to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8);
+        // Chess alternates between white (0) and black (1).
         require(turn == 0 || turn == 1);
 
         int from_idx = from_y * 8 + from_x;
         int to_idx = to_y * 8 + to_x;
+        // A move must actually change squares.
         require(from_idx != to_idx);
 
         byte[64] prev_board = board;
@@ -46,10 +50,14 @@ contract ChessDiagUpLeft(
         byte target_piece = prev_board[to_idx];
         int moving_num = OpBin2Num(moving_piece);
         int target_num = OpBin2Num(target_piece);
+        // Diagonal routes are shared by bishops and queens:
+        // white bishop = 3, white queen = 5, black bishop = 11, black queen = 13.
         require(moving_num == 3 || moving_num == 5 || moving_num == 11 || moving_num == 13);
 
         bool target_is_white = target_num >= 1 && target_num <= 6;
         bool target_is_black = target_num >= 9 && target_num <= 14;
+        // The side to move must move its own diagonal-moving piece and cannot
+        // capture its own color on the destination square.
         if (turn == 0) {
             require(moving_num == 3 || moving_num == 5);
             require(!target_is_white);
@@ -58,9 +66,14 @@ contract ChessDiagUpLeft(
             require(!target_is_black);
         }
 
+        // This route only allows an up-left diagonal: x shrinks, y grows, and
+        // the x/y displacement must match exactly. Equal displacement is the
+        // chess rule that makes the move truly diagonal.
         require(to_x < from_x && to_y > from_y && to_y - from_y == from_x - to_x);
         int distance = from_x - to_x;
 
+        // Every square strictly between source and destination must be empty for
+        // a bishop or queen diagonal move to be legal.
         int clear = 1;
         for (i, 0, 7, 7) {
             if (i < distance + -1) {
@@ -74,6 +87,9 @@ contract ChessDiagUpLeft(
         }
         require(clear == 1);
 
+        // Rewrite the board by clearing the source square and filling the
+        // destination square, using low/high index order to keep the splice
+        // logic simple for both move directions.
         int low_idx = from_idx;
         int high_idx = to_idx;
         byte first_slot = byte(0x00);
@@ -91,6 +107,8 @@ contract ChessDiagUpLeft(
         byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
         byte[64] next_board = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
 
+        // Return to ChessMux with the updated board, the turn flipped, and the
+        // pending move cleared.
         State next_state = {
             mux_hash: mux_hash,
             route_hashes: route_hashes,
@@ -104,6 +122,8 @@ contract ChessDiagUpLeft(
             pending_to_x: -1,
             pending_to_y: -1
         };
+        // The worker must produce exactly one authorized covenant output back to
+        // the mux template with the new state above.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(OpAuthOutputIdx(this.activeInputIndex, 0), next_state, mux_prefix, mux_suffix, mux_hash);
     }
