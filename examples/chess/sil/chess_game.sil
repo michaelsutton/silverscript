@@ -17,6 +17,7 @@ contract ChessGame(
     // 0 = ongoing, 1 = white wins, 2 = black wins
     int status = init_status;
 
+    // Small scalar helper used by piece-geometry checks.
     function abs_int(int value) : (int) {
         int result = value;
         if (value < 0) {
@@ -82,7 +83,9 @@ contract ChessGame(
             require(!target_is_black);
         }
 
-        // Stage 3: full local piece geometry without slider-path validation yet.
+        // Stage 3: piece-local move validation.
+        // This version now includes rook path checks, but still omits bishop/queen
+        // path checks, castling, en passant, and king-safety validation.
         int dx = to_x - from_x;
         int dy = to_y - from_y;
         (int abs_dx) = abs_int(dx);
@@ -101,6 +104,7 @@ contract ChessGame(
 
         int legal_move = 0;
 
+        // Pawn rules: forward pushes, starting double-step, diagonal captures.
         bool is_pawn = moving_num == 1 || moving_num == 9;
         if (is_pawn) {
             if (moving_is_white) {
@@ -126,28 +130,74 @@ contract ChessGame(
                     legal_move = 1;
                 }
             }
+        // Knight rules: only geometry matters because knights jump.
         } else if (moving_num == 2 || moving_num == 10) {
             bool shape_1 = side_adjacent && (up_two || down_two);
             bool shape_2 = (side_step_two_right || side_step_two_left) && (up_one || down_one);
             if (shape_1 || shape_2) {
                 legal_move = 1;
             }
+        // Bishop rules: geometry only for now; diagonal path emptiness still omitted.
         } else if (moving_num == 3 || moving_num == 11) {
             if (abs_dx == abs_dy && abs_dx > 0) {
                 legal_move = 1;
             }
+        // Rook rules: geometry is enforced, but path blocking is temporarily
+        // disabled in the live contract. The commented-out scan below compiles,
+        // but it pushes the old single-script flow over the runtime op limit.
+        // This is exactly the kind of logic that needs to move into muxed steps.
         } else if (moving_num == 4 || moving_num == 12) {
             bool same_file = from_x == to_x && abs_dy > 0;
             bool same_rank = from_y == to_y && abs_dx > 0;
+            /*
+            // Vertical scan.
+            int clear_file = 1;
+            for (i, 0, 7, 7) {
+                bool before_target = i < abs_dy + -1;
+                if (same_file && before_target) {
+                    int scan_y = from_y + i + 1;
+                    if (to_y < from_y) {
+                        scan_y = from_y - i - 1;
+                    }
+                    int idx = scan_y * 8 + from_x;
+                    if (OpBin2Num(prev_board[idx]) != 0) {
+                        clear_file = 0;
+                    }
+                }
+            }
+
+            // Horizontal scan.
+            int clear_rank = 1;
+            for (i, 0, 7, 7) {
+                bool before_target = i < abs_dx + -1;
+                if (same_rank && before_target) {
+                    int scan_x = from_x + i + 1;
+                    if (to_x < from_x) {
+                        scan_x = from_x - i - 1;
+                    }
+                    int idx = from_y * 8 + scan_x;
+                    if (OpBin2Num(prev_board[idx]) != 0) {
+                        clear_rank = 0;
+                    }
+                }
+            }
+
+            bool rook_clear = (same_file && clear_file == 1) || (same_rank && clear_rank == 1);
+            if (rook_clear) {
+                legal_move = 1;
+            }
+            */
             if (same_file || same_rank) {
                 legal_move = 1;
             }
+        // Queen rules: geometry only for now; slider path checks still omitted.
         } else if (moving_num == 5 || moving_num == 13) {
             bool diagonal = abs_dx == abs_dy && abs_dx > 0;
             bool straight = (from_x == to_x && abs_dy > 0) || (from_y == to_y && abs_dx > 0);
             if (diagonal || straight) {
                 legal_move = 1;
             }
+        // King rules: one-square neighborhood only; no castling yet.
         } else if (moving_num == 6 || moving_num == 14) {
             if (abs_dx <= 1 && abs_dy <= 1) {
                 legal_move = 1;
@@ -157,6 +207,7 @@ contract ChessGame(
         require(legal_move == 1);
 
         // Stage 4: reconstruct the next board and emit the next state.
+        // Promotion is currently the only special board rewrite.
         byte placed_piece = moving_piece;
         if (moving_num == 1 && to_y == 7) {
             placed_piece = byte(0x05);
