@@ -41,6 +41,16 @@ fn chess_contract_compiles_with_singleton_transition_entrypoint() {
 }
 
 #[test]
+fn chess_contract_reports_script_size() {
+    let source = load_contract_source();
+    let compiled =
+        compile_contract(&source, &default_constructor_args(), CompileOptions::default()).expect("chess covenant should compile");
+
+    eprintln!("chess_game script_len={}", compiled.script.len());
+    assert!(!compiled.script.is_empty());
+}
+
+#[test]
 fn chess_contract_requires_expected_constructor_arg_shape() {
     let source = load_contract_source();
     let err = compile_contract(&source, &[Expr::bytes(vec![1u8; 32])], CompileOptions::default())
