@@ -1,0 +1,171 @@
+pragma silverscript ^0.1.0;
+
+contract ChessPawn(
+    byte[32] init_mux_hash,
+    byte[32] init_pawn_hash,
+    byte[32] init_knight_hash,
+    byte[32] init_white_player,
+    byte[32] init_black_player,
+    byte[64] init_board,
+    int init_turn,
+    int init_status
+) {
+    byte[32] mux_hash = init_mux_hash;
+    byte[32] pawn_hash = init_pawn_hash;
+    byte[32] knight_hash = init_knight_hash;
+    byte[32] white_player = init_white_player;
+    byte[32] black_player = init_black_player;
+    byte[64] board = init_board;
+    int turn = init_turn;
+    int status = init_status;
+
+    function policy_apply(
+        State prev_state,
+        int from_x,
+        int from_y,
+        int to_x,
+        int to_y,
+        sig s,
+        pubkey pk
+    ) : (State) {
+        require(prev_state.status == 0);
+
+        bool is_white_turn = prev_state.turn == 0;
+        bool is_black_turn = prev_state.turn == 1;
+        require(is_white_turn || is_black_turn);
+
+        if (is_white_turn) {
+            require(blake2b(pk) == prev_state.white_player);
+        } else {
+            require(blake2b(pk) == prev_state.black_player);
+        }
+        require(checkSig(s, pk));
+
+        bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
+        bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
+        require(from_in_bounds && to_in_bounds);
+
+        int from_idx = from_y * 8 + from_x;
+        int to_idx = to_y * 8 + to_x;
+        require(from_idx != to_idx);
+
+        byte[64] prev_board = prev_state.board;
+        byte moving_piece = prev_board[from_idx];
+        byte target_piece = prev_board[to_idx];
+        int moving_num = OpBin2Num(moving_piece);
+        int target_num = OpBin2Num(target_piece);
+        require(moving_num == 1 || moving_num == 9);
+
+        bool moving_is_white = moving_num == 1;
+        bool moving_is_black = moving_num == 9;
+        bool target_is_empty = target_num == 0;
+        bool target_is_white = target_num >= 1 && target_num <= 6;
+        bool target_is_black = target_num >= 9 && target_num <= 14;
+
+        if (is_white_turn) {
+            require(moving_is_white);
+            require(!target_is_white);
+        } else {
+            require(moving_is_black);
+            require(!target_is_black);
+        }
+
+        bool side_step_right = to_x == from_x + 1;
+        bool side_step_left = to_x + 1 == from_x;
+        bool side_adjacent = side_step_right || side_step_left;
+        bool up_one = to_y == from_y + 1;
+        bool down_one = to_y + 1 == from_y;
+        bool up_two = to_y == from_y + 2;
+        bool down_two = to_y + 2 == from_y;
+
+        int legal_move = 0;
+        if (moving_is_white) {
+            bool one_step = to_x == from_x && up_one && target_is_empty;
+            bool two_step = false;
+            if (from_y == 1 && to_x == from_x && up_two && target_is_empty) {
+                int mid_idx = (from_y + 1) * 8 + from_x;
+                two_step = OpBin2Num(prev_board[mid_idx]) == 0;
+            }
+            bool capture = side_adjacent && up_one && target_is_black;
+            if (one_step || two_step || capture) {
+                legal_move = 1;
+            }
+        } else {
+            bool one_step = to_x == from_x && down_one && target_is_empty;
+            bool two_step = false;
+            if (from_y == 6 && to_x == from_x && down_two && target_is_empty) {
+                int mid_idx = (from_y + -1) * 8 + from_x;
+                two_step = OpBin2Num(prev_board[mid_idx]) == 0;
+            }
+            bool capture = side_adjacent && down_one && target_is_white;
+            if (one_step || two_step || capture) {
+                legal_move = 1;
+            }
+        }
+        require(legal_move == 1);
+
+        int low_idx = from_idx;
+        int high_idx = to_idx;
+        byte first_slot = byte(0x00);
+        byte second_slot = moving_piece;
+        if (from_idx > to_idx) {
+            low_idx = to_idx;
+            high_idx = from_idx;
+            first_slot = moving_piece;
+            second_slot = byte(0x00);
+        }
+
+        byte[] prev_dyn = byte[](prev_board);
+        byte[] prefix = prev_dyn.slice(0, low_idx);
+        byte[] middle = prev_dyn.slice(low_idx + 1, high_idx);
+        byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
+        byte[64] next_board = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
+
+        return({
+            mux_hash: prev_state.mux_hash,
+            pawn_hash: prev_state.pawn_hash,
+            knight_hash: prev_state.knight_hash,
+            white_player: prev_state.white_player,
+            black_player: prev_state.black_player,
+            board: next_board,
+            turn: 1 - prev_state.turn,
+            status: prev_state.status
+        });
+    }
+
+    entrypoint function apply(
+        int from_x,
+        int from_y,
+        int to_x,
+        int to_y,
+        sig s,
+        pubkey pk,
+        byte[] mux_prefix,
+        byte[] mux_suffix
+    ) {
+        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
+
+        State prev_state = {
+            mux_hash: mux_hash,
+            pawn_hash: pawn_hash,
+            knight_hash: knight_hash,
+            white_player: white_player,
+            black_player: black_player,
+            board: board,
+            turn: turn,
+            status: status
+        };
+        (State cov_new_state) = policy_apply(prev_state, from_x, from_y, to_x, to_y, s, pk);
+
+        require(cov_out_count == 1);
+        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+
+        validateOutputStateWithTemplate(
+            cov_out_idx,
+            cov_new_state,
+            mux_prefix,
+            mux_suffix,
+            mux_hash
+        );
+    }
+}
