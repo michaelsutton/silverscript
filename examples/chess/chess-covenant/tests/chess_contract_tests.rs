@@ -204,5 +204,6 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
         Expr::int(0),
         Expr::int(12),
         Expr::int(28),
+        Expr::int(0),
     ]
 }

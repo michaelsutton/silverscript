@@ -9,7 +9,8 @@ contract ChessVertUp(
     int init_turn,
     int init_status,
     int init_pending_src_idx,
-    int init_pending_dst_idx
+    int init_pending_dst_idx,
+    int init_pending_promo
 ) {
     byte[32] mux_hash = init_mux_hash;
     byte[352] route_hashes = init_route_hashes;
@@ -20,6 +21,7 @@ contract ChessVertUp(
     int status = init_status;
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
+    int pending_promo = init_pending_promo;
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
@@ -123,7 +125,8 @@ contract ChessVertUp(
             turn: 1 - turn,
             status: next_status,
             pending_src_idx: -1,
-            pending_dst_idx: -1
+            pending_dst_idx: -1,
+            pending_promo: 0
         };
         // The worker must produce exactly one authorized covenant output back to
         // the mux template with the new state above.
