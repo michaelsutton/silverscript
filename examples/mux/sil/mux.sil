@@ -4,17 +4,31 @@ contract Mux(byte[32] initMuxHash, byte[32] initAHash, byte[32] initBHash, int i
     byte[32] bHash = initBHash;
     int value = initValue;
 
-    // The caller selects which worker path to route to.
-    entrypoint function route(int selector, byte[] targetPrefix, byte[] targetSuffix) {
-        byte[32] targetHash = aHash;
+    // The policy stage decides which worker template hash to route to.
+    function policy_route(State prev_state, int selector) : (byte[32]) {
+        byte[32] prev_b_hash = prev_state.bHash;
+        byte[32] targetHash = prev_state.aHash;
         if (selector != 0) {
             require(selector == 1);
-            targetHash = bHash;
+            targetHash = prev_b_hash;
         }
 
+        return(targetHash);
+    }
+
+    // The wrapper reconstructs State, enforces singleton continuation, and validates the chosen worker output.
+    entrypoint function route(int selector, byte[] targetPrefix, byte[] targetSuffix) {
+        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
+
+        State prev_state = { muxHash: muxHash, aHash: aHash, bHash: bHash, value: value };
+        (byte[32] targetHash) = policy_route(prev_state, selector);
+
+        require(cov_out_count == 1);
+        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+
         validateOutputStateWithTemplate(
-            0,
-            {muxHash: muxHash, aHash: aHash, bHash: bHash, value: value},
+            cov_out_idx,
+            prev_state,
             targetPrefix,
             targetSuffix,
             targetHash
