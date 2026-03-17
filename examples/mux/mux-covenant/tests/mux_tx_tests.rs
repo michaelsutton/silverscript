@@ -63,8 +63,22 @@ fn run_p2sh_transition(input_contract: &CompiledContract, function: &str, args: 
     assert!(result.is_ok(), "{function} runtime failed: {}", result.unwrap_err());
 }
 
-#[test]
-fn mux_routes_and_workers_return_to_mux() {
+struct MuxFixture {
+    mux_source: String,
+    a_source: String,
+    b_source: String,
+    mux_prefix: Vec<u8>,
+    mux_suffix: Vec<u8>,
+    mux_hash: Vec<u8>,
+    a_prefix: Vec<u8>,
+    a_suffix: Vec<u8>,
+    a_hash: Vec<u8>,
+    b_prefix: Vec<u8>,
+    b_suffix: Vec<u8>,
+    b_hash: Vec<u8>,
+}
+
+fn build_mux_fixture() -> MuxFixture {
     let mux_source = load_contract_source(mux_contract_path());
     let a_source = load_contract_source(worker_a_contract_path());
     let b_source = load_contract_source(worker_b_contract_path());
@@ -76,26 +90,45 @@ fn mux_routes_and_workers_return_to_mux() {
     let (b_prefix, b_suffix, b_hash) =
         template_parts_and_hash(&b_source, &[vec![0x71u8; 32].into(), vec![0x81u8; 32].into(), vec![0x91u8; 32].into(), 5.into()]);
 
-    let state = [mux_hash.clone().into(), a_hash.clone().into(), b_hash.clone().into(), 5.into()];
+    MuxFixture {
+        mux_source,
+        a_source,
+        b_source,
+        mux_prefix,
+        mux_suffix,
+        mux_hash,
+        a_prefix,
+        a_suffix,
+        a_hash,
+        b_prefix,
+        b_suffix,
+        b_hash,
+    }
+}
 
-    let mux = compile_contract(&mux_source, &state, CompileOptions::default()).expect("compile mux succeeds");
-    let a = compile_contract(&a_source, &state, CompileOptions::default()).expect("compile A succeeds");
-    let b = compile_contract(&b_source, &state, CompileOptions::default()).expect("compile B succeeds");
+#[test]
+fn mux_routes_and_workers_return_to_mux() {
+    let fix = build_mux_fixture();
+    let state = [fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), 5.into()];
+
+    let mux = compile_contract(&fix.mux_source, &state, CompileOptions::default()).expect("compile mux succeeds");
+    let a = compile_contract(&fix.a_source, &state, CompileOptions::default()).expect("compile A succeeds");
+    let b = compile_contract(&fix.b_source, &state, CompileOptions::default()).expect("compile B succeeds");
     let mux_after_a = compile_contract(
-        &mux_source,
-        &[mux_hash.clone().into(), a_hash.clone().into(), b_hash.clone().into(), 6.into()],
+        &fix.mux_source,
+        &[fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), 6.into()],
         CompileOptions::default(),
     )
     .expect("compile mux after A succeeds");
     let mux_after_b = compile_contract(
-        &mux_source,
-        &[mux_hash.clone().into(), a_hash.clone().into(), b_hash.clone().into(), 7.into()],
+        &fix.mux_source,
+        &[fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), 7.into()],
         CompileOptions::default(),
     )
     .expect("compile mux after B succeeds");
 
-    run_p2sh_transition(&mux, "route", vec![0.into(), a_prefix.clone().into(), a_suffix.clone().into()], &a);
-    run_p2sh_transition(&mux, "route", vec![1.into(), b_prefix.clone().into(), b_suffix.clone().into()], &b);
-    run_p2sh_transition(&a, "apply", vec![mux_prefix.clone().into(), mux_suffix.clone().into()], &mux_after_a);
-    run_p2sh_transition(&b, "apply", vec![mux_prefix.into(), mux_suffix.into()], &mux_after_b);
+    run_p2sh_transition(&mux, "route", vec![0.into(), fix.a_prefix.clone().into(), fix.a_suffix.clone().into()], &a);
+    run_p2sh_transition(&mux, "route", vec![1.into(), fix.b_prefix.clone().into(), fix.b_suffix.clone().into()], &b);
+    run_p2sh_transition(&a, "apply", vec![fix.mux_prefix.clone().into(), fix.mux_suffix.clone().into()], &mux_after_a);
+    run_p2sh_transition(&b, "apply", vec![fix.mux_prefix.into(), fix.mux_suffix.into()], &mux_after_b);
 }
