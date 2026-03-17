@@ -9,7 +9,8 @@ contract ChessPawn(
     int init_turn,
     int init_status,
     int init_pending_src_idx,
-    int init_pending_dst_idx
+    int init_pending_dst_idx,
+    int init_pending_promo
 ) {
     byte[32] mux_hash = init_mux_hash;
     byte[352] route_hashes = init_route_hashes;
@@ -20,6 +21,7 @@ contract ChessPawn(
     int status = init_status;
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
+    int pending_promo = init_pending_promo;
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
@@ -27,6 +29,7 @@ contract ChessPawn(
 
         int from_idx = OpBin2Num(pending_src_idx);
         int to_idx = OpBin2Num(pending_dst_idx);
+        int promo_piece = OpBin2Num(pending_promo);
 
         int from_y = from_idx / 8;
         int from_x = from_idx % 8;
@@ -105,17 +108,38 @@ contract ChessPawn(
         }
         require(legal_move == 1);
 
+        bool reaches_back_rank = false;
+        if (moving_is_white) {
+            reaches_back_rank = to_y == 7;
+        } else {
+            reaches_back_rank = to_y == 0;
+        }
+
+        // ChessMux already constrained promo_piece. Here we only distinguish
+        // between promotion and non-promotion moves.
+        byte arrived_piece = moving_piece;
+        if (reaches_back_rank) {
+            require(promo_piece != 0);
+            int arrived_num = promo_piece;
+            if (moving_is_black) {
+                arrived_num = arrived_num + 8;
+            }
+            arrived_piece = byte(arrived_num);
+        } else {
+            require(promo_piece == 0);
+        }
+
         // Rewrite the board by clearing the source square and filling the
         // destination square, using low/high index order to keep the splice
         // logic simple for both move directions.
         int low_idx = from_idx;
         int high_idx = to_idx;
         byte first_slot = byte(0x00);
-        byte second_slot = moving_piece;
+        byte second_slot = arrived_piece;
         if (from_idx > to_idx) {
             low_idx = to_idx;
             high_idx = from_idx;
-            first_slot = moving_piece;
+            first_slot = arrived_piece;
             second_slot = byte(0x00);
         }
 
@@ -147,7 +171,8 @@ contract ChessPawn(
             turn: 1 - turn,
             status: next_status,
             pending_src_idx: -1,
-            pending_dst_idx: -1
+            pending_dst_idx: -1,
+            pending_promo: 0
         };
         // The worker must produce exactly one authorized covenant output back to
         // the mux template with the new state above.

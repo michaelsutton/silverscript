@@ -9,7 +9,8 @@ contract ChessMux(
     int init_turn,
     int init_status,
     int init_pending_src_idx,
-    int init_pending_dst_idx
+    int init_pending_dst_idx,
+    int init_pending_promo
 ) {
     byte[32] mux_hash = init_mux_hash;
     byte[352] route_hashes = init_route_hashes;
@@ -20,6 +21,7 @@ contract ChessMux(
     int status = init_status;
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
+    int pending_promo = init_pending_promo;
 
     entrypoint function route(
         int selector,
@@ -27,6 +29,7 @@ contract ChessMux(
         int from_y,
         int to_x,
         int to_y,
+        int promo_piece,
         sig s,
         pubkey pk,
         byte[] target_prefix,
@@ -73,8 +76,17 @@ contract ChessMux(
         int hash_end = hash_start + 32;
         byte[32] target_hash = route_hashes.slice(hash_start, hash_end);
 
-        // Routing does not mutate the board. It only commits the pending move so
-        // the selected worker can validate and apply it.
+        // Only pawn routes may carry a promotion choice.
+        // Piece encoding:
+        // white: 1 pawn, 2 knight, 3 bishop, 4 rook, 5 queen, 6 king
+        // black: 9 pawn, 10 knight, 11 bishop, 12 rook, 13 queen, 14 king
+        // black code = white code + 8
+        //
+        // Pawn promotion choices therefore use:
+        // 2 knight, 3 bishop, 4 rook, 5 queen
+        require(promo_piece == 0 || (selector == 0 && promo_piece >= 2 && promo_piece <= 5));
+
+        // Mux is the only writer of pending move fields.
         State next_state = {
             mux_hash: mux_hash,
             route_hashes: route_hashes,
@@ -84,10 +96,10 @@ contract ChessMux(
             turn: turn,
             status: status,
             pending_src_idx: from_y * 8 + from_x,
-            pending_dst_idx: to_y * 8 + to_x
+            pending_dst_idx: to_y * 8 + to_x,
+            pending_promo: promo_piece
         };
-        // The mux must produce exactly one authorized covenant output and it
-        // must use the template selected by the route selector above.
+        // Mux must produce exactly one authorized output with the selected template.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(
             OpAuthOutputIdx(this.activeInputIndex, 0),
