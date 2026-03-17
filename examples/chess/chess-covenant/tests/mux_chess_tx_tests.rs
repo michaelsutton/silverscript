@@ -17,7 +17,11 @@ use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledContract};
 
-use chess_covenant::{knight_contract_path, mux_contract_path, pawn_contract_path};
+use chess_covenant::{
+    diag_down_left_contract_path, diag_down_right_contract_path, diag_up_left_contract_path, diag_up_right_contract_path,
+    file_down_contract_path, file_up_contract_path, king_contract_path, knight_contract_path, mux_contract_path,
+    pawn_contract_path, rank_left_contract_path, rank_right_contract_path,
+};
 
 struct Player {
     keypair: Keypair,
@@ -25,19 +29,26 @@ struct Player {
     pubkey_hash: Vec<u8>,
 }
 
+struct TemplateFixture {
+    source: &'static str,
+    prefix: Vec<u8>,
+    suffix: Vec<u8>,
+    hash: Vec<u8>,
+}
+
 struct MuxChessFixture {
-    mux_source: &'static str,
-    pawn_source: &'static str,
-    knight_source: &'static str,
-    mux_prefix: Vec<u8>,
-    mux_suffix: Vec<u8>,
-    mux_hash: Vec<u8>,
-    pawn_prefix: Vec<u8>,
-    pawn_suffix: Vec<u8>,
-    pawn_hash: Vec<u8>,
-    knight_prefix: Vec<u8>,
-    knight_suffix: Vec<u8>,
-    knight_hash: Vec<u8>,
+    mux: TemplateFixture,
+    pawn: TemplateFixture,
+    knight: TemplateFixture,
+    file_up: TemplateFixture,
+    file_down: TemplateFixture,
+    rank_left: TemplateFixture,
+    rank_right: TemplateFixture,
+    diag_up_right: TemplateFixture,
+    diag_up_left: TemplateFixture,
+    diag_down_right: TemplateFixture,
+    diag_down_left: TemplateFixture,
+    king: TemplateFixture,
 }
 
 fn player_from_seed(seed: u8) -> Player {
@@ -55,13 +66,13 @@ fn load_contract_source(path: &'static str) -> &'static str {
     Box::leak(source.into_boxed_str())
 }
 
-fn template_parts_and_hash(source: &str, state: &[Expr<'_>]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let compiled = compile_contract(source, state, CompileOptions::default()).expect("compile template source succeeds");
+fn template_fixture(source: &'static str, ctor: &[Expr<'_>]) -> TemplateFixture {
+    let compiled = compile_contract(source, ctor, CompileOptions::default()).expect("compile template source succeeds");
     let layout = compiled.state_layout;
     let prefix = compiled.script[..layout.start].to_vec();
     let suffix = compiled.script[layout.start + layout.len..].to_vec();
     let hash = Blake2bParams::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize().as_bytes().to_vec();
-    (prefix, suffix, hash)
+    TemplateFixture { source, prefix, suffix, hash }
 }
 
 fn standard_board() -> Vec<u8> {
@@ -85,38 +96,54 @@ fn build_fixture() -> MuxChessFixture {
     let mux_source = load_contract_source(mux_contract_path());
     let pawn_source = load_contract_source(pawn_contract_path());
     let knight_source = load_contract_source(knight_contract_path());
+    let file_up_source = load_contract_source(file_up_contract_path());
+    let file_down_source = load_contract_source(file_down_contract_path());
+    let rank_left_source = load_contract_source(rank_left_contract_path());
+    let rank_right_source = load_contract_source(rank_right_contract_path());
+    let diag_up_right_source = load_contract_source(diag_up_right_contract_path());
+    let diag_up_left_source = load_contract_source(diag_up_left_contract_path());
+    let diag_down_right_source = load_contract_source(diag_down_right_contract_path());
+    let diag_down_left_source = load_contract_source(diag_down_left_contract_path());
+    let king_source = load_contract_source(king_contract_path());
 
-    let dummy_player_a = vec![0x11u8; 32];
-    let dummy_player_b = vec![0x22u8; 32];
     let dummy_board = standard_board();
-    let ctor = [
-        vec![0x31u8; 32].into(),
-        vec![0x41u8; 32].into(),
-        vec![0x51u8; 32].into(),
-        dummy_player_a.into(),
-        dummy_player_b.into(),
-        dummy_board.into(),
-        0.into(),
-        0.into(),
+    let ctor = vec![
+        Expr::bytes(vec![0x11u8; 32]),
+        Expr::bytes(vec![0x12u8; 32]),
+        Expr::bytes(vec![0x13u8; 32]),
+        Expr::bytes(vec![0x14u8; 32]),
+        Expr::bytes(vec![0x15u8; 32]),
+        Expr::bytes(vec![0x16u8; 32]),
+        Expr::bytes(vec![0x17u8; 32]),
+        Expr::bytes(vec![0x18u8; 32]),
+        Expr::bytes(vec![0x19u8; 32]),
+        Expr::bytes(vec![0x1au8; 32]),
+        Expr::bytes(vec![0x1bu8; 32]),
+        Expr::bytes(vec![0x1cu8; 32]),
+        Expr::bytes(vec![0x21u8; 32]),
+        Expr::bytes(vec![0x22u8; 32]),
+        Expr::bytes(dummy_board),
+        Expr::int(0),
+        Expr::int(0),
+        Expr::int(-1),
+        Expr::int(-1),
+        Expr::int(-1),
+        Expr::int(-1),
     ];
 
-    let (mux_prefix, mux_suffix, mux_hash) = template_parts_and_hash(mux_source, &ctor);
-    let (pawn_prefix, pawn_suffix, pawn_hash) = template_parts_and_hash(pawn_source, &ctor);
-    let (knight_prefix, knight_suffix, knight_hash) = template_parts_and_hash(knight_source, &ctor);
-
     MuxChessFixture {
-        mux_source,
-        pawn_source,
-        knight_source,
-        mux_prefix,
-        mux_suffix,
-        mux_hash,
-        pawn_prefix,
-        pawn_suffix,
-        pawn_hash,
-        knight_prefix,
-        knight_suffix,
-        knight_hash,
+        mux: template_fixture(mux_source, &ctor),
+        pawn: template_fixture(pawn_source, &ctor),
+        knight: template_fixture(knight_source, &ctor),
+        file_up: template_fixture(file_up_source, &ctor),
+        file_down: template_fixture(file_down_source, &ctor),
+        rank_left: template_fixture(rank_left_source, &ctor),
+        rank_right: template_fixture(rank_right_source, &ctor),
+        diag_up_right: template_fixture(diag_up_right_source, &ctor),
+        diag_up_left: template_fixture(diag_up_left_source, &ctor),
+        diag_down_right: template_fixture(diag_down_right_source, &ctor),
+        diag_down_left: template_fixture(diag_down_left_source, &ctor),
+        king: template_fixture(king_source, &ctor),
     }
 }
 
@@ -128,16 +155,33 @@ fn compile_state(
     board: &[u8],
     turn: i64,
     status: i64,
+    pending_from_x: i64,
+    pending_from_y: i64,
+    pending_to_x: i64,
+    pending_to_y: i64,
 ) -> CompiledContract<'static> {
     let ctor = vec![
-        Expr::bytes(fix.mux_hash.clone()),
-        Expr::bytes(fix.pawn_hash.clone()),
-        Expr::bytes(fix.knight_hash.clone()),
+        Expr::bytes(fix.mux.hash.clone()),
+        Expr::bytes(fix.pawn.hash.clone()),
+        Expr::bytes(fix.knight.hash.clone()),
+        Expr::bytes(fix.file_up.hash.clone()),
+        Expr::bytes(fix.file_down.hash.clone()),
+        Expr::bytes(fix.rank_left.hash.clone()),
+        Expr::bytes(fix.rank_right.hash.clone()),
+        Expr::bytes(fix.diag_up_right.hash.clone()),
+        Expr::bytes(fix.diag_up_left.hash.clone()),
+        Expr::bytes(fix.diag_down_right.hash.clone()),
+        Expr::bytes(fix.diag_down_left.hash.clone()),
+        Expr::bytes(fix.king.hash.clone()),
         Expr::bytes(white_hash.to_vec()),
         Expr::bytes(black_hash.to_vec()),
         Expr::bytes(board.to_vec()),
         Expr::int(turn),
         Expr::int(status),
+        Expr::int(pending_from_x),
+        Expr::int(pending_from_y),
+        Expr::int(pending_to_x),
+        Expr::int(pending_to_y),
     ];
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile mux chess state")
 }
@@ -177,10 +221,7 @@ fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> H
     };
     let covenant_id = kaspa_consensus_core::hashing::covenant_id::covenant_id(
         input.previous_outpoint,
-        std::iter::once((
-            0u32,
-            &TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&compiled.script), covenant: None },
-        )),
+        std::iter::once((0u32, &TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&compiled.script), covenant: None })),
     );
     let output = TransactionOutput {
         value: 1_000,
@@ -200,7 +241,6 @@ fn execute_input_with_covenants(tx: Transaction, entries: Vec<UtxoEntry>, input_
     let populated = PopulatedTransaction::new(&tx, entries);
     let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
     let utxo = populated.utxo(input_idx).expect("selected input utxo");
-
     let mut vm = TxScriptEngine::from_transaction_input(
         &populated,
         &input,
@@ -227,145 +267,183 @@ fn sign_tx_input_schnorr(tx: &Transaction, entries: &[UtxoEntry], input_idx: usi
 fn run_route(
     active: &CompiledContract<'_>,
     selector: i64,
-    target_prefix: Vec<u8>,
-    target_suffix: Vec<u8>,
+    from_x: i64,
+    from_y: i64,
+    to_x: i64,
+    to_y: i64,
+    player: &Player,
+    target: &TemplateFixture,
     out: &CompiledContract<'_>,
     covenant_id: Hash,
 ) {
-    let sigscript = entry_sigscript(active, "route", vec![selector.into(), target_prefix.into(), target_suffix.into()]);
-    let input = tx_input(0, sigscript);
+    let placeholder_sig = vec![0u8; 65];
+    let placeholder_sigscript = entry_sigscript(
+        active,
+        "route",
+        vec![
+            selector.into(),
+            from_x.into(),
+            from_y.into(),
+            to_x.into(),
+            to_y.into(),
+            Expr::bytes(placeholder_sig),
+            Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(target.prefix.clone()),
+            Expr::bytes(target.suffix.clone()),
+        ],
+    );
     let outputs = vec![covenant_output(out, 0, covenant_id)];
     let entries = vec![covenant_utxo(active, covenant_id)];
-    let tx = Transaction::new(1, vec![input], outputs, 0, Default::default(), 0, vec![]);
+    let mut tx = Transaction::new(1, vec![tx_input(0, placeholder_sigscript)], outputs, 0, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, player);
+    tx.inputs[0].signature_script = entry_sigscript(
+        active,
+        "route",
+        vec![
+            selector.into(),
+            from_x.into(),
+            from_y.into(),
+            to_x.into(),
+            to_y.into(),
+            Expr::bytes(sig),
+            Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(target.prefix.clone()),
+            Expr::bytes(target.suffix.clone()),
+        ],
+    );
     let result = execute_input_with_covenants(tx, entries, 0);
     assert!(result.is_ok(), "route should succeed: {:?}", result.unwrap_err());
 }
 
-fn run_pawn_apply(
-    active: &CompiledContract<'_>,
-    next: &CompiledContract<'_>,
-    covenant_id: Hash,
-    player: &Player,
-    from_x: i64,
-    from_y: i64,
-    to_x: i64,
-    to_y: i64,
-    mux_prefix: Vec<u8>,
-    mux_suffix: Vec<u8>,
-) {
-    let placeholder_sig = vec![0u8; 65];
-    let placeholder_sigscript = entry_sigscript(
-        active,
-        "apply",
-        vec![
-            from_x.into(),
-            from_y.into(),
-            to_x.into(),
-            to_y.into(),
-            Expr::bytes(placeholder_sig),
-            Expr::bytes(player.pubkey_bytes.clone()),
-            Expr::bytes(mux_prefix.clone()),
-            Expr::bytes(mux_suffix.clone()),
-        ],
-    );
-
+fn run_worker_apply(label: &str, active: &CompiledContract<'_>, next: &CompiledContract<'_>, covenant_id: Hash, mux: &TemplateFixture) {
+    let sigscript = entry_sigscript(active, "apply", vec![Expr::bytes(mux.prefix.clone()), Expr::bytes(mux.suffix.clone())]);
     let outputs = vec![covenant_output(next, 0, covenant_id)];
     let entries = vec![covenant_utxo(active, covenant_id)];
-    let mut signed_tx = Transaction::new(1, vec![tx_input(0, placeholder_sigscript)], outputs, 0, Default::default(), 0, vec![]);
-    let sig = sign_tx_input_schnorr(&signed_tx, &entries, 0, player);
-    signed_tx.inputs[0].signature_script = entry_sigscript(
-        active,
-        "apply",
-        vec![
-            from_x.into(),
-            from_y.into(),
-            to_x.into(),
-            to_y.into(),
-            Expr::bytes(sig),
-            Expr::bytes(player.pubkey_bytes.clone()),
-            Expr::bytes(mux_prefix),
-            Expr::bytes(mux_suffix),
-        ],
-    );
-
-    let result = execute_input_with_covenants(signed_tx, entries, 0);
-    assert!(result.is_ok(), "pawn apply should succeed: {:?}", result.unwrap_err());
-}
-
-fn run_knight_apply(
-    active: &CompiledContract<'_>,
-    next: &CompiledContract<'_>,
-    covenant_id: Hash,
-    player: &Player,
-    from_x: i64,
-    from_y: i64,
-    to_x: i64,
-    to_y: i64,
-    mux_prefix: Vec<u8>,
-    mux_suffix: Vec<u8>,
-) {
-    let placeholder_sig = vec![0u8; 65];
-    let placeholder_sigscript = entry_sigscript(
-        active,
-        "apply",
-        vec![
-            from_x.into(),
-            from_y.into(),
-            to_x.into(),
-            to_y.into(),
-            Expr::bytes(placeholder_sig),
-            Expr::bytes(player.pubkey_bytes.clone()),
-            Expr::bytes(mux_prefix.clone()),
-            Expr::bytes(mux_suffix.clone()),
-        ],
-    );
-
-    let outputs = vec![covenant_output(next, 0, covenant_id)];
-    let entries = vec![covenant_utxo(active, covenant_id)];
-    let mut signed_tx = Transaction::new(1, vec![tx_input(0, placeholder_sigscript)], outputs, 0, Default::default(), 0, vec![]);
-    let sig = sign_tx_input_schnorr(&signed_tx, &entries, 0, player);
-    signed_tx.inputs[0].signature_script = entry_sigscript(
-        active,
-        "apply",
-        vec![
-            from_x.into(),
-            from_y.into(),
-            to_x.into(),
-            to_y.into(),
-            Expr::bytes(sig),
-            Expr::bytes(player.pubkey_bytes.clone()),
-            Expr::bytes(mux_prefix),
-            Expr::bytes(mux_suffix),
-        ],
-    );
-
-    let result = execute_input_with_covenants(signed_tx, entries, 0);
-    assert!(result.is_ok(), "knight apply should succeed: {:?}", result.unwrap_err());
+    let tx = Transaction::new(1, vec![tx_input(0, sigscript)], outputs, 0, Default::default(), 0, vec![]);
+    let result = execute_input_with_covenants(tx, entries, 0);
+    assert!(result.is_ok(), "{label} worker apply should succeed: {:?}", result.unwrap_err());
 }
 
 #[test]
-fn muxed_chess_routes_pawn_and_knight_workers() {
+fn muxed_chess_routes_all_move_families() {
     let fix = build_fixture();
     let white = player_from_seed(1);
     let black = player_from_seed(2);
 
     let board0 = standard_board();
-    let mux0 = compile_state(fix.mux_source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board0, 0, 0);
+    let mux0 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board0, 0, 0, -1, -1, -1, -1);
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
-    let pawn0 = compile_state(fix.pawn_source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board0, 0, 0);
-    run_route(&mux0, 0, fix.pawn_prefix.clone(), fix.pawn_suffix.clone(), &pawn0, covenant_id);
-
+    let pawn0 = compile_state(fix.pawn.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board0, 0, 0, 4, 1, 4, 3);
+    run_route(&mux0, 0, 4, 1, 4, 3, &white, &fix.pawn, &pawn0, covenant_id);
     let mut board1 = board0.clone();
     move_piece(&mut board1, 4, 1, 4, 3);
-    let mux1 = compile_state(fix.mux_source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board1, 1, 0);
-    run_pawn_apply(&pawn0, &mux1, covenant_id, &white, 4, 1, 4, 3, fix.mux_prefix.clone(), fix.mux_suffix.clone());
+    let mux1 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board1, 1, 0, -1, -1, -1, -1);
+    run_worker_apply("pawn", &pawn0, &mux1, covenant_id, &fix.mux);
 
-    let knight1 = compile_state(fix.knight_source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board1, 1, 0);
-    run_route(&mux1, 1, fix.knight_prefix.clone(), fix.knight_suffix.clone(), &knight1, covenant_id);
-
+    let knight1 = compile_state(fix.knight.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board1, 1, 0, 6, 7, 5, 5);
+    run_route(&mux1, 1, 6, 7, 5, 5, &black, &fix.knight, &knight1, covenant_id);
     let mut board2 = board1.clone();
     move_piece(&mut board2, 6, 7, 5, 5);
-    let mux2 = compile_state(fix.mux_source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board2, 0, 0);
-    run_knight_apply(&knight1, &mux2, covenant_id, &black, 6, 7, 5, 5, fix.mux_prefix, fix.mux_suffix);
+    let mux2 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board2, 0, 0, -1, -1, -1, -1);
+    run_worker_apply("knight", &knight1, &mux2, covenant_id, &fix.mux);
+
+    let mut board3 = vec![0u8; 64];
+    board3[0] = 0x04;
+    let mux3 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board3, 0, 0, -1, -1, -1, -1);
+    let covenant_id3 = populate_single_output_genesis_covenant(&mux3);
+    let file_up = compile_state(fix.file_up.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board3, 0, 0, 0, 0, 0, 3);
+    run_route(&mux3, 2, 0, 0, 0, 3, &white, &fix.file_up, &file_up, covenant_id3);
+    let mut board4 = board3.clone();
+    move_piece(&mut board4, 0, 0, 0, 3);
+    let mux4 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board4, 1, 0, -1, -1, -1, -1);
+    run_worker_apply("file_up", &file_up, &mux4, covenant_id3, &fix.mux);
+
+    let mut board5 = vec![0u8; 64];
+    board5[56] = 0x0c;
+    let mux5 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board5, 1, 0, -1, -1, -1, -1);
+    let covenant_id5 = populate_single_output_genesis_covenant(&mux5);
+    let file_down = compile_state(fix.file_down.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board5, 1, 0, 0, 7, 0, 4);
+    run_route(&mux5, 3, 0, 7, 0, 4, &black, &fix.file_down, &file_down, covenant_id5);
+    let mut board6 = board5.clone();
+    move_piece(&mut board6, 0, 7, 0, 4);
+    let mux6 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board6, 0, 0, -1, -1, -1, -1);
+    run_worker_apply("file_down", &file_down, &mux6, covenant_id5, &fix.mux);
+
+    let mut board7 = vec![0u8; 64];
+    board7[31] = 0x05;
+    let mux7 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board7, 0, 0, -1, -1, -1, -1);
+    let covenant_id7 = populate_single_output_genesis_covenant(&mux7);
+    let rank_left = compile_state(fix.rank_left.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board7, 0, 0, 7, 3, 4, 3);
+    run_route(&mux7, 4, 7, 3, 4, 3, &white, &fix.rank_left, &rank_left, covenant_id7);
+    let mut board8 = board7.clone();
+    move_piece(&mut board8, 7, 3, 4, 3);
+    let mux8 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board8, 1, 0, -1, -1, -1, -1);
+    run_worker_apply("rank_left", &rank_left, &mux8, covenant_id7, &fix.mux);
+
+    let mut board9 = vec![0u8; 64];
+    board9[24] = 0x05;
+    let mux9 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board9, 0, 0, -1, -1, -1, -1);
+    let covenant_id9 = populate_single_output_genesis_covenant(&mux9);
+    let rank_right = compile_state(fix.rank_right.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board9, 0, 0, 0, 3, 3, 3);
+    run_route(&mux9, 5, 0, 3, 3, 3, &white, &fix.rank_right, &rank_right, covenant_id9);
+    let mut board10 = board9.clone();
+    move_piece(&mut board10, 0, 3, 3, 3);
+    let mux10 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board10, 1, 0, -1, -1, -1, -1);
+    run_worker_apply("rank_right", &rank_right, &mux10, covenant_id9, &fix.mux);
+
+    let mut board11 = vec![0u8; 64];
+    board11[0] = 0x03;
+    let mux11 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board11, 0, 0, -1, -1, -1, -1);
+    let covenant_id11 = populate_single_output_genesis_covenant(&mux11);
+    let diag_up_right = compile_state(fix.diag_up_right.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board11, 0, 0, 0, 0, 3, 3);
+    run_route(&mux11, 6, 0, 0, 3, 3, &white, &fix.diag_up_right, &diag_up_right, covenant_id11);
+    let mut board12 = board11.clone();
+    move_piece(&mut board12, 0, 0, 3, 3);
+    let mux12 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board12, 1, 0, -1, -1, -1, -1);
+    run_worker_apply("diag_up_right", &diag_up_right, &mux12, covenant_id11, &fix.mux);
+
+    let mut board13 = vec![0u8; 64];
+    board13[7] = 0x03;
+    let mux13 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board13, 0, 0, -1, -1, -1, -1);
+    let covenant_id13 = populate_single_output_genesis_covenant(&mux13);
+    let diag_up_left = compile_state(fix.diag_up_left.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board13, 0, 0, 7, 0, 4, 3);
+    run_route(&mux13, 7, 7, 0, 4, 3, &white, &fix.diag_up_left, &diag_up_left, covenant_id13);
+    let mut board14 = board13.clone();
+    move_piece(&mut board14, 7, 0, 4, 3);
+    let mux14 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board14, 1, 0, -1, -1, -1, -1);
+    run_worker_apply("diag_up_left", &diag_up_left, &mux14, covenant_id13, &fix.mux);
+
+    let mut board15 = vec![0u8; 64];
+    board15[56] = 0x0b;
+    let mux15 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board15, 1, 0, -1, -1, -1, -1);
+    let covenant_id15 = populate_single_output_genesis_covenant(&mux15);
+    let diag_down_right = compile_state(fix.diag_down_right.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board15, 1, 0, 0, 7, 3, 4);
+    run_route(&mux15, 8, 0, 7, 3, 4, &black, &fix.diag_down_right, &diag_down_right, covenant_id15);
+    let mut board16 = board15.clone();
+    move_piece(&mut board16, 0, 7, 3, 4);
+    let mux16 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board16, 0, 0, -1, -1, -1, -1);
+    run_worker_apply("diag_down_right", &diag_down_right, &mux16, covenant_id15, &fix.mux);
+
+    let mut board17 = vec![0u8; 64];
+    board17[63] = 0x0b;
+    let mux17 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board17, 1, 0, -1, -1, -1, -1);
+    let covenant_id17 = populate_single_output_genesis_covenant(&mux17);
+    let diag_down_left = compile_state(fix.diag_down_left.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board17, 1, 0, 7, 7, 4, 4);
+    run_route(&mux17, 9, 7, 7, 4, 4, &black, &fix.diag_down_left, &diag_down_left, covenant_id17);
+    let mut board18 = board17.clone();
+    move_piece(&mut board18, 7, 7, 4, 4);
+    let mux18 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board18, 0, 0, -1, -1, -1, -1);
+    run_worker_apply("diag_down_left", &diag_down_left, &mux18, covenant_id17, &fix.mux);
+
+    let mut board19 = vec![0u8; 64];
+    board19[4] = 0x06;
+    let mux19 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board19, 0, 0, -1, -1, -1, -1);
+    let covenant_id19 = populate_single_output_genesis_covenant(&mux19);
+    let king = compile_state(fix.king.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board19, 0, 0, 4, 0, 4, 1);
+    run_route(&mux19, 10, 4, 0, 4, 1, &white, &fix.king, &king, covenant_id19);
+    let mut board20 = board19.clone();
+    move_piece(&mut board20, 4, 0, 4, 1);
+    let mux20 = compile_state(fix.mux.source, &fix, &white.pubkey_hash, &black.pubkey_hash, &board20, 1, 0, -1, -1, -1, -1);
+    run_worker_apply("king", &king, &mux20, covenant_id19, &fix.mux);
 }

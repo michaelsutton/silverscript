@@ -1,9 +1,16 @@
 use std::fs;
 
+use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
+use kaspa_consensus_core::tx::PopulatedTransaction;
+use kaspa_txscript::parse_script;
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
-use chess_covenant::example_contract_path;
+use chess_covenant::{
+    diag_down_left_contract_path, diag_down_right_contract_path, diag_up_left_contract_path, diag_up_right_contract_path,
+    example_contract_path, file_down_contract_path, file_up_contract_path, king_contract_path, knight_contract_path, pawn_contract_path,
+    rank_left_contract_path, rank_right_contract_path,
+};
 
 fn load_contract_source() -> String {
     let path = example_contract_path();
@@ -80,6 +87,40 @@ fn isolated_rook_path_loop_bound_sweep() {
     }
 }
 
+#[test]
+fn chess_pawn_reports_script_size_and_opcode_count() {
+    let path = pawn_contract_path();
+    let source = fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"));
+    let compiled = compile_contract(&source, &pawn_constructor_args(), CompileOptions::default()).expect("pawn contract should compile");
+    let opcode_count = parse_script::<PopulatedTransaction<'static>, SigHashReusedValuesUnsync>(&compiled.script).count();
+
+    eprintln!("chess_pawn script_len={} opcode_count={}", compiled.script.len(), opcode_count);
+    assert!(!compiled.script.is_empty());
+}
+
+#[test]
+fn chess_workers_report_script_size_and_opcode_count() {
+    let workers = [
+        ("knight", knight_contract_path()),
+        ("king", king_contract_path()),
+        ("file_up", file_up_contract_path()),
+        ("file_down", file_down_contract_path()),
+        ("rank_left", rank_left_contract_path()),
+        ("rank_right", rank_right_contract_path()),
+        ("diag_up_right", diag_up_right_contract_path()),
+        ("diag_up_left", diag_up_left_contract_path()),
+        ("diag_down_right", diag_down_right_contract_path()),
+        ("diag_down_left", diag_down_left_contract_path()),
+    ];
+
+    for (name, path) in workers {
+        let source = fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"));
+        let compiled = compile_contract(&source, &pawn_constructor_args(), CompileOptions::default()).expect("worker should compile");
+        let opcode_count = parse_script::<PopulatedTransaction<'static>, SigHashReusedValuesUnsync>(&compiled.script).count();
+        eprintln!("{name} script_len={} opcode_count={}", compiled.script.len(), opcode_count);
+    }
+}
+
 fn isolated_rook_path_source() -> &'static str {
     r#"
 pragma silverscript ^0.1.0;
@@ -138,4 +179,37 @@ contract Probe(byte[64] init_board, int path_bound) {
 
 fn isolated_rook_path_constructor_args(bound: usize) -> Vec<Expr<'static>> {
     vec![Expr::bytes(vec![0u8; 64]), Expr::int(bound as i64)]
+}
+
+fn pawn_constructor_args() -> Vec<Expr<'static>> {
+    let standard_board: Vec<u8> = vec![
+        0x04, 0x02, 0x03, 0x05, 0x06, 0x03, 0x02, 0x04, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x0c, 0x0a, 0x0b, 0x0d, 0x0e, 0x0b, 0x0a,
+        0x0c,
+    ];
+
+    vec![
+        Expr::bytes(vec![0x11u8; 32]),
+        Expr::bytes(vec![0x12u8; 32]),
+        Expr::bytes(vec![0x13u8; 32]),
+        Expr::bytes(vec![0x14u8; 32]),
+        Expr::bytes(vec![0x15u8; 32]),
+        Expr::bytes(vec![0x16u8; 32]),
+        Expr::bytes(vec![0x17u8; 32]),
+        Expr::bytes(vec![0x18u8; 32]),
+        Expr::bytes(vec![0x19u8; 32]),
+        Expr::bytes(vec![0x1au8; 32]),
+        Expr::bytes(vec![0x1bu8; 32]),
+        Expr::bytes(vec![0x1cu8; 32]),
+        Expr::bytes(vec![0x21u8; 32]),
+        Expr::bytes(vec![0x22u8; 32]),
+        Expr::bytes(standard_board),
+        Expr::int(0),
+        Expr::int(0),
+        Expr::int(4),
+        Expr::int(1),
+        Expr::int(4),
+        Expr::int(3),
+    ]
 }

@@ -4,54 +4,180 @@ contract ChessMux(
     byte[32] init_mux_hash,
     byte[32] init_pawn_hash,
     byte[32] init_knight_hash,
+    byte[32] init_file_up_hash,
+    byte[32] init_file_down_hash,
+    byte[32] init_rank_left_hash,
+    byte[32] init_rank_right_hash,
+    byte[32] init_diag_up_right_hash,
+    byte[32] init_diag_up_left_hash,
+    byte[32] init_diag_down_right_hash,
+    byte[32] init_diag_down_left_hash,
+    byte[32] init_king_hash,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
     int init_turn,
-    int init_status
+    int init_status,
+    int init_pending_from_x,
+    int init_pending_from_y,
+    int init_pending_to_x,
+    int init_pending_to_y
 ) {
     byte[32] mux_hash = init_mux_hash;
     byte[32] pawn_hash = init_pawn_hash;
     byte[32] knight_hash = init_knight_hash;
+    byte[32] file_up_hash = init_file_up_hash;
+    byte[32] file_down_hash = init_file_down_hash;
+    byte[32] rank_left_hash = init_rank_left_hash;
+    byte[32] rank_right_hash = init_rank_right_hash;
+    byte[32] diag_up_right_hash = init_diag_up_right_hash;
+    byte[32] diag_up_left_hash = init_diag_up_left_hash;
+    byte[32] diag_down_right_hash = init_diag_down_right_hash;
+    byte[32] diag_down_left_hash = init_diag_down_left_hash;
+    byte[32] king_hash = init_king_hash;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
     int turn = init_turn;
     int status = init_status;
+    int pending_from_x = init_pending_from_x;
+    int pending_from_y = init_pending_from_y;
+    int pending_to_x = init_pending_to_x;
+    int pending_to_y = init_pending_to_y;
 
-    function policy_route(State prev_state, int selector) : (byte[32]) {
-        byte[32] prev_pawn_hash = prev_state.pawn_hash;
-        byte[32] prev_knight_hash = prev_state.knight_hash;
-        byte[32] target_hash = prev_pawn_hash;
-        if (selector != 0) {
-            require(selector == 1);
-            target_hash = prev_knight_hash;
+    function policy_route(
+        State prev_state,
+        int selector,
+        int from_x,
+        int from_y,
+        int to_x,
+        int to_y,
+        sig s,
+        pubkey pk
+    ) : (State, byte[32]) {
+        require(prev_state.status == 0);
+
+        bool is_white_turn = prev_state.turn == 0;
+        bool is_black_turn = prev_state.turn == 1;
+        require(is_white_turn || is_black_turn);
+
+        if (is_white_turn) {
+            require(blake2b(pk) == prev_state.white_player);
+        } else {
+            require(blake2b(pk) == prev_state.black_player);
+        }
+        require(checkSig(s, pk));
+
+        bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
+        bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
+        require(from_in_bounds && to_in_bounds);
+
+        byte[32] pawn_hash_local = prev_state.pawn_hash;
+        byte[32] knight_hash_local = prev_state.knight_hash;
+        byte[32] file_up_hash_local = prev_state.file_up_hash;
+        byte[32] file_down_hash_local = prev_state.file_down_hash;
+        byte[32] rank_left_hash_local = prev_state.rank_left_hash;
+        byte[32] rank_right_hash_local = prev_state.rank_right_hash;
+        byte[32] diag_up_right_hash_local = prev_state.diag_up_right_hash;
+        byte[32] diag_up_left_hash_local = prev_state.diag_up_left_hash;
+        byte[32] diag_down_right_hash_local = prev_state.diag_down_right_hash;
+        byte[32] diag_down_left_hash_local = prev_state.diag_down_left_hash;
+        byte[32] king_hash_local = prev_state.king_hash;
+
+        byte[32] target_hash = pawn_hash_local;
+        if (selector == 1) {
+            target_hash = knight_hash_local;
+        } else if (selector == 2) {
+            target_hash = file_up_hash_local;
+        } else if (selector == 3) {
+            target_hash = file_down_hash_local;
+        } else if (selector == 4) {
+            target_hash = rank_left_hash_local;
+        } else if (selector == 5) {
+            target_hash = rank_right_hash_local;
+        } else if (selector == 6) {
+            target_hash = diag_up_right_hash_local;
+        } else if (selector == 7) {
+            target_hash = diag_up_left_hash_local;
+        } else if (selector == 8) {
+            target_hash = diag_down_right_hash_local;
+        } else if (selector == 9) {
+            target_hash = diag_down_left_hash_local;
+        } else if (selector == 10) {
+            target_hash = king_hash_local;
+        } else {
+            require(selector == 0);
         }
 
-        return(target_hash);
+        return({
+            mux_hash: prev_state.mux_hash,
+            pawn_hash: prev_state.pawn_hash,
+            knight_hash: prev_state.knight_hash,
+            file_up_hash: prev_state.file_up_hash,
+            file_down_hash: prev_state.file_down_hash,
+            rank_left_hash: prev_state.rank_left_hash,
+            rank_right_hash: prev_state.rank_right_hash,
+            diag_up_right_hash: prev_state.diag_up_right_hash,
+            diag_up_left_hash: prev_state.diag_up_left_hash,
+            diag_down_right_hash: prev_state.diag_down_right_hash,
+            diag_down_left_hash: prev_state.diag_down_left_hash,
+            king_hash: prev_state.king_hash,
+            white_player: prev_state.white_player,
+            black_player: prev_state.black_player,
+            board: prev_state.board,
+            turn: prev_state.turn,
+            status: prev_state.status,
+            pending_from_x: from_x,
+            pending_from_y: from_y,
+            pending_to_x: to_x,
+            pending_to_y: to_y
+        }, target_hash);
     }
 
-    entrypoint function route(int selector, byte[] target_prefix, byte[] target_suffix) {
+    entrypoint function route(
+        int selector,
+        int from_x,
+        int from_y,
+        int to_x,
+        int to_y,
+        sig s,
+        pubkey pk,
+        byte[] target_prefix,
+        byte[] target_suffix
+    ) {
         int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
 
         State prev_state = {
             mux_hash: mux_hash,
             pawn_hash: pawn_hash,
             knight_hash: knight_hash,
+            file_up_hash: file_up_hash,
+            file_down_hash: file_down_hash,
+            rank_left_hash: rank_left_hash,
+            rank_right_hash: rank_right_hash,
+            diag_up_right_hash: diag_up_right_hash,
+            diag_up_left_hash: diag_up_left_hash,
+            diag_down_right_hash: diag_down_right_hash,
+            diag_down_left_hash: diag_down_left_hash,
+            king_hash: king_hash,
             white_player: white_player,
             black_player: black_player,
             board: board,
             turn: turn,
-            status: status
+            status: status,
+            pending_from_x: pending_from_x,
+            pending_from_y: pending_from_y,
+            pending_to_x: pending_to_x,
+            pending_to_y: pending_to_y
         };
-        (byte[32] target_hash) = policy_route(prev_state, selector);
+        (State next_state, byte[32] target_hash) = policy_route(prev_state, selector, from_x, from_y, to_x, to_y, s, pk);
 
         require(cov_out_count == 1);
         int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
 
         validateOutputStateWithTemplate(
             cov_out_idx,
-            prev_state,
+            next_state,
             target_prefix,
             target_suffix,
             target_hash

@@ -1,6 +1,6 @@
 pragma silverscript ^0.1.0;
 
-contract ChessKnight(
+contract ChessKing(
     byte[32] init_mux_hash,
     byte[32] init_pawn_hash,
     byte[32] init_knight_hash,
@@ -45,6 +45,14 @@ contract ChessKnight(
     int pending_to_x = init_pending_to_x;
     int pending_to_y = init_pending_to_y;
 
+    function abs_int(int value) : (int) {
+        int result = value;
+        if (value < 0) {
+            result = 0 - value;
+        }
+        return(result);
+    }
+
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
         require(status == 0);
@@ -71,10 +79,10 @@ contract ChessKnight(
         byte target_piece = prev_board[to_idx];
         int moving_num = OpBin2Num(moving_piece);
         int target_num = OpBin2Num(target_piece);
-        require(moving_num == 2 || moving_num == 10);
+        require(moving_num == 6 || moving_num == 14);
 
-        bool moving_is_white = moving_num == 2;
-        bool moving_is_black = moving_num == 10;
+        bool moving_is_white = moving_num == 6;
+        bool moving_is_black = moving_num == 14;
         bool target_is_white = target_num >= 1 && target_num <= 6;
         bool target_is_black = target_num >= 9 && target_num <= 14;
 
@@ -86,19 +94,11 @@ contract ChessKnight(
             require(!target_is_black);
         }
 
-        bool side_step_right = to_x == from_x + 1;
-        bool side_step_left = to_x + 1 == from_x;
-        bool side_step_two_right = to_x == from_x + 2;
-        bool side_step_two_left = to_x + 2 == from_x;
-        bool side_adjacent = side_step_right || side_step_left;
-        bool up_one = to_y == from_y + 1;
-        bool down_one = to_y + 1 == from_y;
-        bool up_two = to_y == from_y + 2;
-        bool down_two = to_y + 2 == from_y;
-
-        bool shape_1 = side_adjacent && (up_two || down_two);
-        bool shape_2 = (side_step_two_right || side_step_two_left) && (up_one || down_one);
-        require(shape_1 || shape_2);
+        int dx = to_x - from_x;
+        int dy = to_y - from_y;
+        (int abs_dx) = abs_int(dx);
+        (int abs_dy) = abs_int(dy);
+        require(abs_dx <= 1 && abs_dy <= 1);
 
         int low_idx = from_idx;
         int high_idx = to_idx;
