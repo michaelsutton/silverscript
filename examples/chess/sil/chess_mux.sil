@@ -56,7 +56,6 @@ contract ChessMux(
         byte[] target_prefix,
         byte[] target_suffix
     ) {
-        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
         require(status == 0);
 
         bool is_white_turn = turn == 0;
@@ -122,12 +121,9 @@ contract ChessMux(
             pending_to_x: to_x,
             pending_to_y: to_y
         };
-
-        require(cov_out_count == 1);
-        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(
-            cov_out_idx,
+            OpAuthOutputIdx(this.activeInputIndex, 0),
             next_state,
             target_prefix,
             target_suffix,
