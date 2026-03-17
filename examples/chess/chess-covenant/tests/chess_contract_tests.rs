@@ -58,3 +58,84 @@ fn chess_contract_requires_expected_constructor_arg_shape() {
 
     assert!(err.to_string().contains("constructor"));
 }
+
+#[test]
+fn isolated_rook_path_loop_reports_script_size() {
+    let source = isolated_rook_path_source();
+    let compiled = compile_contract(source, &isolated_rook_path_constructor_args(5), CompileOptions::default())
+        .expect("isolated rook path should compile");
+
+    eprintln!("isolated_rook_path script_len={}", compiled.script.len());
+    assert!(!compiled.script.is_empty());
+}
+
+#[test]
+fn isolated_rook_path_loop_bound_sweep() {
+    for bound in 1..=7 {
+        let source = isolated_rook_path_source();
+        match compile_contract(source, &isolated_rook_path_constructor_args(bound), CompileOptions::default()) {
+            Ok(compiled) => eprintln!("isolated_rook_path bound={bound} script_len={}", compiled.script.len()),
+            Err(err) => eprintln!("isolated_rook_path bound={bound} compile_error={err}"),
+        }
+    }
+}
+
+fn isolated_rook_path_source() -> &'static str {
+    r#"
+pragma silverscript ^0.1.0;
+
+contract Probe(byte[64] init_board, int path_bound) {
+    byte[64] board = init_board;
+
+    function rook_path_clear(
+        byte[64] board_data,
+        int from_x,
+        int from_y,
+        int to_x,
+        int to_y
+    ) : (int) {
+        int step_x = 0;
+        if (to_x > from_x) {
+            step_x = 1;
+        } else if (to_x < from_x) {
+            step_x = -1;
+        }
+
+        int step_y = 0;
+        if (to_y > from_y) {
+            step_y = 1;
+        } else if (to_y < from_y) {
+            step_y = -1;
+        }
+
+        int x = from_x + step_x;
+        int y = from_y + step_y;
+        int clear = 1;
+
+        for (i, 0, path_bound, path_bound) {
+            bool at_target = x == to_x && y == to_y;
+            if (clear == 1 && !at_target) {
+                int idx = y * 8 + x;
+                if (OpBin2Num(board_data[idx]) != 0) {
+                    clear = 0;
+                }
+                x = x + step_x;
+                y = y + step_y;
+            }
+        }
+
+        return(clear);
+    }
+
+    entrypoint function main() {
+        byte[64] board_data = board;
+        (int clear) = rook_path_clear(board_data, 0, 0, 0, 7);
+        require(clear == 0 || clear == 1);
+    }
+}
+"#
+}
+
+fn isolated_rook_path_constructor_args(bound: usize) -> Vec<Expr<'static>> {
+    vec![Expr::bytes(vec![0u8; 64]), Expr::int(bound as i64)]
+}
