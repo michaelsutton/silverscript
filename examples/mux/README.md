@@ -1,4 +1,4 @@
-## Parallel Multiplexer Prototype
+## Multiplexer Prototype
 
 This is a minimal ICC-oriented prototype for a 3-script system:
 
