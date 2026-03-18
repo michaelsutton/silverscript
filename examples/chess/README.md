@@ -30,9 +30,22 @@ the full board.
 Layout:
 
 - `chess-covenant/`: Rust crate with compile-time tests for the covenant source.
-- `sil/`: SilverScript source files for the active mux and worker contracts.
+- `sil/`: silverscript source files for the active mux and worker contracts.
 - `ARCHITECTURE.md`: high-level design principles for the mux/worker chess protocol.
 - `COVERAGE.md`: audit matrix for current classical-rule coverage vs protocol behavior.
+
+## Already Achieved
+
+The current prototype already demonstrates:
+
+- mux-routed worker execution for pawn, knight, vertical, horizontal, diagonal, king, castle, and castle-challenge flows
+- shared durable game state across mux and all workers
+- pawn promotion and en passant handling
+- castling with explicit challenge support for start, transit, and destination-square attack proofs
+- draw negotiation as a bounded dispute flow reusing ordinary workers
+- surrender and timeout-based termination paths
+- terminal settlement of play states by king capture, allowing full classical chess rules to be enforced through the protocol
+- representative test coverage for the ordinary check-evasion reduction
 
 ## TODO
 
