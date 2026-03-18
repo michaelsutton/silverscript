@@ -2850,6 +2850,54 @@ fn claim_draw_flips_turn_and_enters_draw_state() {
 }
 
 #[test]
+fn surrender_routes_back_to_mux_with_terminal_status() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let board0 = standard_board();
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: square_idx(4, 2),
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 1,
+            draw_state: 1,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 2,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux0, 9, mv(0, 0, 0, 0), &white, &fix.mux, &mux1, covenant_id);
+}
+
+#[test]
 fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
     let fix = build_fixture();
     let white = player_from_seed(1);

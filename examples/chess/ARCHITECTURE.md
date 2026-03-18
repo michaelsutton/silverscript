@@ -46,6 +46,7 @@ What it enforces directly:
 How games currently end on chain:
 
 - king capture
+- surrender
 - timeout
 - accepted draw claim
 

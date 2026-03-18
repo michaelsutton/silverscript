@@ -84,9 +84,10 @@ contract ChessMux(
         // 6  -> castle
         // 7  -> castle challenge prep
         // 8  -> mux (draw claim)
-        require(selector >= 0 && selector <= 8);
+        // 9  -> mux (surrender)
+        require(selector >= 0 && selector <= 9);
         // Draw negotiation reuses only ordinary move workers.
-        require(draw_state == 0 || selector <= 5);
+        require(draw_state == 0 || selector <= 5 || selector == 9);
 
         // Only pawn routes may carry a promotion choice.
         // Piece encoding:
@@ -98,11 +99,17 @@ contract ChessMux(
         // 2 knight, 3 bishop, 4 rook, 5 queen
         require(promo_piece == 0 || (selector == 0 && promo_piece >= 2 && promo_piece <= 5));
 
+        int target_selector = selector;
+        if (selector == 9) {
+            target_selector = 8;
+        }
+
         byte[] all_route_hashes = route_hashes + mux_hash;
-        int hash_start = selector * 32;
+        int hash_start = target_selector * 32;
         int hash_end = hash_start + 32;
         byte[32] target_hash = all_route_hashes.slice(hash_start, hash_end);
 
+        int next_status = status;
         int next_turn = turn;
         int next_en_passant_idx = en_passant_idx;
         int next_pending_src_idx = from_y * 8 + from_x;
@@ -111,20 +118,36 @@ contract ChessMux(
         int next_recent_castle = 0;
         int next_draw_state = draw_state;
 
-        if (selector == 8) {
-        // Draw negotiation starts from the ordinary idle mux state. The next
-        // ply belongs to the opponent, who now tries to find a saving move
-        // for the claimant side.
-            require(draw_state == 0);
-            require(recent_castle == 0);
+        bool is_draw_claim = selector == 8;
+        bool is_surrender = selector == 9;
+        if (is_draw_claim || is_surrender) {
             require(from_x == 0 && from_y == 0 && to_x == 0 && to_y == 0 && promo_piece == 0);
 
-            next_turn = 1 - turn;
             next_en_passant_idx = -1;
             next_pending_src_idx = -1;
             next_pending_dst_idx = -1;
             next_pending_promo = 0;
-            next_draw_state = 1;
+            next_recent_castle = 0;
+
+            if (is_draw_claim) {
+                // Draw negotiation starts from the ordinary idle mux state. The
+                // next ply belongs to the opponent, who now tries to find a
+                // saving move for the claimant side.
+                require(draw_state == 0);
+                require(recent_castle == 0);
+
+                next_turn = 1 - turn;
+                next_draw_state = 1;
+            } else {
+                // Surrender is a mux-to-mux terminal transition. The side to move
+                // concedes immediately and the game returns to mux with terminal status.
+                if (turn == 0) {
+                    next_status = 2;
+                } else {
+                    next_status = 1;
+                }
+                next_draw_state = 0;
+            }
         } else {
             // Mux is the only writer of pending move fields. A normal opponent
             // reply implicitly accepts any recent castle by clearing recent_castle;
@@ -142,7 +165,7 @@ contract ChessMux(
             black_player: black_player,
             board: board,
             turn: next_turn,
-            status: status,
+            status: next_status,
             castle_rights: castle_rights,
             en_passant_idx: next_en_passant_idx,
             pending_src_idx: next_pending_src_idx,
