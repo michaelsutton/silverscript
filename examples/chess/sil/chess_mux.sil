@@ -2,7 +2,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessMux(
     byte[32] init_mux_hash,
-    byte[352] init_route_hashes,
+    byte[320] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -15,7 +15,7 @@ contract ChessMux(
     int init_pending_promo
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[352] route_hashes = init_route_hashes;
+    byte[320] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -68,14 +68,13 @@ contract ChessMux(
         // 1  -> knight
         // 2  -> vert_up
         // 3  -> vert_down
-        // 4  -> horiz_left
-        // 5  -> horiz_right
-        // 6  -> diag_up_right
-        // 7  -> diag_up_left
-        // 8  -> diag_down_right
-        // 9  -> diag_down_left
-        // 10 -> king
-        require(selector >= 0 && selector < 11);
+        // 4  -> horiz
+        // 5  -> diag_up_right
+        // 6  -> diag_up_left
+        // 7  -> diag_down_right
+        // 8  -> diag_down_left
+        // 9  -> king
+        require(selector >= 0 && selector < 10);
         int hash_start = selector * 32;
         int hash_end = hash_start + 32;
         byte[32] target_hash = route_hashes.slice(hash_start, hash_end);

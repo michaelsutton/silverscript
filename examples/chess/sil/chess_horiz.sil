@@ -1,8 +1,8 @@
 pragma silverscript ^0.1.0;
 
-contract ChessHorizRight(
+contract ChessHoriz(
     byte[32] init_mux_hash,
-    byte[352] init_route_hashes,
+    byte[320] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -15,7 +15,7 @@ contract ChessHorizRight(
     int init_pending_promo
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[352] route_hashes = init_route_hashes;
+    byte[320] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -26,6 +26,14 @@ contract ChessHorizRight(
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
+
+    function abs_int(int value) : (int) {
+        int result = value;
+        if (value < 0) {
+            result = 0 - value;
+        }
+        return(result);
+    }
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
@@ -67,17 +75,21 @@ contract ChessHorizRight(
             require(!target_is_black);
         }
 
-        // This route only allows a horizontal move to the right: same rank,
-        // larger file. That is the exact rook/queen geometry for this worker.
-        require(to_y == from_y && to_x > from_x);
+        // Horizontal rook/queen movement keeps the same rank and changes file.
+        require(to_y == from_y && to_x != from_x);
+        int dx = to_x - from_x;
+        int dir = 1;
+        if (dx < 0) {
+            dir = -1;
+        }
+        (int distance) = abs_int(dx);
 
-        int distance = to_x - from_x;
         // Every square strictly between source and destination must be empty for
         // a rook or queen straight move to be legal.
         int clear = 1;
         for (i, 0, 7, 7) {
             if (i < distance + -1) {
-                int scan_x = from_x + i + 1;
+                int scan_x = from_x + dir * (i + 1);
                 int scan_y = from_y;
                 int scan_idx = scan_y * 8 + scan_x;
                 if (OpBin2Num(prev_board[scan_idx]) != 0) {

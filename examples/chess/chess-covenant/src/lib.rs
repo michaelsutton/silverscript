@@ -24,12 +24,8 @@ pub fn vert_down_contract_path() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_vert_down.sil")
 }
 
-pub fn horiz_left_contract_path() -> &'static str {
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_horiz_left.sil")
-}
-
-pub fn horiz_right_contract_path() -> &'static str {
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_horiz_right.sil")
+pub fn horiz_contract_path() -> &'static str {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_horiz.sil")
 }
 
 pub fn diag_up_right_contract_path() -> &'static str {
