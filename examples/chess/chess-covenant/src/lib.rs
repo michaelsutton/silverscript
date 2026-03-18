@@ -31,3 +31,7 @@ pub fn diag_contract_path() -> &'static str {
 pub fn king_contract_path() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_king.sil")
 }
+
+pub fn castle_contract_path() -> &'static str {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_castle.sil")
+}
