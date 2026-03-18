@@ -16,6 +16,13 @@ contract ChessMux(
     int init_recent_castle,
     int init_draw_state
 ) {
+    // Shared chess state layout, reused verbatim by mux and every worker:
+    // - status: 0 live, 1 white win, 2 black win, 3 draw
+    // - castle_rights[0..3]: white K, white Q, black K, black Q
+    // - en_passant_idx: -1 when absent
+    // - pending_*: the move committed by mux for the selected worker
+    // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
+    // - draw_state: 0 normal, 1 draw claimed, 2 counterplay step
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
@@ -180,6 +187,8 @@ contract ChessMux(
         int min_locktime = OpTxInputDaaScore(this.activeInputIndex) + timeout_delta_daa - 1;
         require(tx.locktime >= min_locktime);
 
+        // Ordinary timeout loses for the side that owed the next signed route.
+        // Draw-state 1 is the one exception: silence accepts the draw claim.
         int next_status = 1;
         if (turn == 0) {
             next_status = 2;

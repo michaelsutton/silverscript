@@ -16,6 +16,10 @@ contract ChessKnight(
     int init_recent_castle,
     int init_draw_state
 ) {
+    // Shared chess state layout:
+    // - status: 0 live, 1 white win, 2 black win, 3 draw
+    // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
+    // - draw_state: 0 normal, 1 draw claimed, 2 counterplay step
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
@@ -199,6 +203,9 @@ contract ChessKnight(
     entrypoint function timeout(byte[] mux_prefix, byte[] mux_suffix) {
         require(status == 0);
 
+        // Worker timeout is permissionless. Once a bad route strands funds in a
+        // worker state, anyone may prove enough DAA time has passed and return
+        // the game to mux with the objective timeout outcome.
         int timeout_delta_daa = 600;
         int min_locktime = OpTxInputDaaScore(this.activeInputIndex) + timeout_delta_daa - 1;
         require(tx.locktime < 500000000000);
