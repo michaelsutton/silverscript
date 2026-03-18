@@ -2346,3 +2346,281 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
     );
     run_worker_apply("castle_destination_square_rook_challenge", &vert0, &mux1, covenant_id, &fix.mux);
 }
+
+#[test]
+fn white_queenside_castle_destination_challenge_succeeds() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[2] = 0x06;
+    board0[3] = 0x04;
+    board0[58] = 0x0c;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 2,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let prep0 = compile_state(
+        fix.castle_challenge.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(2, 7),
+            pending_dst_idx: square_idx(2, 0),
+            pending_promo: 0,
+            recent_castle: 2,
+        },
+    );
+    run_route(&mux0, 7, mv(2, 7, 2, 0), &black, &fix.castle_challenge, &prep0, covenant_id);
+
+    let vert0 = compile_state(
+        fix.vert.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(2, 7),
+            pending_dst_idx: square_idx(2, 0),
+            pending_promo: 0,
+            recent_castle: 2,
+        },
+    );
+    run_prep_apply("white_queenside_destination_prep", &prep0, &vert0, covenant_id, &fix.vert);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 2, 7, 2, 0);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 0,
+            status: 2,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+        },
+    );
+    run_worker_apply("white_queenside_destination_challenge", &vert0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[61] = 0x0c;
+    board0[62] = 0x0e;
+    board0[51] = 0x01;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: [1, 1, 0, 0],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 3,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let prep0 = compile_state(
+        fix.castle_challenge.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: [1, 1, 0, 0],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(3, 6),
+            pending_dst_idx: square_idx(4, 7),
+            pending_promo: 0,
+            recent_castle: 3,
+        },
+    );
+    run_route(&mux0, 7, mv(3, 6, 4, 7), &white, &fix.castle_challenge, &prep0, covenant_id);
+
+    let mut proof_board = vec![0u8; 64];
+    proof_board[60] = 0x0e;
+    proof_board[63] = 0x0c;
+    proof_board[51] = 0x01;
+    let pawn0 = compile_state(
+        fix.pawn.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &proof_board,
+            turn: 0,
+            status: 0,
+            castle_rights: [1, 1, 0, 0],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(3, 6),
+            pending_dst_idx: square_idx(4, 7),
+            pending_promo: 0,
+            recent_castle: 3,
+        },
+    );
+    run_prep_apply("black_kingside_start_prep", &prep0, &pawn0, covenant_id, &fix.pawn);
+
+    let mut board1 = proof_board.clone();
+    move_piece(&mut board1, 3, 6, 4, 7);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 1,
+            castle_rights: [1, 1, 0, 0],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+        },
+    );
+    run_worker_apply("black_kingside_start_challenge", &pawn0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[58] = 0x0e;
+    board0[59] = 0x0c;
+    board0[3] = 0x04;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: [1, 1, 0, 0],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 4,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let prep0 = compile_state(
+        fix.castle_challenge.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: [1, 1, 0, 0],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(3, 0),
+            pending_dst_idx: square_idx(3, 7),
+            pending_promo: 0,
+            recent_castle: 4,
+        },
+    );
+    run_route(&mux0, 7, mv(3, 0, 3, 7), &white, &fix.castle_challenge, &prep0, covenant_id);
+
+    let mut proof_board = vec![0u8; 64];
+    proof_board[56] = 0x0c;
+    proof_board[59] = 0x0e;
+    proof_board[3] = 0x04;
+    let vert0 = compile_state(
+        fix.vert.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &proof_board,
+            turn: 0,
+            status: 0,
+            castle_rights: [1, 1, 0, 0],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(3, 0),
+            pending_dst_idx: square_idx(3, 7),
+            pending_promo: 0,
+            recent_castle: 4,
+        },
+    );
+    run_prep_apply("black_queenside_transit_prep", &prep0, &vert0, covenant_id, &fix.vert);
+
+    let mut board1 = proof_board.clone();
+    move_piece(&mut board1, 3, 0, 3, 7);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 1,
+            castle_rights: [1, 1, 0, 0],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+        },
+    );
+    run_worker_apply("black_queenside_transit_challenge", &vert0, &mux1, covenant_id, &fix.mux);
+}
