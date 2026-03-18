@@ -2,6 +2,31 @@
 
 This folder is a standalone Cargo workspace for the mux/worker on-chain chess covenant demo.
 
+## Core Idea
+
+This example applies the multiplexer pattern to chess.
+
+Instead of one giant contract that tries to enforce the whole game at once, the
+protocol is split into:
+
+- `ChessMux`: the durable checkpoint contract that owns the full game state
+- worker contracts: narrow validators for bounded move families and challenge flows
+
+All of these contracts share the same serialized state layout.
+
+The key primitive is still the mux pattern itself:
+
+1. mux authenticates the move attempt
+2. mux commits the pending move into shared state
+3. mux routes into the selected worker template
+4. the worker proves one bounded claim
+5. the worker returns to mux with updated state
+
+The important design philosophy is bounded verification rather than eager global
+analysis. The protocol prefers proving a narrow local claim now and using
+challenge paths for rules that are easier to refute than to prove by sweeping
+the full board.
+
 Layout:
 
 - `chess-covenant/`: Rust crate with compile-time tests for the covenant source.
