@@ -2,7 +2,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessCastle(
     byte[32] init_mux_hash,
-    byte[224] init_route_hashes,
+    byte[256] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -12,10 +12,11 @@ contract ChessCastle(
     int init_en_passant_idx,
     int init_pending_src_idx,
     int init_pending_dst_idx,
-    int init_pending_promo
+    int init_pending_promo,
+    int init_recent_castle
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[224] route_hashes = init_route_hashes;
+    byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -26,6 +27,7 @@ contract ChessCastle(
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
+    int recent_castle = init_recent_castle;
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
@@ -161,6 +163,14 @@ contract ChessCastle(
         }
         byte[4] next_castle_rights = byte[1](next_white_can_castle_k) + byte[1](next_white_can_castle_q) + byte[1](next_black_can_castle_k) + byte[1](next_black_can_castle_q);
 
+        int next_recent_castle = 1;
+        if (!is_king_side) {
+            next_recent_castle = 2;
+        }
+        if (moving_is_black) {
+            next_recent_castle = next_recent_castle + 2;
+        }
+
         // Return to ChessMux with the updated board, the turn flipped, and the
         // pending move cleared.
         State next_state = {
@@ -175,7 +185,8 @@ contract ChessCastle(
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
-            pending_promo: 0
+            pending_promo: 0,
+            recent_castle: next_recent_castle
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(

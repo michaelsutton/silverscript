@@ -7,8 +7,8 @@ use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
 use chess_covenant::{
-    castle_contract_path, diag_contract_path, example_contract_path, horiz_contract_path, king_contract_path, knight_contract_path,
-    pawn_contract_path, vert_contract_path,
+    castle_challenge_contract_path, castle_contract_path, diag_contract_path, example_contract_path, horiz_contract_path,
+    king_contract_path, knight_contract_path, pawn_contract_path, vert_contract_path,
 };
 
 fn load_contract_source() -> String {
@@ -107,6 +107,7 @@ fn chess_workers_report_script_size_and_opcode_count() {
         ("horiz", horiz_contract_path()),
         ("diag", diag_contract_path()),
         ("castle", castle_contract_path()),
+        ("castle_challenge", castle_challenge_contract_path()),
     ];
 
     for (name, path) in workers {
@@ -184,8 +185,8 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x0c, 0x0a, 0x0b, 0x0d, 0x0e, 0x0b, 0x0a,
         0x0c,
     ];
-    let mut route_hashes = Vec::with_capacity(32 * 7);
-    for byte in 0x12u8..=0x18u8 {
+    let mut route_hashes = Vec::with_capacity(32 * 8);
+    for byte in 0x12u8..=0x19u8 {
         route_hashes.extend_from_slice(&[byte; 32]);
     }
 
@@ -201,6 +202,7 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
         Expr::int(-1),
         Expr::int(12),
         Expr::int(28),
+        Expr::int(0),
         Expr::int(0),
     ]
 }
