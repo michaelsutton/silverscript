@@ -8,6 +8,7 @@ contract ChessPawn(
     byte[64] init_board,
     int init_turn,
     int init_status,
+    byte[4] init_castle_rights,
     int init_en_passant_idx,
     int init_pending_src_idx,
     int init_pending_dst_idx,
@@ -20,6 +21,7 @@ contract ChessPawn(
     byte[64] board = init_board;
     int turn = init_turn;
     int status = init_status;
+    byte[4] castle_rights = init_castle_rights;
     int en_passant_idx = init_en_passant_idx;
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
@@ -234,6 +236,7 @@ contract ChessPawn(
             board: next_board,
             turn: 1 - turn,
             status: next_status,
+            castle_rights: castle_rights,
             en_passant_idx: next_en_passant_idx,
             pending_src_idx: -1,
             pending_dst_idx: -1,
