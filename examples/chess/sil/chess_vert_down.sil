@@ -8,6 +8,7 @@ contract ChessVertDown(
     byte[64] init_board,
     int init_turn,
     int init_status,
+    byte[4] init_castle_rights,
     int init_en_passant_idx,
     int init_pending_src_idx,
     int init_pending_dst_idx,
@@ -20,6 +21,7 @@ contract ChessVertDown(
     byte[64] board = init_board;
     int turn = init_turn;
     int status = init_status;
+    byte[4] castle_rights = init_castle_rights;
     int en_passant_idx = init_en_passant_idx;
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
@@ -116,6 +118,30 @@ contract ChessVertDown(
             next_status = 2;
         }
 
+        byte next_white_can_castle_k = castle_rights[0];
+        byte next_white_can_castle_q = castle_rights[1];
+        byte next_black_can_castle_k = castle_rights[2];
+        byte next_black_can_castle_q = castle_rights[3];
+        // If any move starts from or lands on a castling corner, the
+        // corresponding right must already be gone: that corner no longer
+        // identifies the original eligible rook. If the original rook was
+        // taken, future castling still fails because the castling worker
+        // requires the eligible corner rook to be present.
+        if (from_idx == 0 || to_idx == 0) {
+            next_white_can_castle_q = byte(0x00);
+        }
+        if (from_idx == 7 || to_idx == 7) {
+            next_white_can_castle_k = byte(0x00);
+        }
+        if (from_idx == 56 || to_idx == 56) {
+            next_black_can_castle_q = byte(0x00);
+        }
+        if (from_idx == 63 || to_idx == 63) {
+            next_black_can_castle_k = byte(0x00);
+        }
+
+        byte[4] next_castle_rights = byte[1](next_white_can_castle_k) + byte[1](next_white_can_castle_q) + byte[1](next_black_can_castle_k) + byte[1](next_black_can_castle_q);
+
         // Return to ChessMux with the updated board, the turn flipped, and the
         // pending move cleared.
         State next_state = {
@@ -126,6 +152,7 @@ contract ChessVertDown(
             board: next_board,
             turn: 1 - turn,
             status: next_status,
+            castle_rights: next_castle_rights,
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
