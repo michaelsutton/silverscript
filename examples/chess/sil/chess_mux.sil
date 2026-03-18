@@ -155,4 +155,63 @@ contract ChessMux(
         );
     }
 
+    entrypoint function timeout(sig s, pubkey pk, byte[] target_prefix, byte[] target_suffix) {
+        // Timeout only applies while the game is still live.
+        require(status == 0);
+
+        bool is_white_turn = turn == 0;
+        bool is_black_turn = turn == 1;
+        require(is_white_turn || is_black_turn);
+
+        // The side waiting on a response is `turn`, so the timeout claimant is
+        // always the opposite signer.
+        if (is_white_turn) {
+            require(blake2b(pk) == black_player);
+        } else {
+            require(blake2b(pk) == white_player);
+        }
+        require(checkSig(s, pk));
+
+        // Timeout proofs use DAA-zone locktime plus a non-final input sequence.
+        // If this spend is accepted, consensus implies current_daa > tx.locktime.
+        require(tx.locktime < 500000000000);
+        require(OpTxInputSeq(this.activeInputIndex) != 0xffffffffffffffff);
+        int timeout_delta_daa = 600;
+        int min_locktime = OpTxInputDaaScore(this.activeInputIndex) + timeout_delta_daa - 1;
+        require(tx.locktime >= min_locktime);
+
+        int next_status = 1;
+        if (turn == 0) {
+            next_status = 2;
+        }
+        if (draw_state == 1) {
+            next_status = 3;
+        }
+
+        State next_state = {
+            mux_hash: mux_hash,
+            route_hashes: route_hashes,
+            white_player: white_player,
+            black_player: black_player,
+            board: board,
+            turn: turn,
+            status: next_status,
+            castle_rights: castle_rights,
+            en_passant_idx: en_passant_idx,
+            pending_src_idx: pending_src_idx,
+            pending_dst_idx: pending_dst_idx,
+            pending_promo: pending_promo,
+            recent_castle: recent_castle,
+            draw_state: draw_state
+        };
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        validateOutputStateWithTemplate(
+            OpAuthOutputIdx(this.activeInputIndex, 0),
+            next_state,
+            target_prefix,
+            target_suffix,
+            mux_hash
+        );
+    }
+
 }

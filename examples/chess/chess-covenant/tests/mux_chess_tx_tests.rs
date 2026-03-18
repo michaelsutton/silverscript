@@ -439,6 +439,29 @@ fn run_worker_apply(
     assert!(result.is_ok(), "{label} worker apply should succeed: {:?}", result.unwrap_err());
 }
 
+fn run_worker_timeout(
+    label: &str,
+    active: &CompiledContract<'_>,
+    next: &CompiledContract<'_>,
+    covenant_id: Hash,
+    mux: &TemplateFixture,
+    lock_time: u64,
+    sequence: u64,
+) {
+    let sigscript = entry_sigscript(active, "timeout", vec![Expr::bytes(mux.prefix.clone()), Expr::bytes(mux.suffix.clone())]);
+    let outputs = vec![covenant_output(next, 0, covenant_id)];
+    let entries = vec![covenant_utxo(active, covenant_id)];
+    let input = TransactionInput {
+        previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([1u8; 32]), index: 0 },
+        signature_script: sigscript,
+        sequence,
+        sig_op_count: 1,
+    };
+    let tx = Transaction::new(1, vec![input], outputs, lock_time, Default::default(), 0, vec![]);
+    let result = execute_input_with_covenants(tx, entries, 0);
+    assert!(result.is_ok(), "{label} worker apply should succeed: {:?}", result.unwrap_err());
+}
+
 fn run_prep_apply(
     label: &str,
     active: &CompiledContract<'_>,
@@ -3517,4 +3540,52 @@ fn draw_mode_disallows_castle_and_castle_challenge_routes() {
         },
     );
     let _err = run_route_err(&mux1, 7, mv(4, 0, 6, 0), &black, &fix.castle_challenge, &prep1, covenant_id);
+}
+
+#[test]
+fn knight_worker_timeout_rescues_invalid_committed_state() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let board0 = standard_board();
+    let knight1 = compile_state(
+        fix.knight.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(0, 1),
+            pending_dst_idx: square_idx(0, 2),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&knight1);
+    let mux_terminal = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 2,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+
+    run_worker_timeout("knight_timeout", &knight1, &mux_terminal, covenant_id, &fix.mux, 599, 0);
 }
