@@ -8,7 +8,7 @@ use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
 use chess_covenant::{
     castle_challenge_contract_path, castle_contract_path, diag_contract_path, example_contract_path, horiz_contract_path,
-    king_contract_path, knight_contract_path, pawn_contract_path, vert_contract_path,
+    king_contract_path, knight_contract_path, mux_contract_path, pawn_contract_path, vert_contract_path,
 };
 
 fn load_contract_source() -> String {
@@ -95,6 +95,17 @@ fn chess_pawn_reports_script_size_and_opcode_count() {
     let opcode_count = parse_script::<PopulatedTransaction<'static>, SigHashReusedValuesUnsync>(&compiled.script).count();
 
     eprintln!("chess_pawn script_len={} opcode_count={}", compiled.script.len(), opcode_count);
+    assert!(!compiled.script.is_empty());
+}
+
+#[test]
+fn chess_mux_reports_script_size_and_opcode_count() {
+    let path = mux_contract_path();
+    let source = fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"));
+    let compiled = compile_contract(&source, &mux_constructor_args(), CompileOptions::default()).expect("mux contract should compile");
+    let opcode_count = parse_script::<PopulatedTransaction<'static>, SigHashReusedValuesUnsync>(&compiled.script).count();
+
+    eprintln!("chess_mux script_len={} opcode_count={}", compiled.script.len(), opcode_count);
     assert!(!compiled.script.is_empty());
 }
 
@@ -202,6 +213,31 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
         Expr::int(-1),
         Expr::int(12),
         Expr::int(28),
+        Expr::int(0),
+        Expr::int(0),
+        Expr::int(0),
+    ]
+}
+
+fn mux_constructor_args() -> Vec<Expr<'static>> {
+    let mut route_hashes = Vec::with_capacity(32 * 8);
+    for byte in 0x12u8..=0x19u8 {
+        route_hashes.extend_from_slice(&[byte; 32]);
+    }
+
+    vec![
+        Expr::bytes(vec![0x11u8; 32]),
+        Expr::bytes(route_hashes),
+        Expr::bytes(vec![0x21u8; 32]),
+        Expr::bytes(vec![0x22u8; 32]),
+        Expr::bytes(vec![0u8; 64]),
+        Expr::int(0),
+        Expr::int(0),
+        Expr::bytes(vec![1u8; 4]),
+        Expr::int(-1),
+        Expr::int(-1),
+        Expr::int(-1),
+        Expr::int(0),
         Expr::int(0),
         Expr::int(0),
     ]

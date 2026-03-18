@@ -13,7 +13,8 @@ contract ChessHoriz(
     int init_pending_src_idx,
     int init_pending_dst_idx,
     int init_pending_promo,
-    int init_recent_castle
+    int init_recent_castle,
+    int init_draw_state
 ) {
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
@@ -28,6 +29,7 @@ contract ChessHoriz(
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
     int recent_castle = init_recent_castle;
+    int draw_state = init_draw_state;
 
     function abs_int(int value) : (int) {
         int result = value;
@@ -52,6 +54,13 @@ contract ChessHoriz(
         // Chess alternates between white (0) and black (1).
         require(turn == 0 || turn == 1);
 
+        // In draw negotiation the signer keeps their real side, but the move is
+        // judged as if they were piloting the opponent's pieces.
+        int effective_turn = turn;
+        if (draw_state > 0) {
+            effective_turn = 1 - turn;
+        }
+
         // A move must actually change squares.
         require(from_idx != to_idx);
 
@@ -69,7 +78,7 @@ contract ChessHoriz(
         bool target_is_black = target_num >= 9 && target_num <= 14;
         // The side to move must move its own straight-moving piece and cannot
         // capture its own color on the destination square.
-        if (turn == 0) {
+        if (effective_turn == 0) {
             require(moving_num == 4 || moving_num == 5);
             require(!target_is_white);
         } else {
@@ -133,12 +142,40 @@ contract ChessHoriz(
                 require(target_num == 6);
                 next_status = 2;
             }
+        } else if (draw_state > 0) {
+            if (effective_turn == 0 && target_num == 14) {
+                if (turn == 0) {
+                    next_status = 1;
+                } else {
+                    next_status = 2;
+                }
+            }
+            if (effective_turn == 1 && target_num == 6) {
+                if (turn == 0) {
+                    next_status = 1;
+                } else {
+                    next_status = 2;
+                }
+            }
         } else {
             if (turn == 0 && target_num == 14) {
                 next_status = 1;
             }
             if (turn == 1 && target_num == 6) {
                 next_status = 2;
+            }
+        }
+
+        int next_draw_state = draw_state;
+        if (draw_state == 1) {
+            next_draw_state = 2;
+        } else if (draw_state == 2) {
+            if (next_status == 0) {
+                if (turn == 0) {
+                    next_status = 2;
+                } else {
+                    next_status = 1;
+                }
             }
         }
 
@@ -181,7 +218,8 @@ contract ChessHoriz(
             pending_src_idx: -1,
             pending_dst_idx: -1,
             pending_promo: 0,
-            recent_castle: 0
+            recent_castle: 0,
+            draw_state: next_draw_state
         };
         // The worker must produce exactly one authorized covenant output back to
         // the mux template with the new state above.
