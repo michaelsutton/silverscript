@@ -112,9 +112,9 @@ contract ChessMux(
         int next_draw_state = draw_state;
 
         if (selector == 8) {
-            // Draw negotiation starts from the ordinary idle mux state. The
-            // next ply belongs to the opponent, who will try to play a saving
-            // move for the claimant side.
+        // Draw negotiation starts from the ordinary idle mux state. The next
+        // ply belongs to the opponent, who now tries to find a saving move
+        // for the claimant side.
             require(draw_state == 0);
             require(recent_castle == 0);
             require(from_x == 0 && from_y == 0 && to_x == 0 && to_y == 0 && promo_piece == 0);

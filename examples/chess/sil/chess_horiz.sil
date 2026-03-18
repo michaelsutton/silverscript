@@ -187,11 +187,9 @@ contract ChessHoriz(
         byte next_white_can_castle_q = castle_rights[1];
         byte next_black_can_castle_k = castle_rights[2];
         byte next_black_can_castle_q = castle_rights[3];
-        // If any move starts from or lands on a castling corner, the
-        // corresponding right must already be gone: that corner no longer
-        // identifies the original eligible rook. If the original rook was
-        // taken, future castling still fails because the castling worker
-        // requires the eligible corner rook to be present.
+        // Any rook move out of a castling corner, into a castling corner, or
+        // capture on a castling corner clears that corner's bit. This keeps a
+        // corner from being reassigned to some other rook later.
         if (from_idx == 0 || to_idx == 0) {
             next_white_can_castle_q = byte(0x00);
         }
