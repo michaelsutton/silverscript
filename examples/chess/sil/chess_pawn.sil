@@ -8,6 +8,7 @@ contract ChessPawn(
     byte[64] init_board,
     int init_turn,
     int init_status,
+    int init_en_passant_idx,
     int init_pending_src_idx,
     int init_pending_dst_idx,
     int init_pending_promo
@@ -19,6 +20,7 @@ contract ChessPawn(
     byte[64] board = init_board;
     int turn = init_turn;
     int status = init_status;
+    int en_passant_idx = init_en_passant_idx;
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
@@ -30,6 +32,7 @@ contract ChessPawn(
         int from_idx = OpBin2Num(pending_src_idx);
         int to_idx = OpBin2Num(pending_dst_idx);
         int promo_piece = OpBin2Num(pending_promo);
+        int ep_idx = OpBin2Num(en_passant_idx);
 
         int from_y = from_idx / 8;
         int from_x = from_idx % 8;
@@ -70,50 +73,61 @@ contract ChessPawn(
             require(!target_is_black);
         }
 
-        bool side_step_right = to_x == from_x + 1;
-        bool side_step_left = to_x + 1 == from_x;
-        bool side_adjacent = side_step_right || side_step_left;
-        bool up_one = to_y == from_y + 1;
-        bool down_one = to_y + 1 == from_y;
-        bool up_two = to_y == from_y + 2;
-        bool down_two = to_y + 2 == from_y;
+        int dx = to_x - from_x;
+        int dy = to_y - from_y;
+
+        // White and black pawn rules share one shape once direction-specific
+        // constants are normalized here.
+        int dir = 1;
+        int start_rank = 1;
+        int ep_captured_piece = 9;
+        bool target_is_enemy = target_is_black;
+        if (moving_is_black) {
+            dir = -1;
+            start_rank = 6;
+            ep_captured_piece = 1;
+            target_is_enemy = target_is_white;
+        }
+
+        bool same_file = dx == 0;
+        // The destination file is exactly one column left or right of the source.
+        bool side_adjacent = dx == 1 || dx == -1;
+        bool one_forward = dy == dir;
+        bool two_forward = dy == 2 * dir;
+        int en_passant_capture_idx = -1;
 
         // Pawn legality:
         // - single forward push into an empty square
         // - initial double push if both squares are empty
-        // - diagonal capture of an enemy piece
-        int legal_move = 0;
-        if (moving_is_white) {
-            bool one_step = to_x == from_x && up_one && target_is_empty;
-            bool two_step = false;
-            if (from_y == 1 && to_x == from_x && up_two && target_is_empty) {
-                int mid_idx = (from_y + 1) * 8 + from_x;
-                two_step = OpBin2Num(prev_board[mid_idx]) == 0;
-            }
-            bool capture = side_adjacent && up_one && target_is_black;
-            if (one_step || two_step || capture) {
-                legal_move = 1;
-            }
-        } else {
-            bool one_step = to_x == from_x && down_one && target_is_empty;
-            bool two_step = false;
-            if (from_y == 6 && to_x == from_x && down_two && target_is_empty) {
-                int mid_idx = (from_y + -1) * 8 + from_x;
-                two_step = OpBin2Num(prev_board[mid_idx]) == 0;
-            }
-            bool capture = side_adjacent && down_one && target_is_white;
-            if (one_step || two_step || capture) {
-                legal_move = 1;
-            }
-        }
-        require(legal_move == 1);
+        // - diagonal capture into an enemy piece
+        // - diagonal en passant capture into the committed target square
+        bool one_step = same_file && one_forward && target_is_empty;
 
-        bool reaches_back_rank = false;
-        if (moving_is_white) {
-            reaches_back_rank = to_y == 7;
-        } else {
-            reaches_back_rank = to_y == 0;
+        bool two_step = false;
+        // Initial double-step: the pawn must start on its home rank, stay on
+        // the same file, advance two squares forward, and the intermediate
+        // square must also be empty.
+        if (from_y == start_rank && same_file && two_forward && target_is_empty) {
+            int mid_idx = (from_y + dir) * 8 + from_x;
+            two_step = OpBin2Num(prev_board[mid_idx]) == 0;
         }
+
+        // Ordinary diagonal capture into an occupied enemy square.
+        bool capture = side_adjacent && one_forward && target_is_enemy;
+
+        bool en_passant = false;
+        // En passant captures into the committed en-passant target square,
+        // which is empty by definition. The captured pawn sits one rank behind
+        // that target square, opposite the pawn's movement direction.
+        if (side_adjacent && one_forward && target_is_empty && to_idx == ep_idx) {
+            en_passant_capture_idx = to_idx - dir * 8;
+            en_passant = OpBin2Num(prev_board[en_passant_capture_idx]) == ep_captured_piece;
+        }
+
+        // A pawn move is legal iff it matches one of the four allowed cases above.
+        require(one_step || two_step || capture || en_passant);
+
+        bool reaches_back_rank = to_y == 0 || to_y == 7;
 
         // ChessMux already constrained promo_piece. Here we only distinguish
         // between promotion and non-promotion moves.
@@ -129,39 +143,89 @@ contract ChessPawn(
             require(promo_piece == 0);
         }
 
-        // Rewrite the board by clearing the source square and filling the
-        // destination square, using low/high index order to keep the splice
-        // logic simple for both move directions.
-        int low_idx = from_idx;
-        int high_idx = to_idx;
-        byte first_slot = byte(0x00);
-        byte second_slot = arrived_piece;
-        if (from_idx > to_idx) {
-            low_idx = to_idx;
-            high_idx = from_idx;
-            first_slot = arrived_piece;
-            second_slot = byte(0x00);
-        }
-
-        byte[] prev_dyn = byte[](prev_board);
-        byte[] prefix = prev_dyn.slice(0, low_idx);
-        byte[] middle = prev_dyn.slice(low_idx + 1, high_idx);
-        byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
-        byte[64] next_board = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
-
         // Capturing the enemy king is the on-chain terminal condition.
         // Off-chain clients may enforce stricter classical no-self-check rules,
         // but on chain a king capture conclusively proves the winner.
         int next_status = status;
-        if (turn == 0 && target_num == 14) {
+        if (moving_is_white && target_num == 14) {
             next_status = 1;
         }
-        if (turn == 1 && target_num == 6) {
+        if (moving_is_black && target_num == 6) {
             next_status = 2;
         }
 
-        // Return to ChessMux with the updated board, the turn flipped, and the
-        // pending move cleared.
+        int next_en_passant_idx = -1;
+        if (two_step) {
+            next_en_passant_idx = from_idx + dir * 8;
+        }
+
+        byte[] prev_dyn = byte[](prev_board);
+
+        // Rewrite the board through one 3-slot splice shape:
+        // - source square becomes empty
+        // - destination square gets the moved/promoted pawn
+        // - third square is either the en-passant captured pawn, or a dummy
+        //   untouched square on ordinary pawn moves
+        int a = from_idx;
+        byte va = byte(0x00);
+        int b = to_idx;
+        byte vb = arrived_piece;
+        // Sort the two real rewritten squares first.
+        if (a > b) {
+            a = to_idx;
+            va = arrived_piece;
+            b = from_idx;
+            vb = byte(0x00);
+        }
+
+        int k_idx = 0;
+        byte vk = prev_board[0];
+        // Pick a dummy third square distinct from a and b so ordinary moves can
+        // share the same 3-slot rewrite shape as en passant.
+        // Since a < b, at least one of {0, 1, 2} differs from both.
+        if (a == 0) {
+            k_idx = 1;
+            vk = prev_board[1];
+            if (b == 1) {
+                k_idx = 2;
+                vk = prev_board[2];
+            }
+        }
+        // En passant replaces the dummy third square with the captured pawn.
+        if (en_passant) {
+            k_idx = en_passant_capture_idx;
+            vk = byte(0x00);
+        }
+
+        int x = a;
+        byte vx = va;
+        int y = b;
+        byte vy = vb;
+        int z = k_idx;
+        byte vz = vk;
+        // Insert the third rewritten square into sorted order.
+        // The default order is a < b < k_idx; only adjust when k_idx falls earlier.
+        if (k_idx < a) {
+            x = k_idx;
+            vx = vk;
+            y = a;
+            vy = va;
+            z = b;
+            vz = vb;
+        } else if (k_idx < b) {
+            y = k_idx;
+            vy = vk;
+            z = b;
+            vz = vb;
+        }
+
+        // Apply the three point-mutations in one splice expression.
+        byte[] prefix = prev_dyn.slice(0, x);
+        byte[] middle_xy = prev_dyn.slice(x + 1, y);
+        byte[] middle_yz = prev_dyn.slice(y + 1, z);
+        byte[] suffix = prev_dyn.slice(z + 1, 64);
+        byte[64] next_board = prefix + byte[1](vx) + middle_xy + byte[1](vy) + middle_yz + byte[1](vz) + suffix;
+
         State next_state = {
             mux_hash: mux_hash,
             route_hashes: route_hashes,
@@ -170,12 +234,11 @@ contract ChessPawn(
             board: next_board,
             turn: 1 - turn,
             status: next_status,
+            en_passant_idx: next_en_passant_idx,
             pending_src_idx: -1,
             pending_dst_idx: -1,
             pending_promo: 0
         };
-        // The worker must produce exactly one authorized covenant output back to
-        // the mux template with the new state above.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(
             OpAuthOutputIdx(this.activeInputIndex, 0),
