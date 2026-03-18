@@ -104,8 +104,9 @@ contract ChessCastle(
             rook_to_idx = row_base + 5;
         }
 
-        // The eligible corner rook must still be present and the path between
-        // king and rook must be empty.
+        // The castle-right bit is only historical permission. The live board
+        // still has to show the correct corner rook on the correct square, and
+        // the lane between king and rook still has to be empty.
         require(OpBin2Num(prev_board[rook_from_idx]) == rook_num);
         if (is_king_side) {
             require(OpBin2Num(prev_board[row_base + 5]) == 0);
