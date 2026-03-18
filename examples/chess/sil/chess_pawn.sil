@@ -13,7 +13,8 @@ contract ChessPawn(
     int init_pending_src_idx,
     int init_pending_dst_idx,
     int init_pending_promo,
-    int init_recent_castle
+    int init_recent_castle,
+    int init_draw_state
 ) {
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
@@ -28,6 +29,7 @@ contract ChessPawn(
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
     int recent_castle = init_recent_castle;
+    int draw_state = init_draw_state;
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
@@ -47,6 +49,13 @@ contract ChessPawn(
         bool is_white_turn = turn == 0;
         bool is_black_turn = turn == 1;
         require(is_white_turn || is_black_turn);
+
+        // In draw negotiation the signer keeps their real side, but the move is
+        // judged as if they were piloting the opponent's pieces.
+        int effective_turn = turn;
+        if (draw_state > 0) {
+            effective_turn = 1 - turn;
+        }
 
         // A move must actually change squares.
         require(from_idx != to_idx);
@@ -69,7 +78,7 @@ contract ChessPawn(
 
         // The side to move must move its own pawn and cannot capture its own
         // color on the destination square.
-        if (is_white_turn) {
+        if (effective_turn == 0) {
             require(moving_is_white);
             require(!target_is_white);
         } else {
@@ -165,12 +174,40 @@ contract ChessPawn(
                 require(target_num == 6);
                 next_status = 2;
             }
+        } else if (draw_state > 0) {
+            if (effective_turn == 0 && target_num == 14) {
+                if (turn == 0) {
+                    next_status = 1;
+                } else {
+                    next_status = 2;
+                }
+            }
+            if (effective_turn == 1 && target_num == 6) {
+                if (turn == 0) {
+                    next_status = 1;
+                } else {
+                    next_status = 2;
+                }
+            }
         } else {
             if (moving_is_white && target_num == 14) {
                 next_status = 1;
             }
             if (moving_is_black && target_num == 6) {
                 next_status = 2;
+            }
+        }
+
+        int next_draw_state = draw_state;
+        if (draw_state == 1) {
+            next_draw_state = 2;
+        } else if (draw_state == 2) {
+            if (next_status == 0) {
+                if (turn == 0) {
+                    next_status = 2;
+                } else {
+                    next_status = 1;
+                }
             }
         }
 
@@ -259,7 +296,8 @@ contract ChessPawn(
             pending_src_idx: -1,
             pending_dst_idx: -1,
             pending_promo: 0,
-            recent_castle: 0
+            recent_castle: 0,
+            draw_state: next_draw_state
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(

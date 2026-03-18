@@ -13,7 +13,8 @@ contract ChessCastleChallengePrep(
     int init_pending_src_idx,
     int init_pending_dst_idx,
     int init_pending_promo,
-    int init_recent_castle
+    int init_recent_castle,
+    int init_draw_state
 ) {
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
@@ -28,6 +29,7 @@ contract ChessCastleChallengePrep(
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
     int recent_castle = init_recent_castle;
+    int draw_state = init_draw_state;
 
     function abs_int(int value) : (int) {
         int result = value;
@@ -39,6 +41,7 @@ contract ChessCastleChallengePrep(
 
     entrypoint function apply(byte[] target_prefix, byte[] target_suffix) {
         require(status == 0);
+        require(draw_state == 0);
         require(recent_castle >= 1 && recent_castle <= 4);
 
         int from_idx = OpBin2Num(pending_src_idx);
@@ -198,7 +201,8 @@ contract ChessCastleChallengePrep(
             pending_src_idx: pending_src_idx,
             pending_dst_idx: pending_dst_idx,
             pending_promo: 0,
-            recent_castle: recent_castle
+            recent_castle: recent_castle,
+            draw_state: draw_state
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(
