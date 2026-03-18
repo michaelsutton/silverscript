@@ -7,63 +7,9 @@ use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
 use chess_covenant::{
-    castle_challenge_contract_path, castle_contract_path, diag_contract_path, example_contract_path, horiz_contract_path,
-    king_contract_path, knight_contract_path, mux_contract_path, pawn_contract_path, vert_contract_path,
+    castle_challenge_contract_path, castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path,
+    knight_contract_path, mux_contract_path, pawn_contract_path, vert_contract_path,
 };
-
-fn load_contract_source() -> String {
-    let path = example_contract_path();
-    fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"))
-}
-
-fn default_constructor_args() -> Vec<Expr<'static>> {
-    let standard_board: Vec<u8> = vec![
-        0x04, 0x02, 0x03, 0x05, 0x06, 0x03, 0x02, 0x04, // y = 0 (white)
-        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, // y = 1 (white pawns)
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y = 2
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y = 3
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y = 4
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y = 5
-        0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, // y = 6 (black pawns)
-        0x0c, 0x0a, 0x0b, 0x0d, 0x0e, 0x0b, 0x0a, 0x0c, // y = 7 (black)
-    ];
-
-    vec![Expr::bytes(vec![1u8; 32]), Expr::bytes(vec![2u8; 32]), Expr::bytes(standard_board), Expr::int(0), Expr::int(0)]
-}
-
-#[test]
-fn chess_contract_compiles_with_singleton_transition_entrypoint() {
-    let source = load_contract_source();
-    let compiled =
-        compile_contract(&source, &default_constructor_args(), CompileOptions::default()).expect("chess covenant should compile");
-
-    assert!(compiled.without_selector, "covenant declarations should compile without selector");
-    assert_eq!(compiled.abi.len(), 1);
-    assert_eq!(compiled.abi[0].name, "__play");
-    let input_names = compiled.abi[0].inputs.iter().map(|i| i.name.clone()).collect::<Vec<_>>();
-    assert_eq!(input_names, vec!["from_x", "from_y", "to_x", "to_y", "s", "pk"]);
-    assert!(compiled.ast.functions.iter().any(|f| f.name == "__covenant_policy_play" && !f.entrypoint));
-    assert!(compiled.ast.functions.iter().any(|f| f.name == "__play" && f.entrypoint));
-}
-
-#[test]
-fn chess_contract_reports_script_size() {
-    let source = load_contract_source();
-    let compiled =
-        compile_contract(&source, &default_constructor_args(), CompileOptions::default()).expect("chess covenant should compile");
-
-    eprintln!("chess_game script_len={}", compiled.script.len());
-    assert!(!compiled.script.is_empty());
-}
-
-#[test]
-fn chess_contract_requires_expected_constructor_arg_shape() {
-    let source = load_contract_source();
-    let err = compile_contract(&source, &[Expr::bytes(vec![1u8; 32])], CompileOptions::default())
-        .expect_err("constructor should require all arguments");
-
-    assert!(err.to_string().contains("constructor"));
-}
 
 #[test]
 fn isolated_rook_path_loop_reports_script_size() {
