@@ -8,8 +8,7 @@ use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
 use chess_covenant::{
     diag_down_left_contract_path, diag_down_right_contract_path, diag_up_left_contract_path, diag_up_right_contract_path,
-    example_contract_path, horiz_contract_path, king_contract_path, knight_contract_path, pawn_contract_path, vert_down_contract_path,
-    vert_up_contract_path,
+    example_contract_path, horiz_contract_path, king_contract_path, knight_contract_path, pawn_contract_path, vert_contract_path,
 };
 
 fn load_contract_source() -> String {
@@ -104,8 +103,7 @@ fn chess_workers_report_script_size_and_opcode_count() {
     let workers = [
         ("knight", knight_contract_path()),
         ("king", king_contract_path()),
-        ("vert_up", vert_up_contract_path()),
-        ("vert_down", vert_down_contract_path()),
+        ("vert", vert_contract_path()),
         ("horiz", horiz_contract_path()),
         ("diag_up_right", diag_up_right_contract_path()),
         ("diag_up_left", diag_up_left_contract_path()),
@@ -188,8 +186,8 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x0c, 0x0a, 0x0b, 0x0d, 0x0e, 0x0b, 0x0a,
         0x0c,
     ];
-    let mut route_hashes = Vec::with_capacity(32 * 10);
-    for byte in 0x12u8..=0x1bu8 {
+    let mut route_hashes = Vec::with_capacity(32 * 9);
+    for byte in 0x12u8..=0x1au8 {
         route_hashes.extend_from_slice(&[byte; 32]);
     }
 
