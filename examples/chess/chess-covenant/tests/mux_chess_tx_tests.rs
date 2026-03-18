@@ -19,8 +19,7 @@ use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledCont
 
 use chess_covenant::{
     diag_down_left_contract_path, diag_down_right_contract_path, diag_up_left_contract_path, diag_up_right_contract_path,
-    horiz_contract_path, king_contract_path, knight_contract_path, mux_contract_path, pawn_contract_path, vert_down_contract_path,
-    vert_up_contract_path,
+    horiz_contract_path, king_contract_path, knight_contract_path, mux_contract_path, pawn_contract_path, vert_contract_path,
 };
 
 struct Player {
@@ -40,8 +39,7 @@ struct MuxChessFixture {
     mux: TemplateFixture,
     pawn: TemplateFixture,
     knight: TemplateFixture,
-    vert_up: TemplateFixture,
-    vert_down: TemplateFixture,
+    vert: TemplateFixture,
     horiz: TemplateFixture,
     diag_up_right: TemplateFixture,
     diag_up_left: TemplateFixture,
@@ -70,11 +68,10 @@ struct MoveArgs {
 }
 
 fn packed_route_hashes(fix: &MuxChessFixture) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 * 10);
+    let mut out = Vec::with_capacity(32 * 9);
     out.extend_from_slice(&fix.pawn.hash);
     out.extend_from_slice(&fix.knight.hash);
-    out.extend_from_slice(&fix.vert_up.hash);
-    out.extend_from_slice(&fix.vert_down.hash);
+    out.extend_from_slice(&fix.vert.hash);
     out.extend_from_slice(&fix.horiz.hash);
     out.extend_from_slice(&fix.diag_up_right.hash);
     out.extend_from_slice(&fix.diag_up_left.hash);
@@ -171,8 +168,7 @@ fn build_fixture() -> MuxChessFixture {
     let mux_source = load_contract_source(mux_contract_path());
     let pawn_source = load_contract_source(pawn_contract_path());
     let knight_source = load_contract_source(knight_contract_path());
-    let file_up_source = load_contract_source(vert_up_contract_path());
-    let file_down_source = load_contract_source(vert_down_contract_path());
+    let vert_source = load_contract_source(vert_contract_path());
     let horiz_source = load_contract_source(horiz_contract_path());
     let diag_up_right_source = load_contract_source(diag_up_right_contract_path());
     let diag_up_left_source = load_contract_source(diag_up_left_contract_path());
@@ -183,7 +179,7 @@ fn build_fixture() -> MuxChessFixture {
     let dummy_board = standard_board();
     let ctor = vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(vec![0x33u8; 32 * 10]),
+        Expr::bytes(vec![0x33u8; 32 * 9]),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(dummy_board),
@@ -200,8 +196,7 @@ fn build_fixture() -> MuxChessFixture {
         mux: template_fixture(mux_source, &ctor),
         pawn: template_fixture(pawn_source, &ctor),
         knight: template_fixture(knight_source, &ctor),
-        vert_up: template_fixture(file_up_source, &ctor),
-        vert_down: template_fixture(file_down_source, &ctor),
+        vert: template_fixture(vert_source, &ctor),
         horiz: template_fixture(horiz_source, &ctor),
         diag_up_right: template_fixture(diag_up_right_source, &ctor),
         diag_up_left: template_fixture(diag_up_left_source, &ctor),
@@ -525,8 +520,8 @@ fn muxed_chess_routes_all_move_families() {
         },
     );
     let covenant_id3 = populate_single_output_genesis_covenant(&mux3);
-    let vert_up = compile_state(
-        fix.vert_up.source,
+    let vert = compile_state(
+        fix.vert.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -541,7 +536,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux3, 2, mv(0, 0, 0, 3), &white, &fix.vert_up, &vert_up, covenant_id3);
+    run_route(&mux3, 2, mv(0, 0, 0, 3), &white, &fix.vert, &vert, covenant_id3);
     let mut board4 = board3.clone();
     move_piece(&mut board4, 0, 0, 0, 3);
     let mux4 = compile_state(
@@ -560,7 +555,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_worker_apply("vert_up", &vert_up, &mux4, covenant_id3, &fix.mux);
+    run_worker_apply("vert", &vert, &mux4, covenant_id3, &fix.mux);
 
     let mut board4q = vec![0u8; 64];
     board4q[0] = 0x05;
@@ -581,8 +576,8 @@ fn muxed_chess_routes_all_move_families() {
         },
     );
     let covenant_id4q = populate_single_output_genesis_covenant(&mux4q);
-    let vert_up_queen = compile_state(
-        fix.vert_up.source,
+    let vert_queen = compile_state(
+        fix.vert.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -597,7 +592,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux4q, 2, mv(0, 0, 0, 3), &white, &fix.vert_up, &vert_up_queen, covenant_id4q);
+    run_route(&mux4q, 2, mv(0, 0, 0, 3), &white, &fix.vert, &vert_queen, covenant_id4q);
     let mut board4q_next = board4q.clone();
     move_piece(&mut board4q_next, 0, 0, 0, 3);
     let mux4q_next = compile_state(
@@ -616,7 +611,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_worker_apply("vert_up_queen", &vert_up_queen, &mux4q_next, covenant_id4q, &fix.mux);
+    run_worker_apply("vert_queen", &vert_queen, &mux4q_next, covenant_id4q, &fix.mux);
 
     let mut board5 = vec![0u8; 64];
     board5[56] = 0x0c;
@@ -637,8 +632,8 @@ fn muxed_chess_routes_all_move_families() {
         },
     );
     let covenant_id5 = populate_single_output_genesis_covenant(&mux5);
-    let vert_down = compile_state(
-        fix.vert_down.source,
+    let vert_black = compile_state(
+        fix.vert.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -653,7 +648,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux5, 3, mv(0, 7, 0, 4), &black, &fix.vert_down, &vert_down, covenant_id5);
+    run_route(&mux5, 2, mv(0, 7, 0, 4), &black, &fix.vert, &vert_black, covenant_id5);
     let mut board6 = board5.clone();
     move_piece(&mut board6, 0, 7, 0, 4);
     let mux6 = compile_state(
@@ -672,7 +667,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_worker_apply("vert_down", &vert_down, &mux6, covenant_id5, &fix.mux);
+    run_worker_apply("vert_black", &vert_black, &mux6, covenant_id5, &fix.mux);
 
     let mut board7 = vec![0u8; 64];
     board7[31] = 0x05;
@@ -709,7 +704,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux7, 4, mv(7, 3, 4, 3), &white, &fix.horiz, &horiz_left, covenant_id7);
+    run_route(&mux7, 3, mv(7, 3, 4, 3), &white, &fix.horiz, &horiz_left, covenant_id7);
     let mut board8 = board7.clone();
     move_piece(&mut board8, 7, 3, 4, 3);
     let mux8 = compile_state(
@@ -765,7 +760,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux9, 4, mv(0, 3, 3, 3), &white, &fix.horiz, &horiz_right, covenant_id9);
+    run_route(&mux9, 3, mv(0, 3, 3, 3), &white, &fix.horiz, &horiz_right, covenant_id9);
     let mut board10 = board9.clone();
     move_piece(&mut board10, 0, 3, 3, 3);
     let mux10 = compile_state(
@@ -821,7 +816,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux11, 5, mv(0, 0, 3, 3), &white, &fix.diag_up_right, &diag_up_right, covenant_id11);
+    run_route(&mux11, 4, mv(0, 0, 3, 3), &white, &fix.diag_up_right, &diag_up_right, covenant_id11);
     let mut board12 = board11.clone();
     move_piece(&mut board12, 0, 0, 3, 3);
     let mux12 = compile_state(
@@ -877,7 +872,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux12q, 5, mv(0, 0, 3, 3), &white, &fix.diag_up_right, &diag_up_right_queen, covenant_id12q);
+    run_route(&mux12q, 4, mv(0, 0, 3, 3), &white, &fix.diag_up_right, &diag_up_right_queen, covenant_id12q);
     let mut board12q_next = board12q.clone();
     move_piece(&mut board12q_next, 0, 0, 3, 3);
     let mux12q_next = compile_state(
@@ -933,7 +928,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux13, 6, mv(7, 0, 4, 3), &white, &fix.diag_up_left, &diag_up_left, covenant_id13);
+    run_route(&mux13, 5, mv(7, 0, 4, 3), &white, &fix.diag_up_left, &diag_up_left, covenant_id13);
     let mut board14 = board13.clone();
     move_piece(&mut board14, 7, 0, 4, 3);
     let mux14 = compile_state(
@@ -989,7 +984,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux15, 7, mv(0, 7, 3, 4), &black, &fix.diag_down_right, &diag_down_right, covenant_id15);
+    run_route(&mux15, 6, mv(0, 7, 3, 4), &black, &fix.diag_down_right, &diag_down_right, covenant_id15);
     let mut board16 = board15.clone();
     move_piece(&mut board16, 0, 7, 3, 4);
     let mux16 = compile_state(
@@ -1045,7 +1040,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux17, 8, mv(7, 7, 4, 4), &black, &fix.diag_down_left, &diag_down_left, covenant_id17);
+    run_route(&mux17, 7, mv(7, 7, 4, 4), &black, &fix.diag_down_left, &diag_down_left, covenant_id17);
     let mut board18 = board17.clone();
     move_piece(&mut board18, 7, 7, 4, 4);
     let mux18 = compile_state(
@@ -1101,7 +1096,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux19, 9, mv(4, 0, 4, 1), &white, &fix.king, &king, covenant_id19);
+    run_route(&mux19, 8, mv(4, 0, 4, 1), &white, &fix.king, &king, covenant_id19);
     let mut board20 = board19.clone();
     move_piece(&mut board20, 4, 0, 4, 1);
     let mux20 = compile_state(
@@ -1151,8 +1146,8 @@ fn capturing_enemy_king_sets_terminal_status() {
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
-    let vert_up = compile_state(
-        fix.vert_up.source,
+    let vert = compile_state(
+        fix.vert.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -1167,7 +1162,7 @@ fn capturing_enemy_king_sets_terminal_status() {
             pending_promo: 0,
         },
     );
-    run_route(&mux0, 2, mv(0, 0, 0, 3), &white, &fix.vert_up, &vert_up, covenant_id);
+    run_route(&mux0, 2, mv(0, 0, 0, 3), &white, &fix.vert, &vert, covenant_id);
 
     let mut board1 = board0.clone();
     move_piece(&mut board1, 0, 0, 0, 3);
@@ -1187,7 +1182,7 @@ fn capturing_enemy_king_sets_terminal_status() {
             pending_promo: 0,
         },
     );
-    run_worker_apply("vert_up_king_capture", &vert_up, &mux1, covenant_id, &fix.mux);
+    run_worker_apply("vert_king_capture", &vert, &mux1, covenant_id, &fix.mux);
 }
 
 #[test]
