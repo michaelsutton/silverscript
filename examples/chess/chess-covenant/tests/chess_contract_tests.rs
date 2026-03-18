@@ -202,6 +202,7 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
         Expr::bytes(standard_board),
         Expr::int(0),
         Expr::int(0),
+        Expr::int(-1),
         Expr::int(12),
         Expr::int(28),
         Expr::int(0),

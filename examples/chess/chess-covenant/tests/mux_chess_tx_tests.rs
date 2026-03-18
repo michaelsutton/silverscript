@@ -55,6 +55,7 @@ struct GameStateArgs<'a> {
     board: &'a [u8],
     turn: i64,
     status: i64,
+    en_passant_idx: i64,
     pending_src_idx: i64,
     pending_dst_idx: i64,
     pending_promo: i64,
@@ -132,6 +133,21 @@ fn move_piece_to(board: &mut [u8], from_x: usize, from_y: usize, to_x: usize, to
     board[to_idx] = piece;
 }
 
+fn apply_en_passant(
+    board: &mut [u8],
+    from_x: usize,
+    from_y: usize,
+    to_x: usize,
+    to_y: usize,
+    captured_x: usize,
+    captured_y: usize,
+    piece: u8,
+) {
+    board[from_y * 8 + from_x] = 0x00;
+    board[captured_y * 8 + captured_x] = 0x00;
+    board[to_y * 8 + to_x] = piece;
+}
+
 fn square_idx(x: i64, y: i64) -> i64 {
     y * 8 + x
 }
@@ -169,6 +185,7 @@ fn build_fixture() -> MuxChessFixture {
         Expr::int(0),
         Expr::int(-1),
         Expr::int(-1),
+        Expr::int(-1),
         Expr::int(0),
     ];
 
@@ -203,6 +220,7 @@ fn compile_state(
         Expr::bytes(state.board.to_vec()),
         Expr::int(state.turn),
         Expr::int(state.status),
+        Expr::int(state.en_passant_idx),
         Expr::int(state.pending_src_idx),
         Expr::int(state.pending_dst_idx),
         Expr::int(state.pending_promo),
@@ -394,7 +412,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board0, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
@@ -407,6 +433,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board0,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(4, 1),
             pending_dst_idx: square_idx(4, 3),
             pending_promo: 0,
@@ -420,7 +447,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board1, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: square_idx(4, 2),
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("pawn", &pawn0, &mux1, covenant_id, &fix.mux);
 
@@ -433,6 +468,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board1,
             turn: 1,
             status: 0,
+            en_passant_idx: square_idx(4, 2),
             pending_src_idx: square_idx(6, 7),
             pending_dst_idx: square_idx(5, 5),
             pending_promo: 0,
@@ -446,7 +482,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board2, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board2,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("knight", &knight1, &mux2, covenant_id, &fix.mux);
 
@@ -457,7 +501,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board3, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board3,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id3 = populate_single_output_genesis_covenant(&mux3);
     let vert_up = compile_state(
@@ -469,6 +521,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board3,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(0, 0),
             pending_dst_idx: square_idx(0, 3),
             pending_promo: 0,
@@ -482,7 +535,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board4, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board4,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("vert_up", &vert_up, &mux4, covenant_id3, &fix.mux);
 
@@ -493,7 +554,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board4q, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board4q,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id4q = populate_single_output_genesis_covenant(&mux4q);
     let vert_up_queen = compile_state(
@@ -505,6 +574,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board4q,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(0, 0),
             pending_dst_idx: square_idx(0, 3),
             pending_promo: 0,
@@ -518,7 +588,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board4q_next, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board4q_next,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("vert_up_queen", &vert_up_queen, &mux4q_next, covenant_id4q, &fix.mux);
 
@@ -529,7 +607,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board5, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board5,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id5 = populate_single_output_genesis_covenant(&mux5);
     let vert_down = compile_state(
@@ -541,6 +627,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board5,
             turn: 1,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(0, 7),
             pending_dst_idx: square_idx(0, 4),
             pending_promo: 0,
@@ -554,7 +641,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board6, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board6,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("vert_down", &vert_down, &mux6, covenant_id5, &fix.mux);
 
@@ -565,7 +660,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board7, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board7,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id7 = populate_single_output_genesis_covenant(&mux7);
     let horiz_left = compile_state(
@@ -577,6 +680,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board7,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(7, 3),
             pending_dst_idx: square_idx(4, 3),
             pending_promo: 0,
@@ -590,7 +694,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board8, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board8,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("horiz_left", &horiz_left, &mux8, covenant_id7, &fix.mux);
 
@@ -601,7 +713,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board9, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board9,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id9 = populate_single_output_genesis_covenant(&mux9);
     let horiz_right = compile_state(
@@ -613,6 +733,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board9,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(0, 3),
             pending_dst_idx: square_idx(3, 3),
             pending_promo: 0,
@@ -626,7 +747,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board10, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board10,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("horiz_right", &horiz_right, &mux10, covenant_id9, &fix.mux);
 
@@ -637,7 +766,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board11, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board11,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id11 = populate_single_output_genesis_covenant(&mux11);
     let diag_up_right = compile_state(
@@ -649,6 +786,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board11,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(0, 0),
             pending_dst_idx: square_idx(3, 3),
             pending_promo: 0,
@@ -662,7 +800,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board12, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board12,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("diag_up_right", &diag_up_right, &mux12, covenant_id11, &fix.mux);
 
@@ -673,7 +819,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board12q, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board12q,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id12q = populate_single_output_genesis_covenant(&mux12q);
     let diag_up_right_queen = compile_state(
@@ -685,6 +839,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board12q,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(0, 0),
             pending_dst_idx: square_idx(3, 3),
             pending_promo: 0,
@@ -698,7 +853,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board12q_next, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board12q_next,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("diag_up_right_queen", &diag_up_right_queen, &mux12q_next, covenant_id12q, &fix.mux);
 
@@ -709,7 +872,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board13, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board13,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id13 = populate_single_output_genesis_covenant(&mux13);
     let diag_up_left = compile_state(
@@ -721,6 +892,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board13,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(7, 0),
             pending_dst_idx: square_idx(4, 3),
             pending_promo: 0,
@@ -734,7 +906,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board14, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board14,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("diag_up_left", &diag_up_left, &mux14, covenant_id13, &fix.mux);
 
@@ -745,7 +925,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board15, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board15,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id15 = populate_single_output_genesis_covenant(&mux15);
     let diag_down_right = compile_state(
@@ -757,6 +945,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board15,
             turn: 1,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(0, 7),
             pending_dst_idx: square_idx(3, 4),
             pending_promo: 0,
@@ -770,7 +959,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board16, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board16,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("diag_down_right", &diag_down_right, &mux16, covenant_id15, &fix.mux);
 
@@ -781,7 +978,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board17, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board17,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id17 = populate_single_output_genesis_covenant(&mux17);
     let diag_down_left = compile_state(
@@ -793,6 +998,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board17,
             turn: 1,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(7, 7),
             pending_dst_idx: square_idx(4, 4),
             pending_promo: 0,
@@ -806,7 +1012,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board18, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board18,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("diag_down_left", &diag_down_left, &mux18, covenant_id17, &fix.mux);
 
@@ -817,7 +1031,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board19, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board19,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id19 = populate_single_output_genesis_covenant(&mux19);
     let king = compile_state(
@@ -829,6 +1051,7 @@ fn muxed_chess_routes_all_move_families() {
             board: &board19,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(4, 0),
             pending_dst_idx: square_idx(4, 1),
             pending_promo: 0,
@@ -842,7 +1065,15 @@ fn muxed_chess_routes_all_move_families() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board20, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board20,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("king", &king, &mux20, covenant_id19, &fix.mux);
 }
@@ -862,7 +1093,15 @@ fn capturing_enemy_king_sets_terminal_status() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board0, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
@@ -875,6 +1114,7 @@ fn capturing_enemy_king_sets_terminal_status() {
             board: &board0,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(0, 0),
             pending_dst_idx: square_idx(0, 3),
             pending_promo: 0,
@@ -889,7 +1129,15 @@ fn capturing_enemy_king_sets_terminal_status() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board1, turn: 1, status: 1, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 1,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("vert_up_king_capture", &vert_up, &mux1, covenant_id, &fix.mux);
 }
@@ -908,7 +1156,15 @@ fn pawn_underpromotion_to_knight_succeeds() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board0, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
@@ -921,6 +1177,7 @@ fn pawn_underpromotion_to_knight_succeeds() {
             board: &board0,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(4, 6),
             pending_dst_idx: square_idx(4, 7),
             pending_promo: 2,
@@ -935,7 +1192,15 @@ fn pawn_underpromotion_to_knight_succeeds() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board1, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     run_worker_apply("pawn_underpromotion", &pawn0, &mux1, covenant_id, &fix.mux);
 }
@@ -954,7 +1219,15 @@ fn pawn_promotion_requires_choice() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board0, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
@@ -967,6 +1240,7 @@ fn pawn_promotion_requires_choice() {
             board: &board0,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(4, 6),
             pending_dst_idx: square_idx(4, 7),
             pending_promo: 0,
@@ -981,7 +1255,15 @@ fn pawn_promotion_requires_choice() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board1, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let _err = run_worker_apply_err("missing promotion choice should fail", &pawn0, &mux1, covenant_id, &fix.mux);
 }
@@ -1000,7 +1282,15 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board0, turn: 0, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
@@ -1013,6 +1303,7 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
             board: &board0,
             turn: 0,
             status: 0,
+            en_passant_idx: -1,
             pending_src_idx: square_idx(4, 1),
             pending_dst_idx: square_idx(4, 2),
             pending_promo: 5,
@@ -1027,7 +1318,461 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
-        GameStateArgs { board: &board1, turn: 1, status: 0, pending_src_idx: -1, pending_dst_idx: -1, pending_promo: 0 },
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
     );
     let _err = run_worker_apply_err("ordinary pawn move with promotion choice should fail", &pawn0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn white_en_passant_capture_succeeds() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 4) as usize] = 0x01;
+    board0[square_idx(3, 4) as usize] = 0x09;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: square_idx(3, 5),
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let pawn0 = compile_state(
+        fix.pawn.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: square_idx(3, 5),
+            pending_src_idx: square_idx(4, 4),
+            pending_dst_idx: square_idx(3, 5),
+            pending_promo: 0,
+        },
+    );
+    run_route(&mux0, 0, mv(4, 4, 3, 5), &white, &fix.pawn, &pawn0, covenant_id);
+
+    let mut board1 = board0.clone();
+    apply_en_passant(&mut board1, 4, 4, 3, 5, 3, 4, 0x01);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    run_worker_apply("white_en_passant", &pawn0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn black_en_passant_capture_succeeds() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(3, 3) as usize] = 0x09;
+    board0[square_idx(4, 3) as usize] = 0x01;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            en_passant_idx: square_idx(4, 2),
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let pawn0 = compile_state(
+        fix.pawn.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            en_passant_idx: square_idx(4, 2),
+            pending_src_idx: square_idx(3, 3),
+            pending_dst_idx: square_idx(4, 2),
+            pending_promo: 0,
+        },
+    );
+    run_route(&mux0, 0, mv(3, 3, 4, 2), &black, &fix.pawn, &pawn0, covenant_id);
+
+    let mut board1 = board0.clone();
+    apply_en_passant(&mut board1, 3, 3, 4, 2, 4, 3, 0x09);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    run_worker_apply("black_en_passant", &pawn0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn non_pawn_move_clears_en_passant_state() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(1, 0) as usize] = 0x02;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: square_idx(3, 5),
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let knight0 = compile_state(
+        fix.knight.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: square_idx(3, 5),
+            pending_src_idx: square_idx(1, 0),
+            pending_dst_idx: square_idx(2, 2),
+            pending_promo: 0,
+        },
+    );
+    run_route(&mux0, 1, mv(1, 0, 2, 2), &white, &fix.knight, &knight0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 1, 0, 2, 2);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    run_worker_apply("knight_clears_en_passant", &knight0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn pawn_diagonal_capture_succeeds() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 4) as usize] = 0x01;
+    board0[square_idx(5, 5) as usize] = 0x0a;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let pawn0 = compile_state(
+        fix.pawn.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 4),
+            pending_dst_idx: square_idx(5, 5),
+            pending_promo: 0,
+        },
+    );
+    run_route(&mux0, 0, mv(4, 4, 5, 5), &white, &fix.pawn, &pawn0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 4, 4, 5, 5);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    run_worker_apply("pawn_diagonal_capture", &pawn0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn pawn_double_step_blocked_by_occupied_middle_square_fails() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 1) as usize] = 0x01;
+    board0[square_idx(4, 2) as usize] = 0x09;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let pawn0 = compile_state(
+        fix.pawn.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 1),
+            pending_dst_idx: square_idx(4, 3),
+            pending_promo: 0,
+        },
+    );
+    run_route(&mux0, 0, mv(4, 1, 4, 3), &white, &fix.pawn, &pawn0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 4, 1, 4, 3);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: square_idx(4, 2),
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let _err = run_worker_apply_err("blocked double-step should fail", &pawn0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn pawn_diagonal_move_into_empty_square_fails_without_en_passant() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 4) as usize] = 0x01;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let pawn0 = compile_state(
+        fix.pawn.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 4),
+            pending_dst_idx: square_idx(5, 5),
+            pending_promo: 0,
+        },
+    );
+    run_route(&mux0, 0, mv(4, 4, 5, 5), &white, &fix.pawn, &pawn0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 4, 4, 5, 5);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let _err = run_worker_apply_err("diagonal move into empty square should fail", &pawn0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn expired_en_passant_attempt_fails() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 4) as usize] = 0x01;
+    board0[square_idx(3, 4) as usize] = 0x09;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let pawn0 = compile_state(
+        fix.pawn.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 4),
+            pending_dst_idx: square_idx(3, 5),
+            pending_promo: 0,
+        },
+    );
+    run_route(&mux0, 0, mv(4, 4, 3, 5), &white, &fix.pawn, &pawn0, covenant_id);
+
+    let mut board1 = board0.clone();
+    apply_en_passant(&mut board1, 4, 4, 3, 5, 3, 4, 0x01);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let _err = run_worker_apply_err("expired en-passant should fail", &pawn0, &mux1, covenant_id, &fix.mux);
 }
