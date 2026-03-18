@@ -1423,6 +1423,584 @@ fn capturing_enemy_king_sets_terminal_status() {
 }
 
 #[test]
+fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 0) as usize] = 0x06;
+    board0[square_idx(6, 0) as usize] = 0x02;
+    board0[square_idx(4, 7) as usize] = 0x0c;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let knight0 = compile_state(
+        fix.knight.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(6, 0),
+            pending_dst_idx: square_idx(5, 2),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux0, 1, mv(6, 0, 5, 2), &white, &fix.knight, &knight0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 6, 0, 5, 2);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("ignore_check_knight", &knight0, &mux1, covenant_id, &fix.mux);
+
+    let vert1 = compile_state(
+        fix.vert.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 7),
+            pending_dst_idx: square_idx(4, 0),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux1, 2, mv(4, 7, 4, 0), &black, &fix.vert, &vert1, covenant_id);
+
+    let mut board2 = board1.clone();
+    move_piece(&mut board2, 4, 7, 4, 0);
+    let mux2 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board2,
+            turn: 0,
+            status: 2,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("ignore_check_capture", &vert1, &mux2, covenant_id, &fix.mux);
+}
+
+#[test]
+fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 0) as usize] = 0x06;
+    board0[square_idx(4, 1) as usize] = 0x04;
+    board0[square_idx(4, 7) as usize] = 0x0c;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let horiz0 = compile_state(
+        fix.horiz.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 1),
+            pending_dst_idx: square_idx(5, 1),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux0, 3, mv(4, 1, 5, 1), &white, &fix.horiz, &horiz0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 4, 1, 5, 1);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("pinned_rook_slide", &horiz0, &mux1, covenant_id, &fix.mux);
+
+    let vert1 = compile_state(
+        fix.vert.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 7),
+            pending_dst_idx: square_idx(4, 0),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux1, 2, mv(4, 7, 4, 0), &black, &fix.vert, &vert1, covenant_id);
+
+    let mut board2 = board1.clone();
+    move_piece(&mut board2, 4, 7, 4, 0);
+    let mux2 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board2,
+            turn: 0,
+            status: 2,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("pinned_rook_capture", &vert1, &mux2, covenant_id, &fix.mux);
+}
+
+#[test]
+fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 0) as usize] = 0x06;
+    board0[square_idx(4, 7) as usize] = 0x0c;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let king0 = compile_state(
+        fix.king.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 0),
+            pending_dst_idx: square_idx(4, 1),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux0, 5, mv(4, 0, 4, 1), &white, &fix.king, &king0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 4, 0, 4, 1);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("king_walk_into_attack", &king0, &mux1, covenant_id, &fix.mux);
+
+    let vert1 = compile_state(
+        fix.vert.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 7),
+            pending_dst_idx: square_idx(4, 1),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux1, 2, mv(4, 7, 4, 1), &black, &fix.vert, &vert1, covenant_id);
+
+    let mut board2 = board1.clone();
+    move_piece(&mut board2, 4, 7, 4, 1);
+    let mux2 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board2,
+            turn: 0,
+            status: 2,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("king_walk_capture", &vert1, &mux2, covenant_id, &fix.mux);
+}
+
+#[test]
+fn legal_interposition_blocks_the_immediate_king_capture_route() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 0) as usize] = 0x06;
+    board0[square_idx(5, 0) as usize] = 0x03;
+    board0[square_idx(4, 7) as usize] = 0x0c;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let diag0 = compile_state(
+        fix.diag.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(5, 0),
+            pending_dst_idx: square_idx(4, 1),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux0, 4, mv(5, 0, 4, 1), &white, &fix.diag, &diag0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 5, 0, 4, 1);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("legal_interposition", &diag0, &mux1, covenant_id, &fix.mux);
+
+    let vert1 = compile_state(
+        fix.vert.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 7),
+            pending_dst_idx: square_idx(4, 0),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux1, 2, mv(4, 7, 4, 0), &black, &fix.vert, &vert1, covenant_id);
+
+    let mux_fail = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    let _err = run_worker_apply_err("interposition_blocks_capture", &vert1, &mux_fail, covenant_id, &fix.mux);
+}
+
+#[test]
+fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = vec![0u8; 64];
+    board0[square_idx(4, 0) as usize] = 0x06;
+    board0[square_idx(5, 0) as usize] = 0x03;
+    board0[square_idx(1, 3) as usize] = 0x0b;
+    board0[square_idx(4, 7) as usize] = 0x0c;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let diag0 = compile_state(
+        fix.diag.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(5, 0),
+            pending_dst_idx: square_idx(4, 1),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux0, 4, mv(5, 0, 4, 1), &white, &fix.diag, &diag0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 5, 0, 4, 1);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("double_check_illegal_reply", &diag0, &mux1, covenant_id, &fix.mux);
+
+    let diag1 = compile_state(
+        fix.diag.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(1, 3),
+            pending_dst_idx: square_idx(4, 0),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_route(&mux1, 4, mv(1, 3, 4, 0), &black, &fix.diag, &diag1, covenant_id);
+
+    let mut board2 = board1.clone();
+    move_piece(&mut board2, 1, 3, 4, 0);
+    let mux2 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board2,
+            turn: 0,
+            status: 2,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 0,
+        },
+    );
+    run_worker_apply("double_check_capture", &diag1, &mux2, covenant_id, &fix.mux);
+}
+
+#[test]
 fn pawn_underpromotion_to_knight_succeeds() {
     let fix = build_fixture();
     let white = player_from_seed(1);

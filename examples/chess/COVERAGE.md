@@ -27,7 +27,7 @@ It is an audit document, not a promise that every row is already complete.
 | Surrender / resignation | bounded | mux selector `9` routes directly back to mux with terminal status for the conceding side | `surrender_routes_back_to_mux_with_terminal_status` |
 | Timeout / liveness | bounded | mux timeout is opponent-signed, worker timeout is permissionless | `knight_worker_timeout_rescues_invalid_committed_state` |
 | Terminal win by king capture | bounded | workers set terminal status when the enemy king is captured | `capturing_enemy_king_sets_terminal_status`, `knight_draw_capture_awards_win_to_the_actor`, `pawn_draw_capture_awards_win_to_the_actor` |
-| Ordinary no-self-check / must-answer-check semantics | partial | the design intends these violations to reduce to punishable next-ply king capture, but that reduction is not yet documented and covered as a protocol theorem | no complete tx coverage yet |
+| Ordinary no-self-check / must-answer-check semantics | partial | representative tx tests show that ignored check, pinned-piece exposure, king walks into attack, and illegal double-check replies can collapse into punishable next-ply king capture; no known gap is currently identified in this reduction | `ignoring_single_check_is_punishable_by_next_ply_king_capture`, `moving_a_pinned_piece_is_punishable_by_next_ply_king_capture`, `king_move_into_attack_is_punishable_by_next_ply_king_capture`, `legal_interposition_blocks_the_immediate_king_capture_route`, `illegal_double_check_reply_is_punishable_by_next_ply_king_capture` |
 | Checkmate reduction to forced king capture | partial | mate does not need a separate eager terminal predicate here; the intended reduction is surrender or a reply after which the king is capturable, but that reduction is not yet covered end-to-end in theorem-style tx tests | no direct tx coverage yet |
 | Stalemate as a direct terminal proof | missing | no dedicated on-chain stalemate path yet | none |
 | Threefold repetition | missing | no repetition state or proof path yet | none |
@@ -39,7 +39,6 @@ It is an audit document, not a promise that every row is already complete.
 
 The highest-value unresolved areas are:
 
-- documented and tested reduction from ordinary check-evasion failures to punishable king capture
 - rare draw rules such as repetition and the fifty-move rule
 - termination semantics beyond king capture, timeout, and accepted draw
 - value settlement after win or draw
