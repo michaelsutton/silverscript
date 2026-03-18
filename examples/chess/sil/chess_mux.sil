@@ -2,7 +2,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessMux(
     byte[32] init_mux_hash,
-    byte[224] init_route_hashes,
+    byte[256] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -12,10 +12,11 @@ contract ChessMux(
     int init_en_passant_idx,
     int init_pending_src_idx,
     int init_pending_dst_idx,
-    int init_pending_promo
+    int init_pending_promo,
+    int init_recent_castle
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[224] route_hashes = init_route_hashes;
+    byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -26,6 +27,7 @@ contract ChessMux(
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
+    int recent_castle = init_recent_castle;
 
     entrypoint function route(
         int selector,
@@ -71,7 +73,8 @@ contract ChessMux(
         // 4  -> diag
         // 5  -> king
         // 6  -> castle
-        require(selector >= 0 && selector < 7);
+        // 7  -> castle challenge prep
+        require(selector >= 0 && selector < 8);
         int hash_start = selector * 32;
         int hash_end = hash_start + 32;
         byte[32] target_hash = route_hashes.slice(hash_start, hash_end);
@@ -86,7 +89,15 @@ contract ChessMux(
         // 2 knight, 3 bishop, 4 rook, 5 queen
         require(promo_piece == 0 || (selector == 0 && promo_piece >= 2 && promo_piece <= 5));
 
-        // Mux is the only writer of pending move fields.
+        // Mux is the only writer of pending move fields. A normal opponent
+        // reply implicitly accepts any recent castle by clearing recent_castle;
+        // selector 7 preserves it and enters the explicit challenge path.
+        int next_recent_castle = 0;
+        if (selector == 7) {
+            require(recent_castle != 0);
+            next_recent_castle = recent_castle;
+        }
+
         State next_state = {
             mux_hash: mux_hash,
             route_hashes: route_hashes,
@@ -99,7 +110,8 @@ contract ChessMux(
             en_passant_idx: en_passant_idx,
             pending_src_idx: from_y * 8 + from_x,
             pending_dst_idx: to_y * 8 + to_x,
-            pending_promo: promo_piece
+            pending_promo: promo_piece,
+            recent_castle: next_recent_castle
         };
         // Mux must produce exactly one authorized output with the selected template.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);

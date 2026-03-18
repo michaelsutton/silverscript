@@ -1,0 +1,212 @@
+pragma silverscript ^0.1.0;
+
+contract ChessCastleChallengePrep(
+    byte[32] init_mux_hash,
+    byte[256] init_route_hashes,
+    byte[32] init_white_player,
+    byte[32] init_black_player,
+    byte[64] init_board,
+    int init_turn,
+    int init_status,
+    byte[4] init_castle_rights,
+    int init_en_passant_idx,
+    int init_pending_src_idx,
+    int init_pending_dst_idx,
+    int init_pending_promo,
+    int init_recent_castle
+) {
+    byte[32] mux_hash = init_mux_hash;
+    byte[256] route_hashes = init_route_hashes;
+    byte[32] white_player = init_white_player;
+    byte[32] black_player = init_black_player;
+    byte[64] board = init_board;
+    int turn = init_turn;
+    int status = init_status;
+    byte[4] castle_rights = init_castle_rights;
+    int en_passant_idx = init_en_passant_idx;
+    int pending_src_idx = init_pending_src_idx;
+    int pending_dst_idx = init_pending_dst_idx;
+    int pending_promo = init_pending_promo;
+    int recent_castle = init_recent_castle;
+
+    function abs_int(int value) : (int) {
+        int result = value;
+        if (value < 0) {
+            result = 0 - value;
+        }
+        return(result);
+    }
+
+    entrypoint function apply(byte[] target_prefix, byte[] target_suffix) {
+        require(status == 0);
+        require(recent_castle >= 1 && recent_castle <= 4);
+
+        int from_idx = OpBin2Num(pending_src_idx);
+        int to_idx = OpBin2Num(pending_dst_idx);
+        require(from_idx != to_idx);
+
+        byte[64] prev_board = board;
+        int from_y = from_idx / 8;
+        int from_x = from_idx % 8;
+        int to_y = to_idx / 8;
+        int to_x = to_idx % 8;
+
+        bool is_white_castle = recent_castle == 1 || recent_castle == 2;
+        bool is_king_side = recent_castle == 1 || recent_castle == 3;
+        int row_base = 0;
+        byte king_piece = byte(0x06);
+        byte rook_piece = byte(0x04);
+        if (!is_white_castle) {
+            row_base = 56;
+            king_piece = byte(0x0e);
+            rook_piece = byte(0x0c);
+        }
+
+        int start_idx = row_base + 4;
+        int transit_idx = row_base + 3;
+        int dest_idx = row_base + 2;
+        if (is_king_side) {
+            transit_idx = row_base + 5;
+            dest_idx = row_base + 6;
+        }
+
+        int phase = 0;
+        if (to_idx == start_idx) {
+            phase = 1;
+        } else if (to_idx == transit_idx) {
+            phase = 2;
+        } else if (to_idx == dest_idx) {
+            phase = 3;
+        }
+        require(phase != 0);
+
+        byte empty_piece = byte(0x00);
+        int a = row_base;
+        int b = row_base + 2;
+        int c = row_base + 3;
+        int d = row_base + 4;
+        byte va = empty_piece;
+        byte vb = king_piece;
+        byte vc = rook_piece;
+        byte vd = empty_piece;
+
+        if (is_king_side) {
+            a = row_base + 4;
+            b = row_base + 5;
+            c = row_base + 6;
+            d = row_base + 7;
+            va = empty_piece;
+            vb = rook_piece;
+            vc = king_piece;
+            vd = empty_piece;
+            if (phase == 1) {
+                va = king_piece;
+                vb = empty_piece;
+                vc = empty_piece;
+                vd = rook_piece;
+            } else if (phase == 2) {
+                va = empty_piece;
+                vb = king_piece;
+                vc = empty_piece;
+                vd = rook_piece;
+            }
+        } else {
+            if (phase == 1) {
+                va = rook_piece;
+                vb = empty_piece;
+                vc = empty_piece;
+                vd = king_piece;
+            } else if (phase == 2) {
+                va = rook_piece;
+                vb = empty_piece;
+                vc = king_piece;
+                vd = empty_piece;
+            }
+        }
+
+        // Challenge prep rewrites the castle lane into the selected proof phase.
+        // The destination square then contains the castling side king code, so
+        // the follow-up move can be checked as an ordinary capture proof.
+        byte[] prev_dyn = byte[](prev_board);
+        byte[] prefix = prev_dyn.slice(0, a);
+        byte[] mid_ab = prev_dyn.slice(a + 1, b);
+        byte[] mid_bc = prev_dyn.slice(b + 1, c);
+        byte[] mid_cd = prev_dyn.slice(c + 1, d);
+        byte[] suffix = prev_dyn.slice(d + 1, 64);
+        byte[64] proof_board =
+            prefix +
+            byte[1](va) +
+            mid_ab +
+            byte[1](vb) +
+            mid_bc +
+            byte[1](vc) +
+            mid_cd +
+            byte[1](vd) +
+            suffix;
+
+        int dx = to_x - from_x;
+        int dy = to_y - from_y;
+        (int abs_dx) = abs_int(dx);
+        (int abs_dy) = abs_int(dy);
+        int moving_num = OpBin2Num(proof_board[from_idx]);
+
+        int selector = -1;
+        if (moving_num == 1 || moving_num == 9) {
+            selector = 0;
+        } else if (moving_num == 2 || moving_num == 10) {
+            selector = 1;
+        } else if (moving_num == 3 || moving_num == 11) {
+            require(abs_dx == abs_dy && abs_dx != 0);
+            selector = 4;
+        } else if (moving_num == 4 || moving_num == 12) {
+            if (dx == 0 && dy != 0) {
+                selector = 2;
+            } else {
+                require(dy == 0 && dx != 0);
+                selector = 3;
+            }
+        } else if (moving_num == 5 || moving_num == 13) {
+            if (dx == 0 && dy != 0) {
+                selector = 2;
+            } else if (dy == 0 && dx != 0) {
+                selector = 3;
+            } else {
+                require(abs_dx == abs_dy && abs_dx != 0);
+                selector = 4;
+            }
+        } else {
+            require(moving_num == 6 || moving_num == 14);
+            selector = 5;
+        }
+
+        int hash_start = selector * 32;
+        int hash_end = hash_start + 32;
+        byte[32] target_hash = route_hashes.slice(hash_start, hash_end);
+
+        // After prep the challenger is committed to this proof move. The next
+        // worker sees recent_castle != 0 and must settle immediately on success.
+        State next_state = {
+            mux_hash: mux_hash,
+            route_hashes: route_hashes,
+            white_player: white_player,
+            black_player: black_player,
+            board: proof_board,
+            turn: turn,
+            status: status,
+            castle_rights: castle_rights,
+            en_passant_idx: -1,
+            pending_src_idx: pending_src_idx,
+            pending_dst_idx: pending_dst_idx,
+            pending_promo: 0,
+            recent_castle: recent_castle
+        };
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        validateOutputStateWithTemplate(
+            OpAuthOutputIdx(this.activeInputIndex, 0),
+            next_state,
+            target_prefix,
+            target_suffix,
+            target_hash
+        );
+    }
+}

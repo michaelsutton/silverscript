@@ -2,7 +2,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessVert(
     byte[32] init_mux_hash,
-    byte[224] init_route_hashes,
+    byte[256] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -12,10 +12,11 @@ contract ChessVert(
     int init_en_passant_idx,
     int init_pending_src_idx,
     int init_pending_dst_idx,
-    int init_pending_promo
+    int init_pending_promo,
+    int init_recent_castle
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[224] route_hashes = init_route_hashes;
+    byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -26,6 +27,7 @@ contract ChessVert(
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
+    int recent_castle = init_recent_castle;
 
     function abs_int(int value) : (int) {
         int result = value;
@@ -123,11 +125,21 @@ contract ChessVert(
         // Off-chain clients may enforce stricter classical no-self-check rules,
         // but on chain a king capture conclusively proves the winner.
         int next_status = status;
-        if (turn == 0 && target_num == 14) {
-            next_status = 1;
-        }
-        if (turn == 1 && target_num == 6) {
-            next_status = 2;
+        if (recent_castle != 0) {
+            if (turn == 0) {
+                require(target_num == 14);
+                next_status = 1;
+            } else {
+                require(target_num == 6);
+                next_status = 2;
+            }
+        } else {
+            if (turn == 0 && target_num == 14) {
+                next_status = 1;
+            }
+            if (turn == 1 && target_num == 6) {
+                next_status = 2;
+            }
         }
 
         byte next_white_can_castle_k = castle_rights[0];
@@ -168,7 +180,8 @@ contract ChessVert(
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
-            pending_promo: 0
+            pending_promo: 0,
+            recent_castle: 0
         };
         // The worker must produce exactly one authorized covenant output back to
         // the mux template with the new state above.

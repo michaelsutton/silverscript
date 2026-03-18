@@ -2,7 +2,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessPawn(
     byte[32] init_mux_hash,
-    byte[224] init_route_hashes,
+    byte[256] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -12,10 +12,11 @@ contract ChessPawn(
     int init_en_passant_idx,
     int init_pending_src_idx,
     int init_pending_dst_idx,
-    int init_pending_promo
+    int init_pending_promo,
+    int init_recent_castle
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[224] route_hashes = init_route_hashes;
+    byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -26,6 +27,7 @@ contract ChessPawn(
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
+    int recent_castle = init_recent_castle;
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
@@ -129,31 +131,47 @@ contract ChessPawn(
         // A pawn move is legal iff it matches one of the four allowed cases above.
         require(one_step || two_step || capture || en_passant);
 
-        bool reaches_back_rank = to_y == 0 || to_y == 7;
-
-        // ChessMux already constrained promo_piece. Here we only distinguish
-        // between promotion and non-promotion moves.
         byte arrived_piece = moving_piece;
-        if (reaches_back_rank) {
-            require(promo_piece != 0);
-            int arrived_num = promo_piece;
-            if (moving_is_black) {
-                arrived_num = arrived_num + 8;
-            }
-            arrived_piece = byte(arrived_num);
-        } else {
+        bool reaches_back_rank = to_y == 0 || to_y == 7;
+        // Castle challenge prep makes pawn attacks look like ordinary diagonal
+        // captures into a king target on the proof board, so proof mode never
+        // treats the move as a promotion.
+        if (recent_castle != 0) {
             require(promo_piece == 0);
+        } else {
+            // ChessMux already constrained promo_piece. Here we only
+            // distinguish between promotion and non-promotion moves.
+            if (reaches_back_rank) {
+                require(promo_piece != 0);
+                int arrived_num = promo_piece;
+                if (moving_is_black) {
+                    arrived_num = arrived_num + 8;
+                }
+                arrived_piece = byte(arrived_num);
+            } else {
+                require(promo_piece == 0);
+            }
         }
 
         // Capturing the enemy king is the on-chain terminal condition.
         // Off-chain clients may enforce stricter classical no-self-check rules,
         // but on chain a king capture conclusively proves the winner.
         int next_status = status;
-        if (moving_is_white && target_num == 14) {
-            next_status = 1;
-        }
-        if (moving_is_black && target_num == 6) {
-            next_status = 2;
+        if (recent_castle != 0) {
+            if (moving_is_white) {
+                require(target_num == 14);
+                next_status = 1;
+            } else {
+                require(target_num == 6);
+                next_status = 2;
+            }
+        } else {
+            if (moving_is_white && target_num == 14) {
+                next_status = 1;
+            }
+            if (moving_is_black && target_num == 6) {
+                next_status = 2;
+            }
         }
 
         int next_en_passant_idx = -1;
@@ -240,7 +258,8 @@ contract ChessPawn(
             en_passant_idx: next_en_passant_idx,
             pending_src_idx: -1,
             pending_dst_idx: -1,
-            pending_promo: 0
+            pending_promo: 0,
+            recent_castle: 0
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(
