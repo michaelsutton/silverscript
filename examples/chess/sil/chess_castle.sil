@@ -1,6 +1,6 @@
 pragma silverscript ^0.1.0;
 
-contract ChessKing(
+contract ChessCastle(
     byte[32] init_mux_hash,
     byte[224] init_route_hashes,
     byte[32] init_white_player,
@@ -27,14 +27,6 @@ contract ChessKing(
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
 
-    function abs_int(int value) : (int) {
-        int result = value;
-        if (value < 0) {
-            result = 0 - value;
-        }
-        return(result);
-    }
-
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
         require(status == 0);
@@ -48,76 +40,113 @@ contract ChessKing(
         int to_x = to_idx % 8;
 
         // Chess alternates between white (0) and black (1).
-        bool is_white_turn = turn == 0;
-        bool is_black_turn = turn == 1;
-        require(is_white_turn || is_black_turn);
+        require(turn == 0 || turn == 1);
 
-        // A move must actually change squares.
+        // A castling move must actually change squares.
         require(from_idx != to_idx);
 
         // Board access enforces src/dst index bounds.
         byte[64] prev_board = board;
         byte moving_piece = prev_board[from_idx];
-        byte target_piece = prev_board[to_idx];
         int moving_num = OpBin2Num(moving_piece);
-        int target_num = OpBin2Num(target_piece);
+        int target_num = OpBin2Num(prev_board[to_idx]);
+
         // This route only accepts kings:
         // white king = 6, black king = 14.
         require(moving_num == 6 || moving_num == 14);
 
         bool moving_is_white = moving_num == 6;
         bool moving_is_black = moving_num == 14;
-        bool target_is_white = target_num >= 1 && target_num <= 6;
-        bool target_is_black = target_num >= 9 && target_num <= 14;
-
-        // The side to move must move its own king and cannot capture its own
-        // color on the destination square.
-        if (is_white_turn) {
+        if (turn == 0) {
             require(moving_is_white);
-            require(!target_is_white);
         } else {
             require(moving_is_black);
-            require(!target_is_black);
         }
 
-        int dx = to_x - from_x;
-        int dy = to_y - from_y;
-        (int abs_dx) = abs_int(dx);
-        (int abs_dy) = abs_int(dy);
-        // A normal king move changes by at most one square in each dimension.
-        // Castling is intentionally excluded from this worker.
-        require(abs_dx <= 1 && abs_dy <= 1);
+        int home_rank = 0;
+        int rook_num = 4;
+        byte king_side_right = castle_rights[0];
+        byte queen_side_right = castle_rights[1];
+        if (moving_is_black) {
+            home_rank = 7;
+            rook_num = 12;
+            king_side_right = castle_rights[2];
+            queen_side_right = castle_rights[3];
+        }
 
-        // Rewrite the board by clearing the source square and filling the
-        // destination square, using low/high index order to keep the splice
-        // logic simple for both move directions.
-        int low_idx = from_idx;
-        int high_idx = to_idx;
-        byte first_slot = byte(0x00);
-        byte second_slot = moving_piece;
-        if (from_idx > to_idx) {
-            low_idx = to_idx;
-            high_idx = from_idx;
-            first_slot = moving_piece;
-            second_slot = byte(0x00);
+        // Castling starts from the home king square and lands two files away.
+        require(from_x == 4 && from_y == home_rank && to_y == home_rank && (to_x == 6 || to_x == 2));
+        bool is_king_side = to_x == 6;
+
+        if (is_king_side) {
+            require(king_side_right == 1);
+        } else {
+            require(queen_side_right == 1);
+        }
+
+        // The king must land on an empty destination square.
+        require(target_num == 0);
+
+        int row_base = home_rank * 8;
+        int rook_from_idx = row_base;
+        int rook_to_idx = row_base + 3;
+        if (is_king_side) {
+            rook_from_idx = row_base + 7;
+            rook_to_idx = row_base + 5;
+        }
+
+        // The eligible corner rook must still be present and the path between
+        // king and rook must be empty.
+        require(OpBin2Num(prev_board[rook_from_idx]) == rook_num);
+        if (is_king_side) {
+            require(OpBin2Num(prev_board[row_base + 5]) == 0);
+            require(OpBin2Num(prev_board[row_base + 6]) == 0);
+        } else {
+            require(OpBin2Num(prev_board[row_base + 1]) == 0);
+            require(OpBin2Num(prev_board[row_base + 2]) == 0);
+            require(OpBin2Num(prev_board[row_base + 3]) == 0);
+        }
+
+        byte rook_piece = prev_board[rook_from_idx];
+        byte empty_piece = byte(0x00);
+
+        // Castling rewrites four fixed squares. The sorted rewrite order differs
+        // by flank, but the final splice shape is shared.
+        int a = row_base;
+        byte va = empty_piece;
+        int b = row_base + 2;
+        byte vb = moving_piece;
+        int c = row_base + 3;
+        byte vc = rook_piece;
+        int d = row_base + 4;
+        byte vd = empty_piece;
+        if (is_king_side) {
+            a = row_base + 4;
+            va = empty_piece;
+            b = row_base + 5;
+            vb = rook_piece;
+            c = row_base + 6;
+            vc = moving_piece;
+            d = row_base + 7;
+            vd = empty_piece;
         }
 
         byte[] prev_dyn = byte[](prev_board);
-        byte[] prefix = prev_dyn.slice(0, low_idx);
-        byte[] middle = prev_dyn.slice(low_idx + 1, high_idx);
-        byte[] suffix = prev_dyn.slice(high_idx + 1, 64);
-        byte[64] next_board = prefix + byte[1](first_slot) + middle + byte[1](second_slot) + suffix;
-
-        // Capturing the enemy king is the on-chain terminal condition.
-        // Off-chain clients may enforce stricter classical no-self-check rules,
-        // but on chain a king capture conclusively proves the winner.
-        int next_status = status;
-        if (turn == 0 && target_num == 14) {
-            next_status = 1;
-        }
-        if (turn == 1 && target_num == 6) {
-            next_status = 2;
-        }
+        byte[] prefix = prev_dyn.slice(0, a);
+        byte[] mid_ab = prev_dyn.slice(a + 1, b);
+        byte[] mid_bc = prev_dyn.slice(b + 1, c);
+        byte[] mid_cd = prev_dyn.slice(c + 1, d);
+        byte[] suffix = prev_dyn.slice(d + 1, 64);
+        byte[64] next_board =
+            prefix +
+            byte[1](va) +
+            mid_ab +
+            byte[1](vb) +
+            mid_bc +
+            byte[1](vc) +
+            mid_cd +
+            byte[1](vd) +
+            suffix;
 
         byte next_white_can_castle_k = castle_rights[0];
         byte next_white_can_castle_q = castle_rights[1];
@@ -141,15 +170,13 @@ contract ChessKing(
             black_player: black_player,
             board: next_board,
             turn: 1 - turn,
-            status: next_status,
+            status: status,
             castle_rights: next_castle_rights,
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
             pending_promo: 0
         };
-        // The worker must produce exactly one authorized covenant output back to
-        // the mux template with the new state above.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputStateWithTemplate(
             OpAuthOutputIdx(this.activeInputIndex, 0),

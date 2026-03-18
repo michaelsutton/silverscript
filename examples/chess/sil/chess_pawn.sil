@@ -2,7 +2,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessPawn(
     byte[32] init_mux_hash,
-    byte[192] init_route_hashes,
+    byte[224] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -15,7 +15,7 @@ contract ChessPawn(
     int init_pending_promo
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[192] route_hashes = init_route_hashes;
+    byte[224] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;

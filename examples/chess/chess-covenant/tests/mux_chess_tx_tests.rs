@@ -18,8 +18,8 @@ use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledContract};
 
 use chess_covenant::{
-    diag_contract_path, horiz_contract_path, king_contract_path, knight_contract_path, mux_contract_path, pawn_contract_path,
-    vert_contract_path,
+    castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path, knight_contract_path, mux_contract_path,
+    pawn_contract_path, vert_contract_path,
 };
 
 struct Player {
@@ -43,6 +43,7 @@ struct MuxChessFixture {
     horiz: TemplateFixture,
     diag: TemplateFixture,
     king: TemplateFixture,
+    castle: TemplateFixture,
 }
 
 struct GameStateArgs<'a> {
@@ -65,13 +66,14 @@ struct MoveArgs {
 }
 
 fn packed_route_hashes(fix: &MuxChessFixture) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 * 6);
+    let mut out = Vec::with_capacity(32 * 7);
     out.extend_from_slice(&fix.pawn.hash);
     out.extend_from_slice(&fix.knight.hash);
     out.extend_from_slice(&fix.vert.hash);
     out.extend_from_slice(&fix.horiz.hash);
     out.extend_from_slice(&fix.diag.hash);
     out.extend_from_slice(&fix.king.hash);
+    out.extend_from_slice(&fix.castle.hash);
     out
 }
 
@@ -166,11 +168,12 @@ fn build_fixture() -> MuxChessFixture {
     let horiz_source = load_contract_source(horiz_contract_path());
     let diag_source = load_contract_source(diag_contract_path());
     let king_source = load_contract_source(king_contract_path());
+    let castle_source = load_contract_source(castle_contract_path());
 
     let dummy_board = standard_board();
     let ctor = vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(vec![0x33u8; 32 * 6]),
+        Expr::bytes(vec![0x33u8; 32 * 7]),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(dummy_board),
@@ -191,6 +194,7 @@ fn build_fixture() -> MuxChessFixture {
         horiz: template_fixture(horiz_source, &ctor),
         diag: template_fixture(diag_source, &ctor),
         king: template_fixture(king_source, &ctor),
+        castle: template_fixture(castle_source, &ctor),
     }
 }
 
@@ -1104,6 +1108,66 @@ fn muxed_chess_routes_all_move_families() {
         },
     );
     run_worker_apply("king", &king, &mux20, covenant_id19, &fix.mux);
+
+    let mut board21 = vec![0u8; 64];
+    board21[4] = 0x06;
+    board21[7] = 0x04;
+    let mux21 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board21,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    let covenant_id21 = populate_single_output_genesis_covenant(&mux21);
+    let castle = compile_state(
+        fix.castle.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board21,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(4, 0),
+            pending_dst_idx: square_idx(6, 0),
+            pending_promo: 0,
+        },
+    );
+    run_route(&mux21, 6, mv(4, 0, 6, 0), &white, &fix.castle, &castle, covenant_id21);
+    let mut board22 = board21.clone();
+    board22[4] = 0x00;
+    board22[5] = 0x04;
+    board22[6] = 0x06;
+    board22[7] = 0x00;
+    let mux22 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board22,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+        },
+    );
+    run_worker_apply("castle", &castle, &mux22, covenant_id21, &fix.mux);
 }
 
 #[test]
