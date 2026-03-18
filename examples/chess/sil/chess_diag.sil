@@ -1,8 +1,8 @@
 pragma silverscript ^0.1.0;
 
-contract ChessDiagDownLeft(
+contract ChessDiag(
     byte[32] init_mux_hash,
-    byte[288] init_route_hashes,
+    byte[192] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -15,7 +15,7 @@ contract ChessDiagDownLeft(
     int init_pending_promo
 ) {
     byte[32] mux_hash = init_mux_hash;
-    byte[288] route_hashes = init_route_hashes;
+    byte[192] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -26,6 +26,14 @@ contract ChessDiagDownLeft(
     int pending_src_idx = init_pending_src_idx;
     int pending_dst_idx = init_pending_dst_idx;
     int pending_promo = init_pending_promo;
+
+    function abs_int(int value) : (int) {
+        int result = value;
+        if (value < 0) {
+            result = 0 - value;
+        }
+        return(result);
+    }
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
@@ -67,19 +75,29 @@ contract ChessDiagDownLeft(
             require(!target_is_black);
         }
 
-        // This route only allows a down-left diagonal: both coordinates shrink
-        // and the x/y displacement must match exactly. Equal displacement is
-        // the chess rule that makes the move truly diagonal.
-        require(to_x < from_x && to_y < from_y && from_y - to_y == from_x - to_x);
-        int distance = from_x - to_x;
+        // Diagonal movement changes x and y by the same nonzero magnitude.
+        int dx = to_x - from_x;
+        int dy = to_y - from_y;
+        (int abs_dx) = abs_int(dx);
+        (int abs_dy) = abs_int(dy);
+        require(dx != 0 && dy != 0 && abs_dx == abs_dy);
+        int step_x = 1;
+        if (dx < 0) {
+            step_x = -1;
+        }
+        int step_y = 1;
+        if (dy < 0) {
+            step_y = -1;
+        }
+        int distance = abs_dx;
 
         // Every square strictly between source and destination must be empty for
-        // a bishop or queen diagonal move to be legal.
+        // a bishop or queen diagonal move to be legal, regardless of direction.
         int clear = 1;
         for (i, 0, 7, 7) {
             if (i < distance + -1) {
-                int scan_x = from_x - i - 1;
-                int scan_y = from_y - i - 1;
+                int scan_x = from_x + step_x * (i + 1);
+                int scan_y = from_y + step_y * (i + 1);
                 int scan_idx = scan_y * 8 + scan_x;
                 if (OpBin2Num(prev_board[scan_idx]) != 0) {
                     clear = 0;

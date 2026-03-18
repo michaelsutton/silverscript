@@ -18,8 +18,8 @@ use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledContract};
 
 use chess_covenant::{
-    diag_down_left_contract_path, diag_down_right_contract_path, diag_up_left_contract_path, diag_up_right_contract_path,
-    horiz_contract_path, king_contract_path, knight_contract_path, mux_contract_path, pawn_contract_path, vert_contract_path,
+    diag_contract_path, horiz_contract_path, king_contract_path, knight_contract_path, mux_contract_path, pawn_contract_path,
+    vert_contract_path,
 };
 
 struct Player {
@@ -41,10 +41,7 @@ struct MuxChessFixture {
     knight: TemplateFixture,
     vert: TemplateFixture,
     horiz: TemplateFixture,
-    diag_up_right: TemplateFixture,
-    diag_up_left: TemplateFixture,
-    diag_down_right: TemplateFixture,
-    diag_down_left: TemplateFixture,
+    diag: TemplateFixture,
     king: TemplateFixture,
 }
 
@@ -68,15 +65,12 @@ struct MoveArgs {
 }
 
 fn packed_route_hashes(fix: &MuxChessFixture) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 * 9);
+    let mut out = Vec::with_capacity(32 * 6);
     out.extend_from_slice(&fix.pawn.hash);
     out.extend_from_slice(&fix.knight.hash);
     out.extend_from_slice(&fix.vert.hash);
     out.extend_from_slice(&fix.horiz.hash);
-    out.extend_from_slice(&fix.diag_up_right.hash);
-    out.extend_from_slice(&fix.diag_up_left.hash);
-    out.extend_from_slice(&fix.diag_down_right.hash);
-    out.extend_from_slice(&fix.diag_down_left.hash);
+    out.extend_from_slice(&fix.diag.hash);
     out.extend_from_slice(&fix.king.hash);
     out
 }
@@ -170,16 +164,13 @@ fn build_fixture() -> MuxChessFixture {
     let knight_source = load_contract_source(knight_contract_path());
     let vert_source = load_contract_source(vert_contract_path());
     let horiz_source = load_contract_source(horiz_contract_path());
-    let diag_up_right_source = load_contract_source(diag_up_right_contract_path());
-    let diag_up_left_source = load_contract_source(diag_up_left_contract_path());
-    let diag_down_right_source = load_contract_source(diag_down_right_contract_path());
-    let diag_down_left_source = load_contract_source(diag_down_left_contract_path());
+    let diag_source = load_contract_source(diag_contract_path());
     let king_source = load_contract_source(king_contract_path());
 
     let dummy_board = standard_board();
     let ctor = vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(vec![0x33u8; 32 * 9]),
+        Expr::bytes(vec![0x33u8; 32 * 6]),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(dummy_board),
@@ -198,10 +189,7 @@ fn build_fixture() -> MuxChessFixture {
         knight: template_fixture(knight_source, &ctor),
         vert: template_fixture(vert_source, &ctor),
         horiz: template_fixture(horiz_source, &ctor),
-        diag_up_right: template_fixture(diag_up_right_source, &ctor),
-        diag_up_left: template_fixture(diag_up_left_source, &ctor),
-        diag_down_right: template_fixture(diag_down_right_source, &ctor),
-        diag_down_left: template_fixture(diag_down_left_source, &ctor),
+        diag: template_fixture(diag_source, &ctor),
         king: template_fixture(king_source, &ctor),
     }
 }
@@ -801,7 +789,7 @@ fn muxed_chess_routes_all_move_families() {
     );
     let covenant_id11 = populate_single_output_genesis_covenant(&mux11);
     let diag_up_right = compile_state(
-        fix.diag_up_right.source,
+        fix.diag.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -816,7 +804,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux11, 4, mv(0, 0, 3, 3), &white, &fix.diag_up_right, &diag_up_right, covenant_id11);
+    run_route(&mux11, 4, mv(0, 0, 3, 3), &white, &fix.diag, &diag_up_right, covenant_id11);
     let mut board12 = board11.clone();
     move_piece(&mut board12, 0, 0, 3, 3);
     let mux12 = compile_state(
@@ -857,7 +845,7 @@ fn muxed_chess_routes_all_move_families() {
     );
     let covenant_id12q = populate_single_output_genesis_covenant(&mux12q);
     let diag_up_right_queen = compile_state(
-        fix.diag_up_right.source,
+        fix.diag.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -872,7 +860,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux12q, 4, mv(0, 0, 3, 3), &white, &fix.diag_up_right, &diag_up_right_queen, covenant_id12q);
+    run_route(&mux12q, 4, mv(0, 0, 3, 3), &white, &fix.diag, &diag_up_right_queen, covenant_id12q);
     let mut board12q_next = board12q.clone();
     move_piece(&mut board12q_next, 0, 0, 3, 3);
     let mux12q_next = compile_state(
@@ -913,7 +901,7 @@ fn muxed_chess_routes_all_move_families() {
     );
     let covenant_id13 = populate_single_output_genesis_covenant(&mux13);
     let diag_up_left = compile_state(
-        fix.diag_up_left.source,
+        fix.diag.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -928,7 +916,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux13, 5, mv(7, 0, 4, 3), &white, &fix.diag_up_left, &diag_up_left, covenant_id13);
+    run_route(&mux13, 4, mv(7, 0, 4, 3), &white, &fix.diag, &diag_up_left, covenant_id13);
     let mut board14 = board13.clone();
     move_piece(&mut board14, 7, 0, 4, 3);
     let mux14 = compile_state(
@@ -969,7 +957,7 @@ fn muxed_chess_routes_all_move_families() {
     );
     let covenant_id15 = populate_single_output_genesis_covenant(&mux15);
     let diag_down_right = compile_state(
-        fix.diag_down_right.source,
+        fix.diag.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -984,7 +972,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux15, 6, mv(0, 7, 3, 4), &black, &fix.diag_down_right, &diag_down_right, covenant_id15);
+    run_route(&mux15, 4, mv(0, 7, 3, 4), &black, &fix.diag, &diag_down_right, covenant_id15);
     let mut board16 = board15.clone();
     move_piece(&mut board16, 0, 7, 3, 4);
     let mux16 = compile_state(
@@ -1025,7 +1013,7 @@ fn muxed_chess_routes_all_move_families() {
     );
     let covenant_id17 = populate_single_output_genesis_covenant(&mux17);
     let diag_down_left = compile_state(
-        fix.diag_down_left.source,
+        fix.diag.source,
         &fix,
         &white.pubkey_hash,
         &black.pubkey_hash,
@@ -1040,7 +1028,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux17, 7, mv(7, 7, 4, 4), &black, &fix.diag_down_left, &diag_down_left, covenant_id17);
+    run_route(&mux17, 4, mv(7, 7, 4, 4), &black, &fix.diag, &diag_down_left, covenant_id17);
     let mut board18 = board17.clone();
     move_piece(&mut board18, 7, 7, 4, 4);
     let mux18 = compile_state(
@@ -1096,7 +1084,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_promo: 0,
         },
     );
-    run_route(&mux19, 8, mv(4, 0, 4, 1), &white, &fix.king, &king, covenant_id19);
+    run_route(&mux19, 5, mv(4, 0, 4, 1), &white, &fix.king, &king, covenant_id19);
     let mut board20 = board19.clone();
     move_piece(&mut board20, 4, 0, 4, 1);
     let mux20 = compile_state(
