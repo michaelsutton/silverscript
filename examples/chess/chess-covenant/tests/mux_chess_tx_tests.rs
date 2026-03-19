@@ -491,6 +491,34 @@ fn run_worker_timeout(
     assert!(result.is_ok(), "{label} worker apply should succeed: {:?}", result.unwrap_err());
 }
 
+fn run_mux_timeout(
+    label: &str,
+    active: &CompiledContract<'_>,
+    next: &CompiledContract<'_>,
+    covenant_id: Hash,
+    player: &Player,
+    lock_time: u64,
+    sequence: u64,
+) {
+    let placeholder_sig = vec![0u8; 65];
+    let placeholder_sigscript =
+        entry_sigscript(active, "timeout", vec![Expr::bytes(placeholder_sig), Expr::bytes(player.pubkey_bytes.clone())]);
+    let outputs = vec![covenant_output(next, 0, covenant_id)];
+    let entries = vec![covenant_utxo(active, covenant_id)];
+    let input = TransactionInput {
+        previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([1u8; 32]), index: 0 },
+        signature_script: placeholder_sigscript,
+        sequence,
+        sig_op_count: 1,
+    };
+    let mut tx = Transaction::new(1, vec![input], outputs, lock_time, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, player);
+    tx.inputs[0].signature_script =
+        entry_sigscript(active, "timeout", vec![Expr::bytes(sig), Expr::bytes(player.pubkey_bytes.clone())]);
+    let result = execute_input_with_covenants(tx, entries, 0);
+    assert!(result.is_ok(), "{label} mux timeout should succeed: {:?}", result.unwrap_err());
+}
+
 fn run_prep_apply(
     label: &str,
     active: &CompiledContract<'_>,
@@ -4435,4 +4463,53 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
     );
 
     run_worker_timeout("knight_timeout", &knight1, &mux_terminal, covenant_id, &fix.mux, 599, 0);
+}
+
+#[test]
+fn mux_timeout_awards_win_to_the_waiting_opponent() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let board0 = standard_board();
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let mux_terminal = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 2,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+
+    run_mux_timeout("mux_timeout", &mux0, &mux_terminal, covenant_id, &black, 599, 0);
 }

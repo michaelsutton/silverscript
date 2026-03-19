@@ -203,7 +203,7 @@ contract ChessMux(
         );
     }
 
-    entrypoint function timeout(sig s, pubkey pk, byte[] target_prefix, byte[] target_suffix) {
+    entrypoint function timeout(sig s, pubkey pk) {
         // Timeout only applies while the game is still live.
         require(status == LIVE);
 
@@ -251,13 +251,7 @@ contract ChessMux(
             draw_state: draw_state
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        validateOutputStateWithTemplate(
-            OpAuthOutputIdx(this.activeInputIndex, 0),
-            next_state,
-            target_prefix,
-            target_suffix,
-            mux_hash
-        );
+        validateOutputState(OpAuthOutputIdx(this.activeInputIndex, 0), next_state);
     }
 
 }
