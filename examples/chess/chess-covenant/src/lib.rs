@@ -1,9 +1,26 @@
 use std::fs;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+
+fn source_cache() -> &'static Mutex<std::collections::HashMap<String, String>> {
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
 
 pub fn load_contract_source(path: &str) -> String {
+    {
+        let cache = source_cache().lock().expect("source cache mutex poisoned");
+        if let Some(source) = cache.get(path) {
+            return source.clone();
+        }
+    }
+
     let source = fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"));
-    preprocess_contract_source(path, &source)
+    let expanded = preprocess_contract_source(path, &source);
+
+    let mut cache = source_cache().lock().expect("source cache mutex poisoned");
+    cache.insert(path.to_string(), expanded.clone());
+    expanded
 }
 
 fn preprocess_contract_source(path: &str, source: &str) -> String {
