@@ -4462,7 +4462,7 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
         },
     );
 
-    run_worker_timeout("knight_timeout", &knight1, &mux_terminal, covenant_id, &fix.mux, 599, 0);
+    run_worker_timeout("knight_timeout", &knight1, &mux_terminal, covenant_id, &fix.mux, 0, 600);
 }
 
 #[test]
@@ -4511,5 +4511,5 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
         },
     );
 
-    run_mux_timeout("mux_timeout", &mux0, &mux_terminal, covenant_id, &black, 599, 0);
+    run_mux_timeout("mux_timeout", &mux0, &mux_terminal, covenant_id, &black, 0, 600);
 }
