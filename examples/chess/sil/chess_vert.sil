@@ -235,13 +235,9 @@ contract ChessVert(
         require(status == LIVE);
 
         // Worker timeout is permissionless. Once a bad route strands funds in a
-        // worker state, anyone may prove enough DAA time has passed and return
-        // the game to mux with the objective timeout outcome.
-        int timeout_delta_daa = 600;
-        int min_locktime = OpTxInputDaaScore(this.activeInputIndex) + timeout_delta_daa - 1;
-        require(tx.locktime < 500000000000);
-        require(OpTxInputSeq(this.activeInputIndex) != 0xffffffffffffffff);
-        require(tx.locktime >= min_locktime);
+        // worker state, anyone may prove the worker UTXO is old enough and
+        // return the game to mux with the objective timeout outcome.
+        require(this.age >= 600);
 
         int next_status = status;
         if (draw_state == CLAIMED) {

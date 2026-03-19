@@ -216,13 +216,9 @@ contract ChessMux(
         }
         require(checkSig(s, pk));
 
-        // Timeout proofs use DAA-zone locktime plus a non-final input sequence.
-        // If this spend is accepted, consensus implies current_daa > tx.locktime.
-        require(tx.locktime < 500000000000);
-        require(OpTxInputSeq(this.activeInputIndex) != 0xffffffffffffffff);
-        int timeout_delta_daa = 600;
-        int min_locktime = OpTxInputDaaScore(this.activeInputIndex) + timeout_delta_daa - 1;
-        require(tx.locktime >= min_locktime);
+        // Timeout uses the input's relative age directly. Consensus sequence-lock
+        // validation enforces that the spent mux UTXO is old enough.
+        require(this.age >= 600);
 
         // Ordinary timeout loses for the side that owed the next signed route.
         // Draw-state 1 is the one exception: silence accepts the draw claim.
