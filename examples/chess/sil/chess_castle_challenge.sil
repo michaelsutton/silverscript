@@ -1,4 +1,5 @@
 pragma silverscript ^0.1.0;
+// @consts constants.sil
 
 contract ChessCastleChallengePrep(
     byte[32] init_mux_hash,
@@ -19,7 +20,7 @@ contract ChessCastleChallengePrep(
     // Shared chess state layout:
     // - status: 0 live, 1 white win, 2 black win, 3 draw
     // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
-    // - draw_state: 0 normal, 1 draw claimed, 2 counterplay step
+    // - draw_state: 3 normal, 1 draw claimed, 2 counterplay step, 4 white offered draw, 5 black offered draw
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
@@ -48,8 +49,8 @@ contract ChessCastleChallengePrep(
         // castle. It rewrites the castle lane into a proof board and then
         // forwards to the ordinary move family that can capture the challenged
         // square.
-        require(status == 0);
-        require(draw_state == 0);
+        require(status == LIVE);
+        require(draw_state == NORMAL);
         require(recent_castle >= 1 && recent_castle <= 4);
 
         int from_idx = OpBin2Num(pending_src_idx);
@@ -163,31 +164,31 @@ contract ChessCastleChallengePrep(
 
         int selector = -1;
         if (moving_num == 1 || moving_num == 9) {
-            selector = 0;
+            selector = PAWN;
         } else if (moving_num == 2 || moving_num == 10) {
-            selector = 1;
+            selector = KNIGHT;
         } else if (moving_num == 3 || moving_num == 11) {
             require(abs_dx == abs_dy && abs_dx != 0);
-            selector = 4;
+            selector = DIAG;
         } else if (moving_num == 4 || moving_num == 12) {
             if (dx == 0 && dy != 0) {
-                selector = 2;
+                selector = VERT;
             } else {
                 require(dy == 0 && dx != 0);
-                selector = 3;
+                selector = HORIZ;
             }
         } else if (moving_num == 5 || moving_num == 13) {
             if (dx == 0 && dy != 0) {
-                selector = 2;
+                selector = VERT;
             } else if (dy == 0 && dx != 0) {
-                selector = 3;
+                selector = HORIZ;
             } else {
                 require(abs_dx == abs_dy && abs_dx != 0);
-                selector = 4;
+                selector = DIAG;
             }
         } else {
             require(moving_num == 6 || moving_num == 14);
-            selector = 5;
+            selector = KING;
         }
 
         int hash_start = selector * 32;
@@ -208,7 +209,7 @@ contract ChessCastleChallengePrep(
             en_passant_idx: -1,
             pending_src_idx: pending_src_idx,
             pending_dst_idx: pending_dst_idx,
-            pending_promo: 0,
+            pending_promo: CLEAR,
             recent_castle: recent_castle,
             draw_state: draw_state
         };
@@ -223,7 +224,7 @@ contract ChessCastleChallengePrep(
     }
 
     entrypoint function timeout(byte[] mux_prefix, byte[] mux_suffix) {
-        require(status == 0);
+        require(status == LIVE);
 
         // Worker timeout is permissionless. Once a bad route strands funds in a
         // worker state, anyone may prove enough DAA time has passed and return
@@ -235,12 +236,12 @@ contract ChessCastleChallengePrep(
         require(tx.locktime >= min_locktime);
 
         int next_status = status;
-        if (draw_state == 1) {
-            next_status = 3;
-        } else if (turn == 0) {
-            next_status = 2;
+        if (draw_state == CLAIMED) {
+            next_status = DRAW;
+        } else if (turn == WHITE) {
+            next_status = BWIN;
         } else {
-            next_status = 1;
+            next_status = WWIN;
         }
 
         State next_state = {
@@ -255,7 +256,7 @@ contract ChessCastleChallengePrep(
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
-            pending_promo: 0,
+            pending_promo: CLEAR,
             recent_castle: recent_castle,
             draw_state: draw_state
         };

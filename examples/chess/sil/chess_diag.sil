@@ -1,4 +1,5 @@
 pragma silverscript ^0.1.0;
+// @consts constants.sil
 
 contract ChessDiag(
     byte[32] init_mux_hash,
@@ -19,7 +20,7 @@ contract ChessDiag(
     // Shared chess state layout:
     // - status: 0 live, 1 white win, 2 black win, 3 draw
     // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
-    // - draw_state: 0 normal, 1 draw claimed, 2 counterplay step
+    // - draw_state: 3 normal, 1 draw claimed, 2 counterplay step, 4 white offered draw, 5 black offered draw
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
@@ -45,7 +46,7 @@ contract ChessDiag(
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
-        require(status == 0);
+        require(status == LIVE);
 
         int from_idx = OpBin2Num(pending_src_idx);
         int to_idx = OpBin2Num(pending_dst_idx);
@@ -56,12 +57,13 @@ contract ChessDiag(
         int to_x = to_idx % 8;
 
         // Chess alternates between white (0) and black (1).
-        require(turn == 0 || turn == 1);
+        require(turn == WHITE || turn == BLACK);
 
         // In draw negotiation the signer keeps their real side, but the move is
         // judged as if they were piloting the opponent's pieces.
+        bool is_draw_claim_mode = draw_state < NORMAL;
         int effective_turn = turn;
-        if (draw_state > 0) {
+        if (is_draw_claim_mode) {
             effective_turn = 1 - turn;
         }
 
@@ -82,7 +84,7 @@ contract ChessDiag(
         bool target_is_black = target_num >= 9 && target_num <= 14;
         // The side to move must move its own diagonal-moving piece and cannot
         // capture its own color on the destination square.
-        if (effective_turn == 0) {
+        if (effective_turn == WHITE) {
             require(moving_num == 3 || moving_num == 5);
             require(!target_is_white);
         } else {
@@ -145,47 +147,47 @@ contract ChessDiag(
         // Off-chain clients may enforce stricter classical no-self-check rules,
         // but on chain a king capture conclusively proves the winner.
         int next_status = status;
-        if (recent_castle != 0) {
-            if (turn == 0) {
+        if (recent_castle != CLEAR) {
+            if (turn == WHITE) {
                 require(target_num == 14);
-                next_status = 1;
+                next_status = WWIN;
             } else {
                 require(target_num == 6);
-                next_status = 2;
+                next_status = BWIN;
             }
-        } else if (draw_state > 0) {
-            if (effective_turn == 0 && target_num == 14) {
-                if (turn == 0) {
-                    next_status = 1;
+        } else if (is_draw_claim_mode) {
+            if (effective_turn == WHITE && target_num == 14) {
+                if (turn == WHITE) {
+                    next_status = WWIN;
                 } else {
-                    next_status = 2;
+                    next_status = BWIN;
                 }
             }
-            if (effective_turn == 1 && target_num == 6) {
-                if (turn == 0) {
-                    next_status = 1;
+            if (effective_turn == BLACK && target_num == 6) {
+                if (turn == WHITE) {
+                    next_status = WWIN;
                 } else {
-                    next_status = 2;
+                    next_status = BWIN;
                 }
             }
         } else {
-            if (turn == 0 && target_num == 14) {
-                next_status = 1;
+            if (turn == WHITE && target_num == 14) {
+                next_status = WWIN;
             }
-            if (turn == 1 && target_num == 6) {
-                next_status = 2;
+            if (turn == BLACK && target_num == 6) {
+                next_status = BWIN;
             }
         }
 
         int next_draw_state = draw_state;
-        if (draw_state == 1) {
-            next_draw_state = 2;
-        } else if (draw_state == 2) {
-            if (next_status == 0) {
-                if (turn == 0) {
-                    next_status = 2;
+        if (draw_state == CLAIMED) {
+            next_draw_state = DEFENSE;
+        } else if (draw_state == DEFENSE) {
+            if (next_status == LIVE) {
+                if (turn == WHITE) {
+                    next_status = BWIN;
                 } else {
-                    next_status = 1;
+                    next_status = WWIN;
                 }
             }
         }
@@ -204,8 +206,8 @@ contract ChessDiag(
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
-            pending_promo: 0,
-            recent_castle: 0,
+            pending_promo: CLEAR,
+            recent_castle: CLEAR,
             draw_state: next_draw_state
         };
         // The worker must produce exactly one authorized covenant output back to
@@ -215,7 +217,7 @@ contract ChessDiag(
     }
 
     entrypoint function timeout(byte[] mux_prefix, byte[] mux_suffix) {
-        require(status == 0);
+        require(status == LIVE);
 
         // Worker timeout is permissionless. Once a bad route strands funds in a
         // worker state, anyone may prove enough DAA time has passed and return
@@ -227,12 +229,12 @@ contract ChessDiag(
         require(tx.locktime >= min_locktime);
 
         int next_status = status;
-        if (draw_state == 1) {
-            next_status = 3;
-        } else if (turn == 0) {
-            next_status = 2;
+        if (draw_state == CLAIMED) {
+            next_status = DRAW;
+        } else if (turn == WHITE) {
+            next_status = BWIN;
         } else {
-            next_status = 1;
+            next_status = WWIN;
         }
 
         State next_state = {
@@ -247,7 +249,7 @@ contract ChessDiag(
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
-            pending_promo: 0,
+            pending_promo: CLEAR,
             recent_castle: recent_castle,
             draw_state: draw_state
         };

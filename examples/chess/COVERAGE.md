@@ -24,7 +24,8 @@ It is an audit document, not a promise that every row is already complete.
 | Castling structure | bounded | castle worker checks home square, rights bit, corner rook, empty lane | `ordinary_reply_after_castle_clears_recent_castle` |
 | Castling through / into attack | challenge | `recent_castle` plus castle-challenge prep rewrites a proof board and forwards into an ordinary worker | `castle_start_square_challenge_by_pawn_succeeds`, `castle_transit_square_challenge_by_rook_succeeds`, `castle_destination_square_challenge_by_rook_succeeds`, `white_queenside_castle_destination_challenge_succeeds`, `black_kingside_castle_start_challenge_by_pawn_succeeds`, `black_queenside_castle_transit_challenge_by_rook_succeeds` |
 | Draw negotiation flow | partial | custom two-phase draw dispute reuses ordinary workers and mux timeout | `claim_draw_flips_turn_and_enters_draw_state`, `knight_draw_negotiation_flips_side_control_and_false_claim_loses`, `draw_mode_reuses_ordinary_workers`, `draw_mode_disallows_castle_and_castle_challenge_routes` |
-| Surrender / resignation | bounded | mux selector `9` routes directly back to mux with terminal status for the conceding side | `surrender_routes_back_to_mux_with_terminal_status` |
+| Draw by agreement | bounded | draw offer is attached to an ordinary move via `termination_action = 1`, persists in mux state, and is accepted through mux with `selector = 8` and `termination_action = 4`; any ordinary reply rejects it implicitly | `ordinary_move_can_offer_draw_and_return_to_mux`, `pending_draw_offer_can_be_accepted_on_next_mux_turn`, `ordinary_reply_rejects_pending_draw_offer_and_clears_draw_state` |
+| Surrender / resignation | bounded | mux routes directly back to mux with `selector = 8` and `termination_action = 3`, yielding terminal status for the conceding side | `surrender_routes_back_to_mux_with_terminal_status` |
 | Timeout / liveness | bounded | mux timeout is opponent-signed, worker timeout is permissionless | `knight_worker_timeout_rescues_invalid_committed_state` |
 | Terminal win by king capture | bounded | workers set terminal status when the enemy king is captured | `capturing_enemy_king_sets_terminal_status`, `knight_draw_capture_awards_win_to_the_actor`, `pawn_draw_capture_awards_win_to_the_actor` |
 | Ordinary no-self-check / must-answer-check semantics | partial | representative tx tests show that ignored check, pinned-piece exposure, king walks into attack, and illegal double-check replies can collapse into punishable next-ply king capture; no known gap is currently identified in this reduction | `ignoring_single_check_is_punishable_by_next_ply_king_capture`, `moving_a_pinned_piece_is_punishable_by_next_ply_king_capture`, `king_move_into_attack_is_punishable_by_next_ply_king_capture`, `legal_interposition_blocks_the_immediate_king_capture_route`, `illegal_double_check_reply_is_punishable_by_next_ply_king_capture` |
@@ -40,7 +41,7 @@ It is an audit document, not a promise that every row is already complete.
 The highest-value unresolved areas are:
 
 - rare draw rules such as repetition and the fifty-move rule
-- termination semantics beyond king capture, timeout, and accepted draw
+- termination semantics beyond king capture, timeout, draw by agreement, and accepted draw claim
 - value settlement after win or draw
 
 ## Expected Maintenance

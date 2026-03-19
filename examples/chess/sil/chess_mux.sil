@@ -1,4 +1,5 @@
 pragma silverscript ^0.1.0;
+// @consts constants.sil
 
 contract ChessMux(
     byte[32] init_mux_hash,
@@ -22,7 +23,7 @@ contract ChessMux(
     // - en_passant_idx: -1 when absent
     // - pending_*: the move committed by mux for the selected worker
     // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
-    // - draw_state: 0 normal, 1 draw claimed, 2 counterplay step
+    // - draw_state: 3 normal, 1 draw claimed, 2 counterplay step, 4 white offered draw, 5 black offered draw
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
@@ -45,6 +46,7 @@ contract ChessMux(
         int to_x,
         int to_y,
         int promo_piece,
+        int termination_action,
         sig s,
         pubkey pk,
         byte[] target_prefix,
@@ -52,27 +54,16 @@ contract ChessMux(
     ) {
         // Only idle mux states may start a new move. Workers return here after
         // they have validated and applied exactly one committed move.
-        require(status == 0);
-
-        // Chess alternates between white (0) and black (1); no other turn value
-        // is meaningful.
-        bool is_white_turn = turn == 0;
-        bool is_black_turn = turn == 1;
-        require(is_white_turn || is_black_turn);
+        require(status == LIVE);
 
         // The side to move authorizes the route once here. Downstream workers
         // rely on the committed pending move and do not repeat signature checks.
-        if (is_white_turn) {
+        if (turn == WHITE) {
             require(blake2b(pk) == white_player);
         } else {
             require(blake2b(pk) == black_player);
         }
         require(checkSig(s, pk));
-
-        // The mux only commits moves whose endpoints are on the 8x8 board.
-        bool from_in_bounds = from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8;
-        bool to_in_bounds = to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8;
-        require(from_in_bounds && to_in_bounds);
 
         // route_hashes layout by selector:
         // 0  -> pawn
@@ -83,79 +74,106 @@ contract ChessMux(
         // 5  -> king
         // 6  -> castle
         // 7  -> castle challenge prep
-        // 8  -> mux (draw claim)
-        // 9  -> mux (surrender)
-        require(selector >= 0 && selector <= 9);
-        // Draw negotiation reuses only ordinary move workers.
-        require(draw_state == 0 || selector <= 5 || selector == 9);
+        // 8  -> mux
+        require(selector >= PAWN && selector <= MUX);
 
-        // Only pawn routes may carry a promotion choice.
-        // Piece encoding:
-        // white: 1 pawn, 2 knight, 3 bishop, 4 rook, 5 queen, 6 king
-        // black: 9 pawn, 10 knight, 11 bishop, 12 rook, 13 queen, 14 king
-        // black code = white code + 8
-        //
-        // Pawn promotion choices therefore use:
-        // 2 knight, 3 bishop, 4 rook, 5 queen
-        require(promo_piece == 0 || (selector == 0 && promo_piece >= 2 && promo_piece <= 5));
+        // termination_action intent:
+        // 0 -> clear
+        // 1 -> offer draw with an ordinary move
+        // 2 -> claim draw in mux
+        // 3 -> surrender in mux
+        // 4 -> accept draw in mux
+        require(termination_action >= CLEAR && termination_action <= ACCEPT);
 
-        int target_selector = selector;
-        if (selector == 9) {
-            target_selector = 8;
-        }
-
+        // selector -> target contract hash
         byte[] all_route_hashes = route_hashes + mux_hash;
-        int hash_start = target_selector * 32;
+        int hash_start = selector * 32;
         int hash_end = hash_start + 32;
         byte[32] target_hash = all_route_hashes.slice(hash_start, hash_end);
 
         int next_status = status;
         int next_turn = turn;
         int next_en_passant_idx = en_passant_idx;
-        int next_pending_src_idx = from_y * 8 + from_x;
-        int next_pending_dst_idx = to_y * 8 + to_x;
-        int next_pending_promo = promo_piece;
-        int next_recent_castle = 0;
+        int next_pending_src_idx = -1;
+        int next_pending_dst_idx = -1;
+        int next_pending_promo = CLEAR;
+        int next_recent_castle = CLEAR;
         int next_draw_state = draw_state;
 
-        bool is_draw_claim = selector == 8;
-        bool is_surrender = selector == 9;
-        if (is_draw_claim || is_surrender) {
-            require(from_x == 0 && from_y == 0 && to_x == 0 && to_y == 0 && promo_piece == 0);
+        if (selector == MUX) {
+            require(from_x == -1 && from_y == -1 && to_x == -1 && to_y == -1 && promo_piece == CLEAR);
 
             next_en_passant_idx = -1;
-            next_pending_src_idx = -1;
-            next_pending_dst_idx = -1;
-            next_pending_promo = 0;
-            next_recent_castle = 0;
+            next_recent_castle = CLEAR;
 
-            if (is_draw_claim) {
+            if (termination_action == CLAIM) {
                 // Draw negotiation starts from the ordinary idle mux state. The
                 // next ply belongs to the opponent, who now tries to find a
                 // saving move for the claimant side.
-                require(draw_state == 0);
-                require(recent_castle == 0);
+                require(draw_state == NORMAL);
+                require(recent_castle == CLEAR);
 
                 next_turn = 1 - turn;
-                next_draw_state = 1;
-            } else {
+                next_draw_state = CLAIMED;
+            } else if (termination_action == SURRENDER) {
                 // Surrender is a mux-to-mux terminal transition. The side to move
                 // concedes immediately and the game returns to mux with terminal status.
-                if (turn == 0) {
-                    next_status = 2;
-                } else {
-                    next_status = 1;
-                }
-                next_draw_state = 0;
+                next_status = BWIN - turn;
+                next_draw_state = NORMAL;
+            } else {
+                // Draw agreement is accepted asynchronously on the opponent's
+                // turn after being attached to the previous move.
+                require(termination_action == ACCEPT);
+                require(draw_state + turn == BOFFER);
+                next_status = DRAW;
+                next_draw_state = NORMAL;
             }
         } else {
-            // Mux is the only writer of pending move fields. A normal opponent
-            // reply implicitly accepts any recent castle by clearing recent_castle;
-            // selector 7 preserves it and enters the explicit challenge path.
-            if (selector == 7) {
-                require(recent_castle != 0);
+            // The mux only commits moves whose endpoints are on the 8x8 board.
+            require(from_x >= 0 && from_x < 8 && from_y >= 0 && from_y < 8);
+            require(to_x >= 0 && to_x < 8 && to_y >= 0 && to_y < 8);
+
+            // Only pawn routes may carry a promotion choice.
+            // Piece encoding:
+            // white: 1 pawn,  2 knight,  3 bishop,  4 rook,  5 queen,  6 king
+            // black: 9 pawn, 10 knight, 11 bishop, 12 rook, 13 queen, 14 king
+            // black code = white code + 8
+            //
+            // Pawn promotion choices therefore use:
+            // 2 knight, 3 bishop, 4 rook, 5 queen
+            require(promo_piece == 0 || (selector == PAWN && promo_piece >= 2 && promo_piece <= 5));
+
+            // Worker routes only accept "no side action" or "offer draw".
+            require(termination_action == CLEAR || termination_action == OFFER);
+
+            // Draw-claim mode may reuse only the ordinary move workers.
+            require(draw_state >= NORMAL || selector <= KING);
+
+            // A draw offer may ride only on a normal-play move, not on castle
+            // challenge prep and not inside draw-claim mode.
+            require(termination_action == CLEAR || (selector <= CASTLE && draw_state >= NORMAL));
+
+            // Any ordinary reply clears a pending draw offer; an attached offer
+            // below immediately replaces it with the current mover's offer.
+            if (draw_state > NORMAL) {
+                next_draw_state = NORMAL;
+            }
+
+            // Draw offers are recorded on the mux state returned from the move.
+            if (termination_action == OFFER) {
+                next_draw_state = WOFFER + turn;
+            }
+            
+            // Ordinary replies clear recent_castle; only prep preserves it and
+            // enters the explicit castle-challenge path.
+            if (selector == PREP) {
+                require(recent_castle != CLEAR);
                 next_recent_castle = recent_castle;
             }
+            
+            next_pending_src_idx = from_y * 8 + from_x;
+            next_pending_dst_idx = to_y * 8 + to_x;
+            next_pending_promo = promo_piece;
         }
 
         State next_state = {
@@ -187,15 +205,11 @@ contract ChessMux(
 
     entrypoint function timeout(sig s, pubkey pk, byte[] target_prefix, byte[] target_suffix) {
         // Timeout only applies while the game is still live.
-        require(status == 0);
-
-        bool is_white_turn = turn == 0;
-        bool is_black_turn = turn == 1;
-        require(is_white_turn || is_black_turn);
+        require(status == LIVE);
 
         // The side waiting on a response is `turn`, so the timeout claimant is
         // always the opposite signer.
-        if (is_white_turn) {
+        if (turn == WHITE) {
             require(blake2b(pk) == black_player);
         } else {
             require(blake2b(pk) == white_player);
@@ -212,12 +226,12 @@ contract ChessMux(
 
         // Ordinary timeout loses for the side that owed the next signed route.
         // Draw-state 1 is the one exception: silence accepts the draw claim.
-        int next_status = 1;
-        if (turn == 0) {
-            next_status = 2;
+        int next_status = WWIN;
+        if (turn == WHITE) {
+            next_status = BWIN;
         }
-        if (draw_state == 1) {
-            next_status = 3;
+        if (draw_state == CLAIMED) {
+            next_status = DRAW;
         }
 
         State next_state = {

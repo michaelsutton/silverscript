@@ -22,8 +22,8 @@ mux.
 In concrete terms:
 
 1. mux authenticates the side to move
-2. mux commits the pending move into shared state
-3. mux routes into the worker selected by state and `selector`
+2. mux interprets `selector` as a pure template choice and `termination_action` as a game-level side decision
+3. mux commits the pending move into shared state when a worker route is chosen
 4. the worker proves one bounded rule and rewrites the board
 5. the worker returns to mux with cleared pending fields
 
@@ -46,6 +46,7 @@ What it enforces directly:
 How games currently end on chain:
 
 - king capture
+- draw by agreement
 - surrender
 - timeout
 - accepted draw claim
@@ -65,7 +66,7 @@ All mux and worker contracts use the same serialized state fields:
 - `en_passant_idx`: en passant target square, or `-1`
 - `pending_src_idx`, `pending_dst_idx`, `pending_promo`: the move committed by mux for the next worker
 - `recent_castle`: `0` none, `1` white king-side, `2` white queen-side, `3` black king-side, `4` black queen-side
-- `draw_state`: `0` normal play, `1` draw claimed, `2` counterplay step
+- `draw_state`: `3` normal play, `1` draw claimed, `2` counterplay step, `4` white offered draw, `5` black offered draw
 
 `castle_rights` are not a complete proof that castling is legal. They preserve
 historical eligibility bits, while the castle worker still checks the live board
@@ -167,13 +168,30 @@ The board is not physically flipped. The protocol flips interpretation:
 
 The flow is:
 
-1. the claimant routes mux selector `8`, which flips `turn` and enters `draw_state = 1`
+1. the claimant routes to mux with `selector = 8` and `termination_action = 2`, which flips `turn` and enters `draw_state = 1`
 2. the opponent tries to find a saving move for the claimant side using an ordinary worker
 3. if that succeeds, play continues in `draw_state = 2`
 4. if phase 2 ends without a decisive king capture, the original claimant loses
 5. if phase 1 stalls, mux timeout accepts the draw
 
 This keeps draw negotiation small enough to reuse the normal move workers.
+
+## Draw By Agreement
+
+Draw by agreement is a separate mux-level mechanism from draw claim.
+
+It follows the usual chess rhythm: the offer is attached to an ordinary move,
+not sent as a standalone protocol step.
+
+The flow is:
+
+1. the mover routes into an ordinary worker and sets a draw-offer bit in mux state
+2. the worker applies the move and returns to mux with `draw_state = 4` or `5`
+3. on the opponent's turn, they may accept through mux with `selector = 8` and `termination_action = 4`
+4. any ordinary reply implicitly rejects the offer and clears the draw-offer state
+
+This keeps draw agreement asynchronous without adding a second timeout model or
+a dedicated draw-offer-only transaction.
 
 ## Timeout
 

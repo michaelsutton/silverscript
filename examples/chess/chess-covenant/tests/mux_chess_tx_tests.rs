@@ -1,5 +1,3 @@
-use std::fs;
-
 use blake2b_simd::Params as Blake2bParams;
 use kaspa_consensus_core::hashing::sighash::calc_schnorr_signature_hash;
 use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
@@ -19,7 +17,8 @@ use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledCont
 
 use chess_covenant::{
     castle_challenge_contract_path, castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path,
-    knight_contract_path, mux_contract_path, pawn_contract_path, vert_contract_path,
+    knight_contract_path, load_contract_source as load_preprocessed_contract_source, mux_contract_path, pawn_contract_path,
+    vert_contract_path,
 };
 
 struct Player {
@@ -92,7 +91,7 @@ fn player_from_seed(seed: u8) -> Player {
 }
 
 fn load_contract_source(path: &'static str) -> &'static str {
-    let source = fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {path}: {err}"));
+    let source = load_preprocessed_contract_source(path);
     Box::leak(source.into_boxed_str())
 }
 
@@ -190,7 +189,7 @@ fn build_fixture() -> MuxChessFixture {
         Expr::int(-1),
         Expr::int(0),
         Expr::int(0),
-        Expr::int(0),
+        Expr::int(3),
     ];
 
     MuxChessFixture {
@@ -322,13 +321,39 @@ fn run_route(
     out: &CompiledContract<'_>,
     covenant_id: Hash,
 ) {
-    run_route_with_promo(active, selector, mv, player, target, out, covenant_id);
+    run_route_with_action(active, selector, mv, 0, player, target, out, covenant_id);
+}
+
+fn run_route_with_action(
+    active: &CompiledContract<'_>,
+    selector: i64,
+    mv: MoveArgs,
+    termination_action: i64,
+    player: &Player,
+    target: &TemplateFixture,
+    out: &CompiledContract<'_>,
+    covenant_id: Hash,
+) {
+    run_route_with_promo_and_action(active, selector, mv, termination_action, player, target, out, covenant_id);
 }
 
 fn run_route_with_promo(
     active: &CompiledContract<'_>,
     selector: i64,
     mv: MoveArgs,
+    player: &Player,
+    target: &TemplateFixture,
+    out: &CompiledContract<'_>,
+    covenant_id: Hash,
+) {
+    run_route_with_promo_and_action(active, selector, mv, 0, player, target, out, covenant_id);
+}
+
+fn run_route_with_promo_and_action(
+    active: &CompiledContract<'_>,
+    selector: i64,
+    mv: MoveArgs,
+    termination_action: i64,
     player: &Player,
     target: &TemplateFixture,
     out: &CompiledContract<'_>,
@@ -345,6 +370,7 @@ fn run_route_with_promo(
             mv.to_x.into(),
             mv.to_y.into(),
             mv.promo_piece.into(),
+            termination_action.into(),
             Expr::bytes(placeholder_sig),
             Expr::bytes(player.pubkey_bytes.clone()),
             Expr::bytes(target.prefix.clone()),
@@ -365,6 +391,7 @@ fn run_route_with_promo(
             mv.to_x.into(),
             mv.to_y.into(),
             mv.promo_piece.into(),
+            termination_action.into(),
             Expr::bytes(sig),
             Expr::bytes(player.pubkey_bytes.clone()),
             Expr::bytes(target.prefix.clone()),
@@ -395,6 +422,7 @@ fn run_route_err(
             mv.to_x.into(),
             mv.to_y.into(),
             mv.promo_piece.into(),
+            0.into(),
             Expr::bytes(placeholder_sig),
             Expr::bytes(player.pubkey_bytes.clone()),
             Expr::bytes(target.prefix.clone()),
@@ -415,6 +443,7 @@ fn run_route_err(
             mv.to_x.into(),
             mv.to_y.into(),
             mv.promo_piece.into(),
+            0.into(),
             Expr::bytes(sig),
             Expr::bytes(player.pubkey_bytes.clone()),
             Expr::bytes(target.prefix.clone()),
@@ -513,7 +542,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -533,7 +562,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(4, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 0, mv(4, 1, 4, 3), &white, &fix.pawn, &pawn0, covenant_id);
@@ -554,7 +583,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("pawn", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -574,7 +603,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(5, 5),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux1, 1, mv(6, 7, 5, 5), &black, &fix.knight, &knight1, covenant_id);
@@ -595,7 +624,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("knight", &knight1, &mux2, covenant_id, &fix.mux);
@@ -617,7 +646,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id3 = populate_single_output_genesis_covenant(&mux3);
@@ -636,7 +665,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(0, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux3, 2, mv(0, 0, 0, 3), &white, &fix.vert, &vert, covenant_id3);
@@ -657,7 +686,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("vert", &vert, &mux4, covenant_id3, &fix.mux);
@@ -679,7 +708,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id4q = populate_single_output_genesis_covenant(&mux4q);
@@ -698,7 +727,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(0, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux4q, 2, mv(0, 0, 0, 3), &white, &fix.vert, &vert_queen, covenant_id4q);
@@ -719,7 +748,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("vert_queen", &vert_queen, &mux4q_next, covenant_id4q, &fix.mux);
@@ -741,7 +770,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id5 = populate_single_output_genesis_covenant(&mux5);
@@ -760,7 +789,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(0, 4),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux5, 2, mv(0, 7, 0, 4), &black, &fix.vert, &vert_black, covenant_id5);
@@ -781,7 +810,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("vert_black", &vert_black, &mux6, covenant_id5, &fix.mux);
@@ -803,7 +832,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id7 = populate_single_output_genesis_covenant(&mux7);
@@ -822,7 +851,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(4, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux7, 3, mv(7, 3, 4, 3), &white, &fix.horiz, &horiz_left, covenant_id7);
@@ -843,7 +872,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("horiz_left", &horiz_left, &mux8, covenant_id7, &fix.mux);
@@ -865,7 +894,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id9 = populate_single_output_genesis_covenant(&mux9);
@@ -884,7 +913,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(3, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux9, 3, mv(0, 3, 3, 3), &white, &fix.horiz, &horiz_right, covenant_id9);
@@ -905,7 +934,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("horiz_right", &horiz_right, &mux10, covenant_id9, &fix.mux);
@@ -927,7 +956,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id11 = populate_single_output_genesis_covenant(&mux11);
@@ -946,7 +975,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(3, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux11, 4, mv(0, 0, 3, 3), &white, &fix.diag, &diag_up_right, covenant_id11);
@@ -967,7 +996,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("diag_up_right", &diag_up_right, &mux12, covenant_id11, &fix.mux);
@@ -989,7 +1018,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id12q = populate_single_output_genesis_covenant(&mux12q);
@@ -1008,7 +1037,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(3, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux12q, 4, mv(0, 0, 3, 3), &white, &fix.diag, &diag_up_right_queen, covenant_id12q);
@@ -1029,7 +1058,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("diag_up_right_queen", &diag_up_right_queen, &mux12q_next, covenant_id12q, &fix.mux);
@@ -1051,7 +1080,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id13 = populate_single_output_genesis_covenant(&mux13);
@@ -1070,7 +1099,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(4, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux13, 4, mv(7, 0, 4, 3), &white, &fix.diag, &diag_up_left, covenant_id13);
@@ -1091,7 +1120,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("diag_up_left", &diag_up_left, &mux14, covenant_id13, &fix.mux);
@@ -1113,7 +1142,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id15 = populate_single_output_genesis_covenant(&mux15);
@@ -1132,7 +1161,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(3, 4),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux15, 4, mv(0, 7, 3, 4), &black, &fix.diag, &diag_down_right, covenant_id15);
@@ -1153,7 +1182,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("diag_down_right", &diag_down_right, &mux16, covenant_id15, &fix.mux);
@@ -1175,7 +1204,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id17 = populate_single_output_genesis_covenant(&mux17);
@@ -1194,7 +1223,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(4, 4),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux17, 4, mv(7, 7, 4, 4), &black, &fix.diag, &diag_down_left, covenant_id17);
@@ -1215,7 +1244,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("diag_down_left", &diag_down_left, &mux18, covenant_id17, &fix.mux);
@@ -1237,7 +1266,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id19 = populate_single_output_genesis_covenant(&mux19);
@@ -1256,7 +1285,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(4, 1),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux19, 5, mv(4, 0, 4, 1), &white, &fix.king, &king, covenant_id19);
@@ -1277,7 +1306,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("king", &king, &mux20, covenant_id19, &fix.mux);
@@ -1300,7 +1329,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id21 = populate_single_output_genesis_covenant(&mux21);
@@ -1319,7 +1348,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: square_idx(6, 0),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux21, 6, mv(4, 0, 6, 0), &white, &fix.castle, &castle, covenant_id21);
@@ -1343,7 +1372,7 @@ fn muxed_chess_routes_all_move_families() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("castle", &castle, &mux22, covenant_id21, &fix.mux);
@@ -1374,7 +1403,7 @@ fn capturing_enemy_king_sets_terminal_status() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -1394,7 +1423,7 @@ fn capturing_enemy_king_sets_terminal_status() {
             pending_dst_idx: square_idx(0, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 2, mv(0, 0, 0, 3), &white, &fix.vert, &vert, covenant_id);
@@ -1416,7 +1445,7 @@ fn capturing_enemy_king_sets_terminal_status() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("vert_king_capture", &vert, &mux1, covenant_id, &fix.mux);
@@ -1448,7 +1477,7 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -1468,7 +1497,7 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: square_idx(5, 2),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 1, mv(6, 0, 5, 2), &white, &fix.knight, &knight0, covenant_id);
@@ -1490,7 +1519,7 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("ignore_check_knight", &knight0, &mux1, covenant_id, &fix.mux);
@@ -1510,7 +1539,7 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: square_idx(4, 0),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux1, 2, mv(4, 7, 4, 0), &black, &fix.vert, &vert1, covenant_id);
@@ -1532,7 +1561,7 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("ignore_check_capture", &vert1, &mux2, covenant_id, &fix.mux);
@@ -1564,7 +1593,7 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -1584,7 +1613,7 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: square_idx(5, 1),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 3, mv(4, 1, 5, 1), &white, &fix.horiz, &horiz0, covenant_id);
@@ -1606,7 +1635,7 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("pinned_rook_slide", &horiz0, &mux1, covenant_id, &fix.mux);
@@ -1626,7 +1655,7 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: square_idx(4, 0),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux1, 2, mv(4, 7, 4, 0), &black, &fix.vert, &vert1, covenant_id);
@@ -1648,7 +1677,7 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("pinned_rook_capture", &vert1, &mux2, covenant_id, &fix.mux);
@@ -1679,7 +1708,7 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -1699,7 +1728,7 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: square_idx(4, 1),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 5, mv(4, 0, 4, 1), &white, &fix.king, &king0, covenant_id);
@@ -1721,7 +1750,7 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("king_walk_into_attack", &king0, &mux1, covenant_id, &fix.mux);
@@ -1741,7 +1770,7 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: square_idx(4, 1),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux1, 2, mv(4, 7, 4, 1), &black, &fix.vert, &vert1, covenant_id);
@@ -1763,7 +1792,7 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("king_walk_capture", &vert1, &mux2, covenant_id, &fix.mux);
@@ -1795,7 +1824,7 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -1815,7 +1844,7 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
             pending_dst_idx: square_idx(4, 1),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 4, mv(5, 0, 4, 1), &white, &fix.diag, &diag0, covenant_id);
@@ -1837,7 +1866,7 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("legal_interposition", &diag0, &mux1, covenant_id, &fix.mux);
@@ -1857,7 +1886,7 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
             pending_dst_idx: square_idx(4, 0),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux1, 2, mv(4, 7, 4, 0), &black, &fix.vert, &vert1, covenant_id);
@@ -1877,7 +1906,7 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let _err = run_worker_apply_err("interposition_blocks_capture", &vert1, &mux_fail, covenant_id, &fix.mux);
@@ -1910,7 +1939,7 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -1930,7 +1959,7 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: square_idx(4, 1),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 4, mv(5, 0, 4, 1), &white, &fix.diag, &diag0, covenant_id);
@@ -1952,7 +1981,7 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("double_check_illegal_reply", &diag0, &mux1, covenant_id, &fix.mux);
@@ -1972,7 +2001,7 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: square_idx(4, 0),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux1, 4, mv(1, 3, 4, 0), &black, &fix.diag, &diag1, covenant_id);
@@ -1994,7 +2023,7 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("double_check_capture", &diag1, &mux2, covenant_id, &fix.mux);
@@ -2024,7 +2053,7 @@ fn pawn_underpromotion_to_knight_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2044,7 +2073,7 @@ fn pawn_underpromotion_to_knight_succeeds() {
             pending_dst_idx: square_idx(4, 7),
             pending_promo: 2,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route_with_promo(&mux0, 0, mv_promo(4, 6, 4, 7, 2), &white, &fix.pawn, &pawn0, covenant_id);
@@ -2066,7 +2095,7 @@ fn pawn_underpromotion_to_knight_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("pawn_underpromotion", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2096,7 +2125,7 @@ fn pawn_promotion_requires_choice() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2116,7 +2145,7 @@ fn pawn_promotion_requires_choice() {
             pending_dst_idx: square_idx(4, 7),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 0, mv(4, 6, 4, 7), &white, &fix.pawn, &pawn0, covenant_id);
@@ -2138,7 +2167,7 @@ fn pawn_promotion_requires_choice() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let _err = run_worker_apply_err("missing promotion choice should fail", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2168,7 +2197,7 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2188,7 +2217,7 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
             pending_dst_idx: square_idx(4, 2),
             pending_promo: 5,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route_with_promo(&mux0, 0, mv_promo(4, 1, 4, 2, 5), &white, &fix.pawn, &pawn0, covenant_id);
@@ -2210,7 +2239,7 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let _err = run_worker_apply_err("ordinary pawn move with promotion choice should fail", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2241,7 +2270,7 @@ fn white_en_passant_capture_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2261,7 +2290,7 @@ fn white_en_passant_capture_succeeds() {
             pending_dst_idx: square_idx(3, 5),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 0, mv(4, 4, 3, 5), &white, &fix.pawn, &pawn0, covenant_id);
@@ -2283,7 +2312,7 @@ fn white_en_passant_capture_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("white_en_passant", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2314,7 +2343,7 @@ fn black_en_passant_capture_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2334,7 +2363,7 @@ fn black_en_passant_capture_succeeds() {
             pending_dst_idx: square_idx(4, 2),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 0, mv(3, 3, 4, 2), &black, &fix.pawn, &pawn0, covenant_id);
@@ -2356,7 +2385,7 @@ fn black_en_passant_capture_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("black_en_passant", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2386,7 +2415,7 @@ fn non_pawn_move_clears_en_passant_state() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2406,7 +2435,7 @@ fn non_pawn_move_clears_en_passant_state() {
             pending_dst_idx: square_idx(2, 2),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 1, mv(1, 0, 2, 2), &white, &fix.knight, &knight0, covenant_id);
@@ -2428,7 +2457,7 @@ fn non_pawn_move_clears_en_passant_state() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("knight_clears_en_passant", &knight0, &mux1, covenant_id, &fix.mux);
@@ -2459,7 +2488,7 @@ fn pawn_diagonal_capture_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2479,7 +2508,7 @@ fn pawn_diagonal_capture_succeeds() {
             pending_dst_idx: square_idx(5, 5),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 0, mv(4, 4, 5, 5), &white, &fix.pawn, &pawn0, covenant_id);
@@ -2501,7 +2530,7 @@ fn pawn_diagonal_capture_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("pawn_diagonal_capture", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2532,7 +2561,7 @@ fn pawn_double_step_blocked_by_occupied_middle_square_fails() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2552,7 +2581,7 @@ fn pawn_double_step_blocked_by_occupied_middle_square_fails() {
             pending_dst_idx: square_idx(4, 3),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 0, mv(4, 1, 4, 3), &white, &fix.pawn, &pawn0, covenant_id);
@@ -2574,7 +2603,7 @@ fn pawn_double_step_blocked_by_occupied_middle_square_fails() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let _err = run_worker_apply_err("blocked double-step should fail", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2604,7 +2633,7 @@ fn pawn_diagonal_move_into_empty_square_fails_without_en_passant() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2624,7 +2653,7 @@ fn pawn_diagonal_move_into_empty_square_fails_without_en_passant() {
             pending_dst_idx: square_idx(5, 5),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 0, mv(4, 4, 5, 5), &white, &fix.pawn, &pawn0, covenant_id);
@@ -2646,7 +2675,7 @@ fn pawn_diagonal_move_into_empty_square_fails_without_en_passant() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let _err = run_worker_apply_err("diagonal move into empty square should fail", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2677,7 +2706,7 @@ fn expired_en_passant_attempt_fails() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2697,7 +2726,7 @@ fn expired_en_passant_attempt_fails() {
             pending_dst_idx: square_idx(3, 5),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 0, mv(4, 4, 3, 5), &white, &fix.pawn, &pawn0, covenant_id);
@@ -2719,7 +2748,7 @@ fn expired_en_passant_attempt_fails() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let _err = run_worker_apply_err("expired en-passant should fail", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2751,7 +2780,7 @@ fn ordinary_reply_after_castle_clears_recent_castle() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2771,7 +2800,7 @@ fn ordinary_reply_after_castle_clears_recent_castle() {
             pending_dst_idx: square_idx(5, 5),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 1, mv(6, 7, 5, 5), &black, &fix.knight, &knight0, covenant_id);
@@ -2793,7 +2822,7 @@ fn ordinary_reply_after_castle_clears_recent_castle() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("ordinary_reply_clears_recent_castle", &knight0, &mux1, covenant_id, &fix.mux);
@@ -2825,7 +2854,7 @@ fn castle_start_square_challenge_by_pawn_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2845,7 +2874,7 @@ fn castle_start_square_challenge_by_pawn_succeeds() {
             pending_dst_idx: square_idx(4, 0),
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 7, mv(3, 1, 4, 0), &black, &fix.castle_challenge, &prep0, covenant_id);
@@ -2869,7 +2898,7 @@ fn castle_start_square_challenge_by_pawn_succeeds() {
             pending_dst_idx: square_idx(4, 0),
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_prep_apply("castle_start_square_prep", &prep0, &pawn0, covenant_id, &fix.pawn);
@@ -2891,7 +2920,7 @@ fn castle_start_square_challenge_by_pawn_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("castle_start_square_pawn_challenge", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -2923,7 +2952,7 @@ fn castle_transit_square_challenge_by_rook_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -2943,7 +2972,7 @@ fn castle_transit_square_challenge_by_rook_succeeds() {
             pending_dst_idx: square_idx(5, 0),
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 7, mv(5, 7, 5, 0), &black, &fix.castle_challenge, &prep0, covenant_id);
@@ -2967,7 +2996,7 @@ fn castle_transit_square_challenge_by_rook_succeeds() {
             pending_dst_idx: square_idx(5, 0),
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_prep_apply("castle_transit_square_prep", &prep0, &vert0, covenant_id, &fix.vert);
@@ -2989,7 +3018,7 @@ fn castle_transit_square_challenge_by_rook_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("castle_transit_square_rook_challenge", &vert0, &mux1, covenant_id, &fix.mux);
@@ -3021,7 +3050,7 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -3041,7 +3070,7 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
             pending_dst_idx: square_idx(6, 0),
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 7, mv(6, 7, 6, 0), &black, &fix.castle_challenge, &prep0, covenant_id);
@@ -3061,7 +3090,7 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
             pending_dst_idx: square_idx(6, 0),
             pending_promo: 0,
             recent_castle: 1,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_prep_apply("castle_destination_square_prep", &prep0, &vert0, covenant_id, &fix.vert);
@@ -3083,7 +3112,7 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("castle_destination_square_rook_challenge", &vert0, &mux1, covenant_id, &fix.mux);
@@ -3115,7 +3144,7 @@ fn white_queenside_castle_destination_challenge_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 2,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -3135,7 +3164,7 @@ fn white_queenside_castle_destination_challenge_succeeds() {
             pending_dst_idx: square_idx(2, 0),
             pending_promo: 0,
             recent_castle: 2,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 7, mv(2, 7, 2, 0), &black, &fix.castle_challenge, &prep0, covenant_id);
@@ -3155,7 +3184,7 @@ fn white_queenside_castle_destination_challenge_succeeds() {
             pending_dst_idx: square_idx(2, 0),
             pending_promo: 0,
             recent_castle: 2,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_prep_apply("white_queenside_destination_prep", &prep0, &vert0, covenant_id, &fix.vert);
@@ -3177,7 +3206,7 @@ fn white_queenside_castle_destination_challenge_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("white_queenside_destination_challenge", &vert0, &mux1, covenant_id, &fix.mux);
@@ -3209,7 +3238,7 @@ fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 3,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -3229,7 +3258,7 @@ fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
             pending_dst_idx: square_idx(4, 7),
             pending_promo: 0,
             recent_castle: 3,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 7, mv(3, 6, 4, 7), &white, &fix.castle_challenge, &prep0, covenant_id);
@@ -3253,7 +3282,7 @@ fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
             pending_dst_idx: square_idx(4, 7),
             pending_promo: 0,
             recent_castle: 3,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_prep_apply("black_kingside_start_prep", &prep0, &pawn0, covenant_id, &fix.pawn);
@@ -3275,7 +3304,7 @@ fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("black_kingside_start_challenge", &pawn0, &mux1, covenant_id, &fix.mux);
@@ -3307,7 +3336,7 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 4,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -3327,7 +3356,7 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
             pending_dst_idx: square_idx(3, 7),
             pending_promo: 0,
             recent_castle: 4,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_route(&mux0, 7, mv(3, 0, 3, 7), &white, &fix.castle_challenge, &prep0, covenant_id);
@@ -3351,7 +3380,7 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
             pending_dst_idx: square_idx(3, 7),
             pending_promo: 0,
             recent_castle: 4,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_prep_apply("black_queenside_transit_prep", &prep0, &vert0, covenant_id, &fix.vert);
@@ -3373,7 +3402,7 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     run_worker_apply("black_queenside_transit_challenge", &vert0, &mux1, covenant_id, &fix.mux);
@@ -3401,7 +3430,7 @@ fn claim_draw_flips_turn_and_enters_draw_state() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -3424,7 +3453,7 @@ fn claim_draw_flips_turn_and_enters_draw_state() {
             draw_state: 1,
         },
     );
-    run_route(&mux0, 8, mv(0, 0, 0, 0), &white, &fix.mux, &mux1, covenant_id);
+    run_route_with_action(&mux0, 8, mv(-1, -1, -1, -1), 2, &white, &fix.mux, &mux1, covenant_id);
 }
 
 #[test]
@@ -3469,10 +3498,202 @@ fn surrender_routes_back_to_mux_with_terminal_status() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
-    run_route(&mux0, 9, mv(0, 0, 0, 0), &white, &fix.mux, &mux1, covenant_id);
+    run_route_with_action(&mux0, 8, mv(-1, -1, -1, -1), 3, &white, &fix.mux, &mux1, covenant_id);
+}
+
+#[test]
+fn ordinary_move_can_offer_draw_and_return_to_mux() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let board0 = standard_board();
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let knight0 = compile_state(
+        fix.knight.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(6, 0),
+            pending_dst_idx: square_idx(5, 2),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 4,
+        },
+    );
+    run_route_with_action(&mux0, 1, mv(6, 0, 5, 2), 1, &white, &fix.knight, &knight0, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 6, 0, 5, 2);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 4,
+        },
+    );
+    run_worker_apply("offer_draw_with_move", &knight0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn pending_draw_offer_can_be_accepted_on_next_mux_turn() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = standard_board();
+    move_piece(&mut board0, 6, 0, 5, 2);
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 4,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 3,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+    run_route_with_action(&mux0, 8, mv(-1, -1, -1, -1), 4, &black, &fix.mux, &mux1, covenant_id);
+}
+
+#[test]
+fn ordinary_reply_rejects_pending_draw_offer_and_clears_draw_state() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let mut board0 = standard_board();
+    move_piece(&mut board0, 6, 0, 5, 2);
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 4,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let knight1 = compile_state(
+        fix.knight.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(6, 7),
+            pending_dst_idx: square_idx(5, 5),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+    run_route(&mux0, 1, mv(6, 7, 5, 5), &black, &fix.knight, &knight1, covenant_id);
+
+    let mut board1 = board0.clone();
+    move_piece(&mut board1, 6, 7, 5, 5);
+    let mux1 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.pubkey_hash,
+        &black.pubkey_hash,
+        GameStateArgs {
+            board: &board1,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+    run_worker_apply("reject_draw_by_moving", &knight1, &mux1, covenant_id, &fix.mux);
 }
 
 #[test]
@@ -3500,7 +3721,7 @@ fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -3523,7 +3744,7 @@ fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
             draw_state: 1,
         },
     );
-    run_route(&mux0, 8, mv(0, 0, 0, 0), &white, &fix.mux, &mux1, covenant_id);
+    run_route_with_action(&mux0, 8, mv(-1, -1, -1, -1), 2, &white, &fix.mux, &mux1, covenant_id);
 
     let knight1 = compile_state(
         fix.knight.source,
@@ -3635,7 +3856,7 @@ fn knight_draw_capture_awards_win_to_the_actor() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
@@ -3658,7 +3879,7 @@ fn knight_draw_capture_awards_win_to_the_actor() {
             draw_state: 1,
         },
     );
-    run_route(&mux0, 8, mv(0, 0, 0, 0), &white, &fix.mux, &mux1, covenant_id);
+    run_route_with_action(&mux0, 8, mv(-1, -1, -1, -1), 2, &white, &fix.mux, &mux1, covenant_id);
 
     let knight1 = compile_state(
         fix.knight.source,
@@ -4190,7 +4411,7 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
             pending_dst_idx: square_idx(0, 2),
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&knight1);
@@ -4209,7 +4430,7 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
             pending_dst_idx: -1,
             pending_promo: 0,
             recent_castle: 0,
-            draw_state: 0,
+            draw_state: 3,
         },
     );
 

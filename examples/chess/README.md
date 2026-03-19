@@ -43,6 +43,7 @@ The current prototype already demonstrates:
 - pawn promotion and en passant handling
 - castling with explicit challenge support for start, transit, and destination-square attack proofs
 - draw negotiation as a bounded dispute flow reusing ordinary workers
+- draw by agreement, offered together with a move and accepted asynchronously on the opponent's turn
 - surrender and timeout-based termination paths
 - terminal settlement of play states by king capture, allowing full classical chess rules to be enforced through the protocol
 - representative test coverage for the ordinary check-evasion reduction
