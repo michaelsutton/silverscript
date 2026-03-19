@@ -1,4 +1,5 @@
 pragma silverscript ^0.1.0;
+// @consts constants.sil
 
 contract ChessCastle(
     byte[32] init_mux_hash,
@@ -19,7 +20,7 @@ contract ChessCastle(
     // Shared chess state layout:
     // - status: 0 live, 1 white win, 2 black win, 3 draw
     // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
-    // - draw_state: 0 normal, 1 draw claimed, 2 counterplay step
+    // - draw_state: 3 normal, 1 draw claimed, 2 counterplay step, 4 white offered draw, 5 black offered draw
     byte[32] mux_hash = init_mux_hash;
     byte[256] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
@@ -37,8 +38,8 @@ contract ChessCastle(
 
     entrypoint function apply(byte[] mux_prefix, byte[] mux_suffix) {
         // Workers only accept active move proofs routed out of ChessMux.
-        require(status == 0);
-        require(draw_state == 0);
+        require(status == LIVE);
+        require(draw_state >= NORMAL);
 
         int from_idx = OpBin2Num(pending_src_idx);
         int to_idx = OpBin2Num(pending_dst_idx);
@@ -49,7 +50,7 @@ contract ChessCastle(
         int to_x = to_idx % 8;
 
         // Chess alternates between white (0) and black (1).
-        require(turn == 0 || turn == 1);
+        require(turn == WHITE || turn == BLACK);
 
         // A castling move must actually change squares.
         require(from_idx != to_idx);
@@ -66,7 +67,7 @@ contract ChessCastle(
 
         bool moving_is_white = moving_num == 6;
         bool moving_is_black = moving_num == 14;
-        if (turn == 0) {
+        if (turn == WHITE) {
             require(moving_is_white);
         } else {
             require(moving_is_black);
@@ -193,7 +194,7 @@ contract ChessCastle(
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
-            pending_promo: 0,
+            pending_promo: CLEAR,
             recent_castle: next_recent_castle,
             draw_state: draw_state
         };
@@ -208,7 +209,7 @@ contract ChessCastle(
     }
 
     entrypoint function timeout(byte[] mux_prefix, byte[] mux_suffix) {
-        require(status == 0);
+        require(status == LIVE);
 
         // Worker timeout is permissionless. Once a bad route strands funds in a
         // worker state, anyone may prove enough DAA time has passed and return
@@ -220,12 +221,12 @@ contract ChessCastle(
         require(tx.locktime >= min_locktime);
 
         int next_status = status;
-        if (draw_state == 1) {
-            next_status = 3;
-        } else if (turn == 0) {
-            next_status = 2;
+        if (draw_state == CLAIMED) {
+            next_status = DRAW;
+        } else if (turn == WHITE) {
+            next_status = BWIN;
         } else {
-            next_status = 1;
+            next_status = WWIN;
         }
 
         State next_state = {
@@ -240,7 +241,7 @@ contract ChessCastle(
             en_passant_idx: -1,
             pending_src_idx: -1,
             pending_dst_idx: -1,
-            pending_promo: 0,
+            pending_promo: CLEAR,
             recent_castle: recent_castle,
             draw_state: draw_state
         };
