@@ -1,5 +1,14 @@
 # Chess Covenant Architecture
 
+This document is about the **inner mux/worker game engine only**.
+
+It describes the `ChessMux` plus move-worker family, their shared game-state
+layout, and the bounded-verification philosophy behind that split.
+
+It does **not** try to describe the newer outer durable layer
+`League -> Player -> ChessMux -> ChessSettle`. Those notes now live in the
+book under `examples/chess/book/`.
+
 This example uses a **multiplexer pattern**.
 
 Chess is too large and too entangled to force through one giant covenant. The
@@ -27,8 +36,9 @@ In concrete terms:
 4. the worker proves one bounded rule and rewrites the board
 5. the worker returns to mux with cleared pending fields
 
-All contracts share the same serialized state layout. That is what lets them
-behave like one split protocol instead of unrelated scripts.
+Within the inner game engine, all mux and move-worker contracts share the same
+serialized state layout. That is what lets them behave like one split protocol
+instead of unrelated scripts.
 
 ## Current On-Chain Semantics
 

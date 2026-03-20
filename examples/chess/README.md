@@ -34,34 +34,39 @@ Layout:
 - `ARCHITECTURE.md`: high-level design principles for the mux/worker chess protocol.
 - `COVERAGE.md`: audit matrix for current classical-rule coverage vs protocol behavior.
 
-## Already Achieved
+The current prototype already covers the core mux/worker chess engine and a
+real outer `League -> Player -> ChessMux -> ChessSettle` flow.
 
-The current prototype already demonstrates:
-
-- mux-routed worker execution for pawn, knight, vertical, horizontal, diagonal, king, castle, and castle-challenge flows
-- shared durable game state across mux and all workers
-- pawn promotion and en passant handling
-- castling with explicit challenge support for start, transit, and destination-square attack proofs
-- draw negotiation as a bounded dispute flow reusing ordinary workers
-- draw by agreement, offered together with a move and accepted asynchronously on the opponent's turn
-- surrender and timeout-based termination paths
-- terminal settlement of play states by king capture, allowing full classical chess rules to be enforced through the protocol
-- representative test coverage for the ordinary check-evasion reduction
-
-## TODO
+## Tasks
 
 This list is kept up to date. Completed, descoped, or split items are reflected
 here in the same change that updates their status.
 
 ### Protocol
 
+- [✓] Implement mux-routed worker execution for pawn, knight, vertical, horizontal, diagonal, king, castle, and castle-challenge flows.
+- [✓] Keep one shared durable game state layout across mux and all workers.
+- [✓] Support pawn promotion and en passant.
+- [✓] Support castling with explicit challenge paths for start, transit, and destination-square attack proofs.
+- [✓] Support draw negotiation as a bounded dispute flow reusing ordinary workers.
+- [✓] Support draw by agreement, offered together with a move and accepted asynchronously on the opponent's turn.
+- [✓] Support surrender and timeout-based termination paths.
+- [✓] Allow terminal settlement of play states by king capture, so classical chess rules can be enforced through the protocol.
+- [✓] Add representative coverage for the ordinary check-evasion reduction.
 - [ ] Add rare draw rules such as repetition and the 50-move rule.
 - [ ] Make sure all classical game rules can be fully enforced by the opponent through the protocol, and verify that no rule or challenge path is missing.
 - [ ] Tighten all draw and termination rules until the full settlement logic is robust enough for production use.
 - [ ] Tighten the logic of blitz chess and make sure all supported time-control modes still preserve challenge/timeout liveness, including non-blitz modes where there is no per-turn clock.
 
+### Outer Layer
+
+- [✓] Define the outer covenant and game-entry/settlement protocol needed to represent and update scores on chain.
+- [✓] Build an outer durable layer with `League` registration, `Player` accounts, `ChessMux` game start, `ChessSettle` settlement, and `Player` retirement guarded by `open_games`.
+- [ ] Build full chess server logic with persistent player scoring based on game results.
+
 ### Funds And Settlement
 
+- [✓] Require winner-side settlement consent on chain, and draw-side consent from both players, before any funds-bearing settlement path can complete.
 - [ ] Allow the game to begin from a mutual KAS deposit into the initial contract state.
 - [ ] Allow the winner to claim the KAS and terminate the contract after winning.
 - [ ] On draw, allow a split withdrawal path.
@@ -83,8 +88,3 @@ here in the same change that updates their status.
 - [ ] Use the book to show how complex distributed systems can be built directly on native pure Kaspa L1 after covenant support.
 - [ ] Make the chess challenge theme a central teaching device for bounded verification: prove a narrow claim, avoid full sweeps, and push the reader toward NP-like protocol thinking instead of eager global recomputation.
 - [ ] Write the book for advanced builders and agents, so it does not just document this project but also transfers the design mindset needed to build similar systems.
-
-### Mid Term
-
-- [ ] Build full chess server logic with persistent player scoring based on game results.
-- [ ] Define the outer covenant and game-entry/settlement protocol needed to represent and update those scores on chain.
