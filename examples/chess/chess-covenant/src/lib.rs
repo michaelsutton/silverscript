@@ -1,3 +1,5 @@
+pub mod orchestrator;
+
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};

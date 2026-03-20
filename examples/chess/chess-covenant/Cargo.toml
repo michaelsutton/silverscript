@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+blake2b_simd = "1.0.2"
 silverscript-lang = { path = "../../../silverscript-lang" }
 
 [dev-dependencies]
