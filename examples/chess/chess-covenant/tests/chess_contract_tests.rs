@@ -36,22 +36,14 @@ fn isolated_rook_path_loop_bound_sweep() {
 #[test]
 fn chess_pawn_reports_script_size_and_opcode_count() {
     let (script_len, opcode_count) = contract_metrics("chess_pawn", pawn_contract_path(), &pawn_constructor_args());
-    eprintln!(
-        "chess_pawn script_len={} opcode_count={}",
-        script_len,
-        opcode_count
-    );
+    eprintln!("chess_pawn script_len={} opcode_count={}", script_len, opcode_count);
     assert!(script_len > 0);
 }
 
 #[test]
 fn chess_mux_reports_script_size_and_opcode_count() {
     let (script_len, opcode_count) = contract_metrics("chess_mux", mux_contract_path(), &mux_constructor_args());
-    eprintln!(
-        "chess_mux script_len={} opcode_count={}",
-        script_len,
-        opcode_count
-    );
+    eprintln!("chess_mux script_len={} opcode_count={}", script_len, opcode_count);
     assert!(script_len > 0);
 }
 
@@ -76,22 +68,14 @@ fn chess_workers_report_script_size_and_opcode_count() {
 #[test]
 fn chess_player_reports_script_size_and_opcode_count() {
     let (script_len, opcode_count) = contract_metrics("chess_player", PLAYER_PATH, &player_constructor_args());
-    eprintln!(
-        "chess_player script_len={} opcode_count={}",
-        script_len,
-        opcode_count
-    );
+    eprintln!("chess_player script_len={} opcode_count={}", script_len, opcode_count);
     assert!(script_len > 0);
 }
 
 #[test]
 fn chess_league_reports_script_size_and_opcode_count() {
     let (script_len, opcode_count) = contract_metrics("chess_league", LEAGUE_PATH, &league_constructor_args());
-    eprintln!(
-        "chess_league script_len={} opcode_count={}",
-        script_len,
-        opcode_count
-    );
+    eprintln!("chess_league script_len={} opcode_count={}", script_len, opcode_count);
     assert!(script_len > 0);
 }
 
@@ -270,8 +254,8 @@ fn league_constructor_args() -> Vec<Expr<'static>> {
 
 fn contract_metrics(name: &str, path: &str, args: &[Expr<'static>]) -> (usize, usize) {
     let source = load_contract_source(path);
-    let compiled =
-        compile_contract(&source, args, CompileOptions::default()).unwrap_or_else(|err| panic!("{name} contract should compile: {err}"));
+    let compiled = compile_contract(&source, args, CompileOptions::default())
+        .unwrap_or_else(|err| panic!("{name} contract should compile: {err}"));
     let script_len = compiled.script.len();
     let opcode_count = opcode_count(&compiled.script);
     (script_len, opcode_count)
