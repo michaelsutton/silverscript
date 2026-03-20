@@ -7,6 +7,7 @@ contract Player(
     byte[32] init_routes_commitment,
     byte[32] init_owner,
     byte[32] init_player_id,
+    int init_open_games,
     int init_rating,
     int init_games,
     int init_wins,
@@ -44,6 +45,7 @@ contract Player(
     byte[32] routes_commitment = init_routes_commitment;
     byte[32] owner = init_owner;
     byte[32] player_id = init_player_id;
+    int open_games = init_open_games;
     int rating = init_rating;
     int games = init_games;
     int wins = init_wins;
@@ -89,6 +91,7 @@ contract Player(
             routes_commitment: routes_commitment,
             owner: owner,
             player_id: player_id,
+            open_games: open_games + 1,
             rating: rating,
             games: games,
             wins: wins,
@@ -103,6 +106,7 @@ contract Player(
             routes_commitment: other.routes_commitment,
             owner: other.owner,
             player_id: other.player_id,
+            open_games: other.open_games + 1,
             rating: other.rating,
             games: other.games,
             wins: other.wins,
@@ -181,5 +185,12 @@ contract Player(
 
         byte[32] self_ref = blake2b(owner + player_id);
         require(self_ref == leader.white_player || self_ref == leader.black_player);
+    }
+
+    entrypoint function retire(sig owner_sig, pubkey owner_pk) {
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+        require(open_games == 0);
+        require(OpAuthOutputCount(this.activeInputIndex) == 0);
     }
 }
