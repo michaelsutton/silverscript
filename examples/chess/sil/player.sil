@@ -1,0 +1,38 @@
+pragma silverscript ^0.1.0;
+
+contract Player(
+    byte[32] init_league_hash,
+    byte[32] init_owner,
+    byte[32] init_player_id,
+    int init_rating,
+    int init_games,
+    int init_wins,
+    int init_draws,
+    int init_losses
+) {
+    // `Player` is intentionally minimal for now: a persistent score shell with
+    // no game-entry or settlement logic yet.
+    byte[32] league_hash = init_league_hash;
+    byte[32] owner = init_owner;
+    byte[32] player_id = init_player_id;
+    int rating = init_rating;
+    int games = init_games;
+    int wins = init_wins;
+    int draws = init_draws;
+    int losses = init_losses;
+
+    entrypoint function noop(int self_output_idx) {
+        State next_self = {
+            league_hash: league_hash,
+            owner: owner,
+            player_id: player_id,
+            rating: rating,
+            games: games,
+            wins: wins,
+            draws: draws,
+            losses: losses
+        };
+
+        validateOutputState(self_output_idx, next_self);
+    }
+}

@@ -1,0 +1,92 @@
+pragma silverscript ^0.1.0;
+
+contract League(
+    byte[32] init_league_hash,
+    byte[32] init_player_hash,
+    int init_base_rating,
+    byte[32] init_admin
+) {
+    struct PlayerState {
+        byte[32] league_hash;
+        byte[32] owner;
+        byte[32] player_id;
+        int rating;
+        int games;
+        int wins;
+        int draws;
+        int losses;
+    }
+
+    // Each live League UTXO is one immutable registration lane. A registration
+    // spend always:
+    // 1. recreates the same League lane
+    // 2. emits exactly one fresh Player
+    //
+    // Unique player ids come from the spent registration outpoint:
+    // blake2b("LeaguePlayerId" || outpoint_txid || outpoint_index_le32)
+    //
+    // This avoids any mutable next_player_id counter and allows many
+    // registration lanes to operate in parallel.
+    byte[32] league_hash = init_league_hash;
+    byte[32] player_hash = init_player_hash;
+    int base_rating = init_base_rating;
+    byte[32] admin = init_admin;
+
+    entrypoint function register_player(
+        sig owner_sig,
+        pubkey owner_pk,
+        byte[] player_prefix,
+        byte[] player_suffix
+    ) {
+        // The owner key being installed into the fresh Player signs once here.
+        // Uniqueness does not come from the key; it comes from the spent
+        // registration outpoint, but this signature proves the account is
+        // created for a willing owner.
+        require(checkSig(owner_sig, owner_pk));
+
+        byte[32] owner = blake2b(owner_pk);
+        byte[32] spent_outpoint_txid = OpOutpointTxId(this.activeInputIndex);
+        byte[4] spent_outpoint_index = byte[4](OpOutpointIndex(this.activeInputIndex));
+        byte[] player_id_domain = byte[]("LeaguePlayerId");
+        byte[32] player_id = blake2b(player_id_domain + spent_outpoint_txid + spent_outpoint_index);
+
+        State next_league = {
+            league_hash: league_hash,
+            player_hash: player_hash,
+            base_rating: base_rating,
+            admin: admin
+        };
+
+        PlayerState next_player = {
+            league_hash: league_hash,
+            owner: owner,
+            player_id: player_id,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0
+        };
+
+        // Registration spends are fixed-shape: recreate this lane and create
+        // one Player.
+        require(OpAuthOutputCount(this.activeInputIndex) == 2);
+
+        // Auth output 0 recreates the immutable registration lane verbatim.
+        validateOutputState(OpAuthOutputIdx(this.activeInputIndex, 0), next_league);
+
+        // Auth output 1 is the freshly minted Player, validated against the
+        // foreign Player state layout and template hash.
+        validateOutputStateWithTemplate(
+            OpAuthOutputIdx(this.activeInputIndex, 1),
+            next_player,
+            player_prefix,
+            player_suffix,
+            player_hash
+        );
+    }
+
+    // TODO:
+    // - league shutdown / lane retirement path under `admin`
+    // - optional registration policies (fee, allowlist, season gating)
+}

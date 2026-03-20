@@ -59,6 +59,9 @@ struct GameStateArgs<'a> {
     draw_state: i64,
 }
 
+const LEAGUE_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/league.sil"));
+const PLAYER_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/player.sil"));
+
 struct MoveArgs {
     from_x: i64,
     from_y: i64,
@@ -4512,4 +4515,115 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
     );
 
     run_mux_timeout("mux_timeout", &mux0, &mux_terminal, covenant_id, &black, 0, 600);
+}
+
+#[test]
+fn league_registers_a_real_player_contract() {
+    let owner = player_from_seed(7);
+
+    let league_hash = vec![0x11u8; 32];
+    let admin = vec![0x33u8; 32];
+    let base_rating = 1200i64;
+    let covenant_id = Hash::from_bytes([0x66u8; 32]);
+    let player_id_domain = b"LeaguePlayerId".to_vec();
+
+    let player_template = compile_contract(
+        PLAYER_SOURCE,
+        &[
+            Expr::bytes(league_hash.clone()),
+            Expr::bytes(vec![0x44u8; 32]),
+            Expr::bytes(vec![0x55u8; 32]),
+            Expr::int(900),
+            Expr::int(1),
+            Expr::int(2),
+            Expr::int(3),
+            Expr::int(4),
+        ],
+        CompileOptions::default(),
+    )
+    .expect("compile player template succeeds");
+    let layout = player_template.state_layout;
+    let player_prefix = player_template.script[..layout.start].to_vec();
+    let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
+    let player_hash =
+        Blake2bParams::new().hash_length(32).to_state().update(&player_prefix).update(&player_suffix).finalize().as_bytes().to_vec();
+
+    let league = compile_contract(
+        LEAGUE_SOURCE,
+        &[
+            Expr::bytes(league_hash.clone()),
+            Expr::bytes(player_hash.clone()),
+            Expr::int(base_rating),
+            Expr::bytes(admin.clone()),
+        ],
+        CompileOptions::default(),
+    )
+    .expect("compile league succeeds");
+
+    let league_input = TransactionInput {
+        previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([0xabu8; 32]), index: 7 },
+        signature_script: vec![],
+        sequence: 0,
+        sig_op_count: 1,
+    };
+
+    let player_id = Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(&player_id_domain)
+        .update(&[0xabu8; 32])
+        .update(&7u32.to_le_bytes())
+        .finalize()
+        .as_bytes()
+        .to_vec();
+
+    let registered_player = compile_contract(
+        PLAYER_SOURCE,
+        &[
+            Expr::bytes(league_hash.clone()),
+            Expr::bytes(owner.pubkey_hash.clone()),
+            Expr::bytes(player_id),
+            Expr::int(base_rating),
+            Expr::int(0),
+            Expr::int(0),
+            Expr::int(0),
+            Expr::int(0),
+        ],
+        CompileOptions::default(),
+    )
+    .expect("compile registered player succeeds");
+
+    let placeholder_sigscript = entry_sigscript(
+        &league,
+        "register_player",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(owner.pubkey_bytes.clone()),
+            Expr::bytes(player_prefix.clone()),
+            Expr::bytes(player_suffix.clone()),
+        ],
+    );
+    let outputs = vec![covenant_output(&league, 0, covenant_id), covenant_output(&registered_player, 0, covenant_id)];
+    let entries = vec![covenant_utxo(&league, covenant_id)];
+    let mut tx = Transaction::new(1, vec![league_input], outputs, 0, Default::default(), 0, vec![]);
+    tx.inputs[0].signature_script = placeholder_sigscript;
+
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &owner);
+    tx.inputs[0].signature_script = entry_sigscript(
+        &league,
+        "register_player",
+        vec![Expr::bytes(sig), Expr::bytes(owner.pubkey_bytes.clone()), Expr::bytes(player_prefix), Expr::bytes(player_suffix)],
+    );
+
+    let register_result = execute_input_with_covenants(tx, entries, 0);
+    assert!(register_result.is_ok(), "league register_player runtime failed: {}", register_result.unwrap_err());
+
+    let player_sigscript = entry_sigscript(&registered_player, "noop", vec![Expr::int(0)]);
+    let player_input = tx_input(0, player_sigscript);
+    let player_output =
+        TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&registered_player.script), covenant: None };
+    let player_tx = Transaction::new(1, vec![player_input], vec![player_output], 0, Default::default(), 0, vec![]);
+    let player_utxo = UtxoEntry::new(1_500, pay_to_script_hash_script(&registered_player.script), 0, false, None);
+    let player_result = execute_input_with_covenants(player_tx, vec![player_utxo], 0);
+    assert!(player_result.is_ok(), "registered Player.noop runtime failed: {}", player_result.unwrap_err());
 }
