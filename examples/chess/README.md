@@ -73,6 +73,7 @@ here in the same change that updates their status.
 
 ### Off-Chain Enforcement
 
+- [✓] Add an initial off-chain Rust orchestrator that can register players, exchange invites and settlement requests, and drive real local tx execution for short games.
 - [ ] Implement an off-chain Rust wrapper for the on-chain logic so a player can enforce classical rules by challenging and proving wrong behavior.
 - [ ] Base that wrapper on a well-established Rust chess crate as the main rules engine and source of truth.
 - [ ] Import a strong chess benchmark or test suite with many complex games and verify them against this protocol.
