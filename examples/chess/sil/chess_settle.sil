@@ -19,6 +19,7 @@ contract ChessSettle(
         byte[32] routes_commitment;
         byte[32] owner;
         byte[32] player_id;
+        int open_games;
         int rating;
         int games;
         int wins;
@@ -66,6 +67,9 @@ contract ChessSettle(
             black_draws = black_draws + 1;
         }
 
+        require(white_in.open_games > 0);
+        require(black_in.open_games > 0);
+
         PlayerState next_white = {
             league_hash: white_in.league_hash,
             player_hash: white_in.player_hash,
@@ -73,6 +77,7 @@ contract ChessSettle(
             routes_commitment: white_in.routes_commitment,
             owner: white_in.owner,
             player_id: white_in.player_id,
+            open_games: white_in.open_games - 1,
             rating: white_in.rating,
             games: white_in.games + 1,
             wins: white_wins,
@@ -87,6 +92,7 @@ contract ChessSettle(
             routes_commitment: black_in.routes_commitment,
             owner: black_in.owner,
             player_id: black_in.player_id,
+            open_games: black_in.open_games - 1,
             rating: black_in.rating,
             games: black_in.games + 1,
             wins: black_wins,

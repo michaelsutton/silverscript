@@ -69,6 +69,7 @@ struct PlayerStateArgs<'a> {
     routes_commitment: &'a [u8],
     owner_hash: &'a [u8],
     player_id: &'a [u8],
+    open_games: i64,
     rating: i64,
     games: i64,
     wins: i64,
@@ -132,6 +133,7 @@ fn player_template_hash(fix: &MuxChessFixture) -> Vec<u8> {
             routes_commitment: &[0x33u8; 32],
             owner_hash: &[0x44u8; 32],
             player_id: &[0x55u8; 32],
+            open_games: 0,
             rating: 1200,
             games: 0,
             wins: 0,
@@ -314,6 +316,7 @@ fn compile_player_state(source: &'static str, state: PlayerStateArgs<'_>) -> Com
         Expr::bytes(state.routes_commitment.to_vec()),
         Expr::bytes(state.owner_hash.to_vec()),
         Expr::bytes(state.player_id.to_vec()),
+        Expr::int(state.open_games),
         Expr::int(state.rating),
         Expr::int(state.games),
         Expr::int(state.wins),
@@ -424,6 +427,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             routes_commitment: &routes_commitment,
             owner_hash: &[0x55u8; 32],
             player_id: &[0x56u8; 32],
+            open_games: 0,
             rating: base_rating,
             games: 0,
             wins: 0,
@@ -449,6 +453,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
+            open_games: 1,
             rating: base_rating,
             games: 10,
             wins: 6,
@@ -465,6 +470,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
+            open_games: 1,
             rating: base_rating,
             games: 10,
             wins: 2,
@@ -501,6 +507,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
+            open_games: 0,
             rating: base_rating,
             games: expected_white.0,
             wins: expected_white.1,
@@ -517,6 +524,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
+            open_games: 0,
             rating: base_rating,
             games: expected_black.0,
             wins: expected_black.1,
@@ -4819,6 +4827,7 @@ fn league_registers_a_real_player_contract() {
             Expr::bytes(routes_commitment.clone()),
             Expr::bytes(vec![0x55u8; 32]),
             Expr::bytes(vec![0x77u8; 32]),
+            Expr::int(0),
             Expr::int(900),
             Expr::int(1),
             Expr::int(2),
@@ -4874,6 +4883,7 @@ fn league_registers_a_real_player_contract() {
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &player_id,
+            open_games: 0,
             rating: base_rating,
             games: 0,
             wins: 0,
@@ -4929,6 +4939,7 @@ fn players_can_start_a_real_mux_game() {
             routes_commitment: &routes_commitment,
             owner_hash: &[0x55u8; 32],
             player_id: &[0x56u8; 32],
+            open_games: 0,
             rating: base_rating,
             games: 0,
             wins: 0,
@@ -4957,6 +4968,7 @@ fn players_can_start_a_real_mux_game() {
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
+            open_games: 0,
             rating: base_rating,
             games: 0,
             wins: 0,
@@ -4973,6 +4985,41 @@ fn players_can_start_a_real_mux_game() {
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
+            open_games: 0,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+    let next_white_player = compile_player_state(
+        PLAYER_SOURCE,
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &white.owner_hash,
+            player_id: &white.player_id,
+            open_games: 1,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+    let next_black_player = compile_player_state(
+        PLAYER_SOURCE,
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &black.owner_hash,
+            player_id: &black.player_id,
+            open_games: 1,
             rating: base_rating,
             games: 0,
             wins: 0,
@@ -5025,8 +5072,8 @@ fn players_can_start_a_real_mux_game() {
     );
 
     let outputs = vec![
-        covenant_output(&white_player, 0, covenant_id),
-        covenant_output(&black_player, 0, covenant_id),
+        covenant_output(&next_white_player, 0, covenant_id),
+        covenant_output(&next_black_player, 0, covenant_id),
         covenant_output(&opening_mux, 0, covenant_id),
     ];
     let entries = vec![covenant_utxo(&white_player, covenant_id), covenant_utxo(&black_player, covenant_id)];
@@ -5088,4 +5135,78 @@ fn terminal_mux_settles_black_win_back_into_players() {
 #[test]
 fn terminal_mux_settles_draw_back_into_players() {
     assert_terminal_mux_settlement(3, (11, 6, 3, 2), (11, 2, 3, 6));
+}
+
+#[test]
+fn player_can_retire_with_no_open_games() {
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+    let owner = player_from_seed(0x31);
+    let covenant_id = Hash::from_bytes([0x73u8; 32]);
+
+    let player = compile_player_state(
+        PLAYER_SOURCE,
+        PlayerStateArgs {
+            league_hash: &[0x41u8; 32],
+            player_hash: &player_template_hash(&fix),
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &owner.owner_hash,
+            player_id: &[0x51u8; 32],
+            open_games: 0,
+            rating: 1200,
+            games: 12,
+            wins: 6,
+            draws: 3,
+            losses: 3,
+        },
+    );
+
+    let placeholder = entry_sigscript(&player, "retire", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(owner.pubkey_bytes.clone())]);
+    let entries = vec![covenant_utxo(&player, covenant_id)];
+    let mut tx = Transaction::new(1, vec![tx_input(0, placeholder)], vec![], 0, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &owner);
+    tx.inputs[0].signature_script =
+        entry_sigscript(&player, "retire", vec![Expr::bytes(sig), Expr::bytes(owner.pubkey_bytes.clone())]);
+
+    let retire_result = execute_input_with_covenants(tx, entries, 0);
+    assert!(retire_result.is_ok(), "Player.retire runtime failed: {}", retire_result.unwrap_err());
+}
+
+#[test]
+fn player_cannot_retire_with_open_games() {
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+    let owner = player_from_seed(0x32);
+    let covenant_id = Hash::from_bytes([0x74u8; 32]);
+
+    let player = compile_player_state(
+        PLAYER_SOURCE,
+        PlayerStateArgs {
+            league_hash: &[0x42u8; 32],
+            player_hash: &player_template_hash(&fix),
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &owner.owner_hash,
+            player_id: &[0x52u8; 32],
+            open_games: 1,
+            rating: 1200,
+            games: 12,
+            wins: 6,
+            draws: 3,
+            losses: 3,
+        },
+    );
+
+    let placeholder = entry_sigscript(&player, "retire", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(owner.pubkey_bytes.clone())]);
+    let entries = vec![covenant_utxo(&player, covenant_id)];
+    let mut tx = Transaction::new(1, vec![tx_input(0, placeholder)], vec![], 0, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &owner);
+    tx.inputs[0].signature_script =
+        entry_sigscript(&player, "retire", vec![Expr::bytes(sig), Expr::bytes(owner.pubkey_bytes.clone())]);
+
+    let retire_result = execute_input_with_covenants(tx, entries, 0);
+    assert!(retire_result.is_err(), "Player.retire should reject when open_games > 0");
 }

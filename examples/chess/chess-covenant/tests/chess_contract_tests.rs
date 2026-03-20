@@ -248,6 +248,7 @@ fn player_constructor_args() -> Vec<Expr<'static>> {
         Expr::bytes(sample_routes_commitment()),
         Expr::bytes(vec![0x44u8; 32]),
         Expr::bytes(vec![0x55u8; 32]),
+        Expr::int(0),
         Expr::int(1200),
         Expr::int(7),
         Expr::int(4),

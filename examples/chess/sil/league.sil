@@ -15,6 +15,7 @@ contract League(
         byte[32] routes_commitment;
         byte[32] owner;
         byte[32] player_id;
+        int open_games;
         int rating;
         int games;
         int wins;
@@ -73,6 +74,7 @@ contract League(
             routes_commitment: routes_commitment,
             owner: owner,
             player_id: player_id,
+            open_games: 0,
             rating: base_rating,
             games: 0,
             wins: 0,
