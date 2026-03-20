@@ -3,7 +3,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessMux(
     byte[32] init_mux_hash,
-    byte[256] init_route_hashes,
+    byte[288] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -25,7 +25,7 @@ contract ChessMux(
     // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
     // - draw_state: 3 normal, 1 draw claimed, 2 counterplay step, 4 white offered draw, 5 black offered draw
     byte[32] mux_hash = init_mux_hash;
-    byte[256] route_hashes = init_route_hashes;
+    byte[288] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -38,6 +38,13 @@ contract ChessMux(
     int pending_promo = init_pending_promo;
     int recent_castle = init_recent_castle;
     int draw_state = init_draw_state;
+
+    struct SettleState {
+        byte[32] player_hash;
+        byte[32] white_player;
+        byte[32] black_player;
+        int status;
+    }
 
     entrypoint function route(
         int selector,
@@ -69,7 +76,7 @@ contract ChessMux(
         }
         require(checkSig(s, pk));
 
-        // route_hashes layout by selector:
+        // route_hashes layout:
         // 0  -> pawn
         // 1  -> knight
         // 2  -> vert
@@ -78,7 +85,7 @@ contract ChessMux(
         // 5  -> king
         // 6  -> castle
         // 7  -> castle challenge prep
-        // 8  -> mux
+        // 8  -> blake2b(settle_hash || player_hash)
         require(selector >= PAWN && selector <= MUX);
 
         // termination_action intent:
@@ -90,7 +97,8 @@ contract ChessMux(
         require(termination_action >= CLEAR && termination_action <= ACCEPT);
 
         // selector -> target contract hash
-        byte[] all_route_hashes = route_hashes + mux_hash;
+        byte[] move_route_hashes = route_hashes.slice(0, 256);
+        byte[] all_route_hashes = move_route_hashes + mux_hash;
         int hash_start = selector * 32;
         int hash_end = hash_start + 32;
         byte[32] target_hash = all_route_hashes.slice(hash_start, hash_end);
@@ -255,6 +263,27 @@ contract ChessMux(
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         validateOutputState(OpAuthOutputIdx(this.activeInputIndex, 0), next_state);
+    }
+
+    entrypoint function settle(byte[32] player_hash, byte[] settle_prefix, byte[] settle_suffix) {
+        require(status != LIVE);
+        byte[32] settle_hash = blake2b(settle_prefix + settle_suffix);
+        require(blake2b(settle_hash + player_hash) == route_hashes.slice(256, 288));
+
+        SettleState next_state = {
+            player_hash: player_hash,
+            white_player: white_player,
+            black_player: black_player,
+            status: status,
+        };
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        validateOutputStateWithTemplate(
+            OpAuthOutputIdx(this.activeInputIndex, 0),
+            next_state,
+            settle_prefix,
+            settle_suffix,
+            settle_hash
+        );
     }
 
 }

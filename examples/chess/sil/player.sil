@@ -13,23 +13,9 @@ contract Player(
     int init_draws,
     int init_losses
 ) {
-    struct PlayerState {
-        byte[32] league_hash;
-        byte[32] player_hash;
-        byte[32] mux_hash;
-        byte[32] routes_commitment;
-        byte[32] owner;
-        byte[32] player_id;
-        int rating;
-        int games;
-        int wins;
-        int draws;
-        int losses;
-    }
-
     struct GameState {
         byte[32] mux_hash;
-        byte[256] route_hashes;
+        byte[288] route_hashes;
         byte[32] white_player;
         byte[32] black_player;
         byte[64] board;
@@ -44,7 +30,15 @@ contract Player(
         int draw_state;
     }
 
+    struct SettleState {
+        byte[32] player_hash;
+        byte[32] white_player;
+        byte[32] black_player;
+        int status;
+    }
+
     byte[32] league_hash = init_league_hash;
+    // Template hash of the Player contract, not the player's league identity.
     byte[32] player_hash = init_player_hash;
     byte[32] mux_hash = init_mux_hash;
     byte[32] routes_commitment = init_routes_commitment;
@@ -62,7 +56,7 @@ contract Player(
         int self_side,
         int player_prefix_len,
         int player_suffix_len,
-        byte[256] route_hashes,
+        byte[288] route_hashes,
         byte[] mux_prefix,
         byte[] mux_suffix
     ) {
@@ -76,7 +70,7 @@ contract Player(
         require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
         int other_input_idx = OpCovInputIdx(cov_id, 1);
 
-        PlayerState other = readInputStateWithTemplate(other_input_idx, player_prefix_len, player_suffix_len, player_hash);
+        State other = readInputStateWithTemplate(other_input_idx, player_prefix_len, player_suffix_len, player_hash);
         require(other.player_id != player_id);
 
         byte[32] self_ref = blake2b(owner + player_id);
@@ -163,10 +157,29 @@ contract Player(
         // The delegate path still reads the leader so it independently verifies
         // that input 0 is really another Player under `player_hash`, not just
         // some arbitrary covenant peer in the same shared covenant group.
-        PlayerState leader = readInputStateWithTemplate(leader_input_idx, player_prefix_len, player_suffix_len, player_hash);
+        State leader = readInputStateWithTemplate(leader_input_idx, player_prefix_len, player_suffix_len, player_hash);
         // The leader-side shape and output validation already force the peer to
         // be a distinct Player, but we keep this check so the delegate path
         // still exercises a meaningful foreign-input read.
         require(leader.player_id != player_id);
+    }
+
+    entrypoint function delegate_settle(int settle_prefix_len, int settle_suffix_len, byte[32] settle_hash) {
+        byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(cov_id) == 3);
+        require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);
+        require(OpAuthOutputCount(this.activeInputIndex) == 0);
+
+        int leader_input_idx = OpCovInputIdx(cov_id, 0);
+        SettleState leader = readInputStateWithTemplate(leader_input_idx, settle_prefix_len, settle_suffix_len, settle_hash);
+
+        // Settlement is driven by a terminal settle worker state, not by a
+        // player signature, so the delegate only checks that the leader is
+        // really a terminal settlement contract that references this player.
+        require(leader.status != 0);
+        require(leader.player_hash == player_hash);
+
+        byte[32] self_ref = blake2b(owner + player_id);
+        require(self_ref == leader.white_player || self_ref == leader.black_player);
     }
 }

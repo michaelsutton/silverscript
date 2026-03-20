@@ -1,0 +1,113 @@
+pragma silverscript ^0.1.0;
+// @consts constants.sil
+
+contract ChessSettle(
+    byte[32] init_player_hash,
+    byte[32] init_white_player,
+    byte[32] init_black_player,
+    int init_status,
+) {
+    byte[32] player_hash = init_player_hash;
+    byte[32] white_player = init_white_player;
+    byte[32] black_player = init_black_player;
+    int status = init_status;
+
+    struct PlayerState {
+        byte[32] league_hash;
+        byte[32] player_hash;
+        byte[32] mux_hash;
+        byte[32] routes_commitment;
+        byte[32] owner;
+        byte[32] player_id;
+        int rating;
+        int games;
+        int wins;
+        int draws;
+        int losses;
+    }
+
+    entrypoint function settle(
+        byte[] player_prefix,
+        byte[] player_suffix
+    ) {
+        require(status != LIVE);
+        int player_prefix_len = player_prefix.length;
+        int player_suffix_len = player_suffix.length;
+
+        byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(cov_id) == 3);
+        require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
+
+        int white_input_idx = OpCovInputIdx(cov_id, 1);
+        int black_input_idx = OpCovInputIdx(cov_id, 2);
+
+        PlayerState white_in = readInputStateWithTemplate(white_input_idx, player_prefix_len, player_suffix_len, player_hash);
+        PlayerState black_in = readInputStateWithTemplate(black_input_idx, player_prefix_len, player_suffix_len, player_hash);
+
+        require(blake2b(white_in.owner + white_in.player_id) == white_player);
+        require(blake2b(black_in.owner + black_in.player_id) == black_player);
+
+        int white_wins = white_in.wins;
+        int white_draws = white_in.draws;
+        int white_losses = white_in.losses;
+        int black_wins = black_in.wins;
+        int black_draws = black_in.draws;
+        int black_losses = black_in.losses;
+
+        if (status == WWIN) {
+            white_wins = white_wins + 1;
+            black_losses = black_losses + 1;
+        } else if (status == BWIN) {
+            black_wins = black_wins + 1;
+            white_losses = white_losses + 1;
+        } else {
+            require(status == DRAW);
+            white_draws = white_draws + 1;
+            black_draws = black_draws + 1;
+        }
+
+        PlayerState next_white = {
+            league_hash: white_in.league_hash,
+            player_hash: white_in.player_hash,
+            mux_hash: white_in.mux_hash,
+            routes_commitment: white_in.routes_commitment,
+            owner: white_in.owner,
+            player_id: white_in.player_id,
+            rating: white_in.rating,
+            games: white_in.games + 1,
+            wins: white_wins,
+            draws: white_draws,
+            losses: white_losses
+        };
+
+        PlayerState next_black = {
+            league_hash: black_in.league_hash,
+            player_hash: black_in.player_hash,
+            mux_hash: black_in.mux_hash,
+            routes_commitment: black_in.routes_commitment,
+            owner: black_in.owner,
+            player_id: black_in.player_id,
+            rating: black_in.rating,
+            games: black_in.games + 1,
+            wins: black_wins,
+            draws: black_draws,
+            losses: black_losses
+        };
+
+        require(OpAuthOutputCount(this.activeInputIndex) == 2);
+        validateOutputStateWithTemplate(
+            OpAuthOutputIdx(this.activeInputIndex, 0),
+            next_white,
+            player_prefix,
+            player_suffix,
+            player_hash
+        );
+        validateOutputStateWithTemplate(
+            OpAuthOutputIdx(this.activeInputIndex, 1),
+            next_black,
+            player_prefix,
+            player_suffix,
+            player_hash
+        );
+    }
+}
