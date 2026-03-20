@@ -6,7 +6,7 @@ use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
 use chess_covenant::{
     castle_challenge_contract_path, castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path,
-    knight_contract_path, load_contract_source, mux_contract_path, pawn_contract_path, vert_contract_path,
+    knight_contract_path, load_contract_source, mux_contract_path, pawn_contract_path, settle_contract_path, vert_contract_path,
 };
 
 const LEAGUE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/league.sil");
@@ -35,15 +35,25 @@ fn isolated_rook_path_loop_bound_sweep() {
 
 #[test]
 fn chess_pawn_reports_script_size_and_opcode_count() {
-    let (script_len, opcode_count) = contract_metrics("chess_pawn", pawn_contract_path(), &pawn_constructor_args());
-    eprintln!("chess_pawn script_len={} opcode_count={}", script_len, opcode_count);
+    let (script_len, instruction_count, charged_op_count) =
+        contract_metrics("chess_pawn", pawn_contract_path(), &pawn_constructor_args());
+    eprintln!("chess_pawn script_len={} instruction_count={} charged_op_count={}", script_len, instruction_count, charged_op_count);
     assert!(script_len > 0);
 }
 
 #[test]
 fn chess_mux_reports_script_size_and_opcode_count() {
-    let (script_len, opcode_count) = contract_metrics("chess_mux", mux_contract_path(), &mux_constructor_args());
-    eprintln!("chess_mux script_len={} opcode_count={}", script_len, opcode_count);
+    let (script_len, instruction_count, charged_op_count) =
+        contract_metrics("chess_mux", mux_contract_path(), &mux_constructor_args());
+    eprintln!("chess_mux script_len={} instruction_count={} charged_op_count={}", script_len, instruction_count, charged_op_count);
+    assert!(script_len > 0);
+}
+
+#[test]
+fn chess_settle_reports_script_size_and_opcode_count() {
+    let (script_len, instruction_count, charged_op_count) =
+        contract_metrics("chess_settle", settle_contract_path(), &settle_constructor_args());
+    eprintln!("chess_settle script_len={} instruction_count={} charged_op_count={}", script_len, instruction_count, charged_op_count);
     assert!(script_len > 0);
 }
 
@@ -60,22 +70,22 @@ fn chess_workers_report_script_size_and_opcode_count() {
     ];
 
     for (name, path) in workers {
-        let (script_len, opcode_count) = contract_metrics(name, path, &pawn_constructor_args());
-        eprintln!("{name} script_len={} opcode_count={}", script_len, opcode_count);
+        let (script_len, instruction_count, charged_op_count) = contract_metrics(name, path, &pawn_constructor_args());
+        eprintln!("{name} script_len={} instruction_count={} charged_op_count={}", script_len, instruction_count, charged_op_count);
     }
 }
 
 #[test]
 fn chess_player_reports_script_size_and_opcode_count() {
-    let (script_len, opcode_count) = contract_metrics("chess_player", PLAYER_PATH, &player_constructor_args());
-    eprintln!("chess_player script_len={} opcode_count={}", script_len, opcode_count);
+    let (script_len, instruction_count, charged_op_count) = contract_metrics("chess_player", PLAYER_PATH, &player_constructor_args());
+    eprintln!("chess_player script_len={} instruction_count={} charged_op_count={}", script_len, instruction_count, charged_op_count);
     assert!(script_len > 0);
 }
 
 #[test]
 fn chess_league_reports_script_size_and_opcode_count() {
-    let (script_len, opcode_count) = contract_metrics("chess_league", LEAGUE_PATH, &league_constructor_args());
-    eprintln!("chess_league script_len={} opcode_count={}", script_len, opcode_count);
+    let (script_len, instruction_count, charged_op_count) = contract_metrics("chess_league", LEAGUE_PATH, &league_constructor_args());
+    eprintln!("chess_league script_len={} instruction_count={} charged_op_count={}", script_len, instruction_count, charged_op_count);
     assert!(script_len > 0);
 }
 
@@ -85,6 +95,7 @@ fn chess_all_contracts_report_script_size_and_opcode_count() {
         ("chess_league", LEAGUE_PATH, league_constructor_args()),
         ("chess_player", PLAYER_PATH, player_constructor_args()),
         ("chess_mux", mux_contract_path(), mux_constructor_args()),
+        ("chess_settle", settle_contract_path(), settle_constructor_args()),
         ("chess_pawn", pawn_contract_path(), pawn_constructor_args()),
         ("chess_knight", knight_contract_path(), pawn_constructor_args()),
         ("chess_vert", vert_contract_path(), pawn_constructor_args()),
@@ -96,8 +107,8 @@ fn chess_all_contracts_report_script_size_and_opcode_count() {
     ];
 
     for (name, path, args) in reports {
-        let (script_len, opcode_count) = contract_metrics(name, path, &args);
-        eprintln!("{name} script_len={} opcode_count={}", script_len, opcode_count);
+        let (script_len, instruction_count, charged_op_count) = contract_metrics(name, path, &args);
+        eprintln!("{name} script_len={} instruction_count={} charged_op_count={}", script_len, instruction_count, charged_op_count);
     }
 }
 
@@ -171,8 +182,8 @@ fn standard_board() -> Vec<u8> {
 }
 
 fn sample_route_hashes() -> Vec<u8> {
-    let mut route_hashes = Vec::with_capacity(32 * 8);
-    for byte in 0x12u8..=0x19u8 {
+    let mut route_hashes = Vec::with_capacity(32 * 9);
+    for byte in 0x12u8..=0x1au8 {
         route_hashes.extend_from_slice(&[byte; 32]);
     }
     route_hashes
@@ -225,6 +236,10 @@ fn mux_constructor_args() -> Vec<Expr<'static>> {
     ]
 }
 
+fn settle_constructor_args() -> Vec<Expr<'static>> {
+    vec![Expr::bytes(vec![0x31u8; 32]), Expr::bytes(vec![0x21u8; 32]), Expr::bytes(vec![0x22u8; 32]), Expr::int(1)]
+}
+
 fn player_constructor_args() -> Vec<Expr<'static>> {
     vec![
         Expr::bytes(vec![0x11u8; 32]),
@@ -252,17 +267,28 @@ fn league_constructor_args() -> Vec<Expr<'static>> {
     ]
 }
 
-fn contract_metrics(name: &str, path: &str, args: &[Expr<'static>]) -> (usize, usize) {
+fn contract_metrics(name: &str, path: &str, args: &[Expr<'static>]) -> (usize, usize, usize) {
     let source = load_contract_source(path);
     let compiled = compile_contract(&source, args, CompileOptions::default())
         .unwrap_or_else(|err| panic!("{name} contract should compile: {err}"));
     let script_len = compiled.script.len();
-    let opcode_count = opcode_count(&compiled.script);
-    (script_len, opcode_count)
+    let (instruction_count, charged_op_count) = script_op_counts(&compiled.script);
+    (script_len, instruction_count, charged_op_count)
 }
 
-fn opcode_count(script: &[u8]) -> usize {
-    parse_script::<PopulatedTransaction<'static>, SigHashReusedValuesUnsync>(script).count()
+fn script_op_counts(script: &[u8]) -> (usize, usize) {
+    let mut instruction_count = 0;
+    let mut charged_op_count = 0;
+
+    for opcode in parse_script::<PopulatedTransaction<'static>, SigHashReusedValuesUnsync>(script) {
+        let opcode = opcode.expect("compiled script should parse");
+        instruction_count += 1;
+        if !opcode.is_push_opcode() {
+            charged_op_count += 1;
+        }
+    }
+
+    (instruction_count, charged_op_count)
 }
 
 fn blake2b(data: Vec<u8>) -> Vec<u8> {

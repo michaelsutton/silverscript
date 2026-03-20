@@ -110,6 +110,10 @@ pub fn mux_contract_path() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_mux.sil")
 }
 
+pub fn settle_contract_path() -> &'static str {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_settle.sil")
+}
+
 pub fn pawn_contract_path() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_pawn.sil")
 }

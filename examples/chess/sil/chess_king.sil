@@ -3,7 +3,7 @@ pragma silverscript ^0.1.0;
 
 contract ChessKing(
     byte[32] init_mux_hash,
-    byte[256] init_route_hashes,
+    byte[288] init_route_hashes,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -22,7 +22,7 @@ contract ChessKing(
     // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
     // - draw_state: 3 normal, 1 draw claimed, 2 counterplay step, 4 white offered draw, 5 black offered draw
     byte[32] mux_hash = init_mux_hash;
-    byte[256] route_hashes = init_route_hashes;
+    byte[288] route_hashes = init_route_hashes;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
