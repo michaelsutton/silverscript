@@ -13,13 +13,14 @@ flowchart TD
     G -- settles into --> P
 
     L -. injects player_hash .-> P
-    L -. injects game_hash .-> P
+    L -. injects mux_hash .-> P
+    L -. injects route_hashes .-> P
 
-    P -. injects game_hash .-> G
-    G -. injects player_hash .-> G
+    P -. injects mux_hash .-> G
+    P -. injects route_hashes .-> G
 
     G -. validates Player inputs by player_hash .-> P
-    P -. delegates to Game leader by game_hash .-> G
+    P -. delegates to Game leader by mux_hash .-> G
 ```
 
 ## What each layer needs to know
@@ -28,30 +29,32 @@ flowchart TD
 flowchart LR
     subgraph League
         LH[player_hash]
-        LG[game_hash]
+        LM[mux_hash]
+        LR[route_hashes]
     end
 
     subgraph Player
-        PG[game_hash]
+        PM[mux_hash]
+        PX[route_hashes]
         PP[player_id]
         PO[owner]
         PR[rating]
     end
 
     subgraph Game
-        GP[player_hash]
-        GW[white_player_id]
-        GB[black_player_id]
+        GW[white_player_ref]
+        GB[black_player_ref]
         GR[result / terminal state]
     end
 
     LH --> Player
-    LG --> Player
+    LM --> Player
+    LR --> Player
 
-    PG --> Game
+    PM --> Game
+    PX --> Game
     PP --> Game
 
-    GP --> Player
     GW --> Player
     GB --> Player
 ```
@@ -59,6 +62,10 @@ flowchart LR
 Today `player_id` does not come from injected League state. It is derived as
 `blake2b("LeaguePlayerId" || outpoint_txid || outpoint_index_le32)`, so the
 domain is fixed by the contract code itself.
+
+Today the game state binds each side as `blake2b(owner || player_id)`, not as a
+raw `player_id`. That keeps the game-side footprint to one field per side while
+still letting settlement recover canonical player ids from `Player` inputs.
 
 ## Why shared covenant id is not enough by itself
 
@@ -75,5 +82,5 @@ So settlement needs both:
 
 That is why the design depends on:
 
-- injected `player_hash` and `game_hash`
+- injected `player_hash`, `mux_hash`, and `route_hashes`
 - input-side template validation primitives

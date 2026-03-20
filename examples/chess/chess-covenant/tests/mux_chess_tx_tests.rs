@@ -61,6 +61,20 @@ struct GameStateArgs<'a> {
     draw_state: i64,
 }
 
+struct PlayerStateArgs<'a> {
+    league_hash: &'a [u8],
+    player_hash: &'a [u8],
+    mux_hash: &'a [u8],
+    route_hashes: &'a [u8],
+    owner_hash: &'a [u8],
+    player_id: &'a [u8],
+    rating: i64,
+    games: i64,
+    wins: i64,
+    draws: i64,
+    losses: i64,
+}
+
 const LEAGUE_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/league.sil"));
 const PLAYER_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/player.sil"));
 
@@ -238,6 +252,23 @@ fn compile_state(
         Expr::int(state.draw_state),
     ];
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile mux chess state")
+}
+
+fn compile_player_state(source: &'static str, state: PlayerStateArgs<'_>) -> CompiledContract<'static> {
+    let ctor = vec![
+        Expr::bytes(state.league_hash.to_vec()),
+        Expr::bytes(state.player_hash.to_vec()),
+        Expr::bytes(state.mux_hash.to_vec()),
+        Expr::bytes(state.route_hashes.to_vec()),
+        Expr::bytes(state.owner_hash.to_vec()),
+        Expr::bytes(state.player_id.to_vec()),
+        Expr::int(state.rating),
+        Expr::int(state.games),
+        Expr::int(state.wins),
+        Expr::int(state.draws),
+        Expr::int(state.losses),
+    ];
+    compile_contract(source, &ctor, CompileOptions::default()).expect("compile player state")
 }
 
 fn entry_sigscript(compiled: &CompiledContract<'_>, function: &str, args: Vec<Expr<'_>>) -> Vec<u8> {
@@ -4536,6 +4567,8 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
 #[test]
 fn league_registers_a_real_player_contract() {
     let owner = player_from_seed(7);
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
 
     let league_hash = vec![0x11u8; 32];
     let admin = vec![0x33u8; 32];
@@ -4548,7 +4581,10 @@ fn league_registers_a_real_player_contract() {
         &[
             Expr::bytes(league_hash.clone()),
             Expr::bytes(vec![0x44u8; 32]),
+            Expr::bytes(fix.mux.hash.clone()),
+            Expr::bytes(route_hashes.clone()),
             Expr::bytes(vec![0x55u8; 32]),
+            Expr::bytes(vec![0x77u8; 32]),
             Expr::int(900),
             Expr::int(1),
             Expr::int(2),
@@ -4566,7 +4602,14 @@ fn league_registers_a_real_player_contract() {
 
     let league = compile_contract(
         LEAGUE_SOURCE,
-        &[Expr::bytes(league_hash.clone()), Expr::bytes(player_hash.clone()), Expr::int(base_rating), Expr::bytes(admin.clone())],
+        &[
+            Expr::bytes(league_hash.clone()),
+            Expr::bytes(player_hash.clone()),
+            Expr::bytes(fix.mux.hash.clone()),
+            Expr::bytes(route_hashes.clone()),
+            Expr::int(base_rating),
+            Expr::bytes(admin.clone()),
+        ],
         CompileOptions::default(),
     )
     .expect("compile league succeeds");
@@ -4588,21 +4631,22 @@ fn league_registers_a_real_player_contract() {
         .as_bytes()
         .to_vec();
 
-    let registered_player = compile_contract(
+    let registered_player = compile_player_state(
         PLAYER_SOURCE,
-        &[
-            Expr::bytes(league_hash.clone()),
-            Expr::bytes(owner.owner_hash.clone()),
-            Expr::bytes(player_id),
-            Expr::int(base_rating),
-            Expr::int(0),
-            Expr::int(0),
-            Expr::int(0),
-            Expr::int(0),
-        ],
-        CompileOptions::default(),
-    )
-    .expect("compile registered player succeeds");
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            route_hashes: &route_hashes,
+            owner_hash: &owner.owner_hash,
+            player_id: &player_id,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
 
     let placeholder_sigscript = entry_sigscript(
         &league,
@@ -4637,4 +4681,168 @@ fn league_registers_a_real_player_contract() {
     let player_utxo = UtxoEntry::new(1_500, pay_to_script_hash_script(&registered_player.script), 0, false, None);
     let player_result = execute_input_with_covenants(player_tx, vec![player_utxo], 0);
     assert!(player_result.is_ok(), "registered Player.noop runtime failed: {}", player_result.unwrap_err());
+}
+
+#[test]
+fn players_can_start_a_real_mux_game() {
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let white = player_from_seed(7);
+    let black = player_from_seed(9);
+
+    let league_hash = vec![0x19u8; 32];
+    let base_rating = 1200i64;
+    let covenant_id = Hash::from_bytes([0x71u8; 32]);
+
+    let player_template = compile_player_state(
+        PLAYER_SOURCE,
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &[0x44u8; 32],
+            mux_hash: &fix.mux.hash,
+            route_hashes: &route_hashes,
+            owner_hash: &[0x55u8; 32],
+            player_id: &[0x56u8; 32],
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+    let player_layout = player_template.state_layout;
+    let player_hash = Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(&player_template.script[..player_layout.start])
+        .update(&player_template.script[player_layout.start + player_layout.len..])
+        .finalize()
+        .as_bytes()
+        .to_vec();
+    let player_prefix_len = player_layout.start as i64;
+    let player_suffix_len = (player_template.script.len() - (player_layout.start + player_layout.len)) as i64;
+
+    let white_player = compile_player_state(
+        PLAYER_SOURCE,
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            route_hashes: &route_hashes,
+            owner_hash: &white.owner_hash,
+            player_id: &white.player_id,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+    let black_player = compile_player_state(
+        PLAYER_SOURCE,
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            route_hashes: &route_hashes,
+            owner_hash: &black.owner_hash,
+            player_id: &black.player_id,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+    let opening_mux = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.player_ref,
+        &black.player_ref,
+        GameStateArgs {
+            board: &standard_board(),
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+
+    let white_placeholder = entry_sigscript(
+        &white_player,
+        "start_game",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(white.pubkey_bytes.clone()),
+            Expr::int(0),
+            Expr::int(player_prefix_len),
+            Expr::int(player_suffix_len),
+            Expr::bytes(fix.mux.prefix.clone()),
+            Expr::bytes(fix.mux.suffix.clone()),
+        ],
+    );
+    let black_placeholder = entry_sigscript(
+        &black_player,
+        "delegate_start_game",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(black.pubkey_bytes.clone()),
+            Expr::int(player_prefix_len),
+            Expr::int(player_suffix_len),
+        ],
+    );
+
+    let outputs = vec![
+        covenant_output(&white_player, 0, covenant_id),
+        covenant_output(&black_player, 0, covenant_id),
+        covenant_output(&opening_mux, 0, covenant_id),
+    ];
+    let entries = vec![covenant_utxo(&white_player, covenant_id), covenant_utxo(&black_player, covenant_id)];
+    let mut tx = Transaction::new(
+        1,
+        vec![tx_input(0, white_placeholder), tx_input(1, black_placeholder)],
+        outputs,
+        0,
+        Default::default(),
+        0,
+        vec![],
+    );
+
+    let white_sig = sign_tx_input_schnorr(&tx, &entries, 0, &white);
+    let black_sig = sign_tx_input_schnorr(&tx, &entries, 1, &black);
+
+    tx.inputs[0].signature_script = entry_sigscript(
+        &white_player,
+        "start_game",
+        vec![
+            Expr::bytes(white_sig),
+            Expr::bytes(white.pubkey_bytes.clone()),
+            Expr::int(0),
+            Expr::int(player_prefix_len),
+            Expr::int(player_suffix_len),
+            Expr::bytes(fix.mux.prefix.clone()),
+            Expr::bytes(fix.mux.suffix.clone()),
+        ],
+    );
+    tx.inputs[1].signature_script = entry_sigscript(
+        &black_player,
+        "delegate_start_game",
+        vec![
+            Expr::bytes(black_sig),
+            Expr::bytes(black.pubkey_bytes.clone()),
+            Expr::int(player_prefix_len),
+            Expr::int(player_suffix_len),
+        ],
+    );
+
+    let leader_result = execute_input_with_covenants(tx.clone(), entries.clone(), 0);
+    assert!(leader_result.is_ok(), "Player.start_game leader runtime failed: {}", leader_result.unwrap_err());
+
+    let delegate_result = execute_input_with_covenants(tx, entries, 1);
+    assert!(delegate_result.is_ok(), "Player.delegate_start_game runtime failed: {}", delegate_result.unwrap_err());
 }

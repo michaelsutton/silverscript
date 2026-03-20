@@ -20,12 +20,12 @@ sequenceDiagram
     G->>G: verify terminal chess result
     G->>PW: verify input template == player_hash
     G->>PB: verify input template == player_hash
-    G->>G: verify bound player ids match inputs
+    G->>G: verify bound player refs match inputs
     G->>OW: verify output template == player_hash
     G->>OB: verify output template == player_hash
     G->>OW: verify rating transition
     G->>OB: verify rating transition
 
-    PW->>G: delegate only if leader template == game_hash
-    PB->>G: delegate only if leader template == game_hash
+    PW->>G: delegate only if leader template == mux_hash
+    PB->>G: delegate only if leader template == mux_hash
 ```
