@@ -29,14 +29,3 @@ sequenceDiagram
     PW->>G: delegate only if leader template == game_hash
     PB->>G: delegate only if leader template == game_hash
 ```
-
-## Missing primitive
-
-For shared-cov-id settlement, the missing piece is an input-side role check such
-as:
-
-- `requireInputTemplate(idx, hash)`
-- or `readInputStateWithTemplate(idx, prefix, suffix, hash)`
-- or a direct `OpInputTemplateHash(idx)`
-
-Without that, participants can prove same covenant group but not specific role.
