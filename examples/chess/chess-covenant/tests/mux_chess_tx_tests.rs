@@ -24,7 +24,9 @@ use chess_covenant::{
 struct Player {
     keypair: Keypair,
     pubkey_bytes: Vec<u8>,
-    pubkey_hash: Vec<u8>,
+    owner_hash: Vec<u8>,
+    player_id: Vec<u8>,
+    player_ref: Vec<u8>,
 }
 
 struct TemplateFixture {
@@ -89,8 +91,12 @@ fn player_from_seed(seed: u8) -> Player {
     let keypair = Keypair::from_secret_key(&secp, &secret);
     let (x_only, _) = keypair.x_only_public_key();
     let pubkey_bytes = x_only.serialize().to_vec();
-    let pubkey_hash = Blake2bParams::new().hash_length(32).to_state().update(&pubkey_bytes).finalize().as_bytes().to_vec();
-    Player { keypair, pubkey_bytes, pubkey_hash }
+    let owner_hash = Blake2bParams::new().hash_length(32).to_state().update(&pubkey_bytes).finalize().as_bytes().to_vec();
+    let player_id =
+        Blake2bParams::new().hash_length(32).to_state().update(b"test-player-id").update(&pubkey_bytes).finalize().as_bytes().to_vec();
+    let player_ref =
+        Blake2bParams::new().hash_length(32).to_state().update(&owner_hash).update(&player_id).finalize().as_bytes().to_vec();
+    Player { keypair, pubkey_bytes, owner_hash, player_id, player_ref }
 }
 
 fn load_contract_source(path: &'static str) -> &'static str {
@@ -376,6 +382,7 @@ fn run_route_with_promo_and_action(
             termination_action.into(),
             Expr::bytes(placeholder_sig),
             Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(player.player_id.clone()),
             Expr::bytes(target.prefix.clone()),
             Expr::bytes(target.suffix.clone()),
         ],
@@ -397,6 +404,7 @@ fn run_route_with_promo_and_action(
             termination_action.into(),
             Expr::bytes(sig),
             Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(player.player_id.clone()),
             Expr::bytes(target.prefix.clone()),
             Expr::bytes(target.suffix.clone()),
         ],
@@ -428,6 +436,7 @@ fn run_route_err(
             0.into(),
             Expr::bytes(placeholder_sig),
             Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(player.player_id.clone()),
             Expr::bytes(target.prefix.clone()),
             Expr::bytes(target.suffix.clone()),
         ],
@@ -449,6 +458,7 @@ fn run_route_err(
             0.into(),
             Expr::bytes(sig),
             Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(player.player_id.clone()),
             Expr::bytes(target.prefix.clone()),
             Expr::bytes(target.suffix.clone()),
         ],
@@ -504,8 +514,11 @@ fn run_mux_timeout(
     sequence: u64,
 ) {
     let placeholder_sig = vec![0u8; 65];
-    let placeholder_sigscript =
-        entry_sigscript(active, "timeout", vec![Expr::bytes(placeholder_sig), Expr::bytes(player.pubkey_bytes.clone())]);
+    let placeholder_sigscript = entry_sigscript(
+        active,
+        "timeout",
+        vec![Expr::bytes(placeholder_sig), Expr::bytes(player.pubkey_bytes.clone()), Expr::bytes(player.player_id.clone())],
+    );
     let outputs = vec![covenant_output(next, 0, covenant_id)];
     let entries = vec![covenant_utxo(active, covenant_id)];
     let input = TransactionInput {
@@ -516,8 +529,11 @@ fn run_mux_timeout(
     };
     let mut tx = Transaction::new(1, vec![input], outputs, lock_time, Default::default(), 0, vec![]);
     let sig = sign_tx_input_schnorr(&tx, &entries, 0, player);
-    tx.inputs[0].signature_script =
-        entry_sigscript(active, "timeout", vec![Expr::bytes(sig), Expr::bytes(player.pubkey_bytes.clone())]);
+    tx.inputs[0].signature_script = entry_sigscript(
+        active,
+        "timeout",
+        vec![Expr::bytes(sig), Expr::bytes(player.pubkey_bytes.clone()), Expr::bytes(player.player_id.clone())],
+    );
     let result = execute_input_with_covenants(tx, entries, 0);
     assert!(result.is_ok(), "{label} mux timeout should succeed: {:?}", result.unwrap_err());
 }
@@ -561,8 +577,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -581,8 +597,8 @@ fn muxed_chess_routes_all_move_families() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -602,8 +618,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -622,8 +638,8 @@ fn muxed_chess_routes_all_move_families() {
     let knight1 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -643,8 +659,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board2,
             turn: 0,
@@ -665,8 +681,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux3 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board3,
             turn: 0,
@@ -684,8 +700,8 @@ fn muxed_chess_routes_all_move_families() {
     let vert = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board3,
             turn: 0,
@@ -705,8 +721,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux4 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board4,
             turn: 1,
@@ -727,8 +743,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux4q = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board4q,
             turn: 0,
@@ -746,8 +762,8 @@ fn muxed_chess_routes_all_move_families() {
     let vert_queen = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board4q,
             turn: 0,
@@ -767,8 +783,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux4q_next = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board4q_next,
             turn: 1,
@@ -789,8 +805,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux5 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board5,
             turn: 1,
@@ -808,8 +824,8 @@ fn muxed_chess_routes_all_move_families() {
     let vert_black = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board5,
             turn: 1,
@@ -829,8 +845,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux6 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board6,
             turn: 0,
@@ -851,8 +867,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux7 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board7,
             turn: 0,
@@ -870,8 +886,8 @@ fn muxed_chess_routes_all_move_families() {
     let horiz_left = compile_state(
         fix.horiz.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board7,
             turn: 0,
@@ -891,8 +907,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux8 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board8,
             turn: 1,
@@ -913,8 +929,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux9 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board9,
             turn: 0,
@@ -932,8 +948,8 @@ fn muxed_chess_routes_all_move_families() {
     let horiz_right = compile_state(
         fix.horiz.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board9,
             turn: 0,
@@ -953,8 +969,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux10 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board10,
             turn: 1,
@@ -975,8 +991,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux11 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board11,
             turn: 0,
@@ -994,8 +1010,8 @@ fn muxed_chess_routes_all_move_families() {
     let diag_up_right = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board11,
             turn: 0,
@@ -1015,8 +1031,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux12 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board12,
             turn: 1,
@@ -1037,8 +1053,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux12q = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board12q,
             turn: 0,
@@ -1056,8 +1072,8 @@ fn muxed_chess_routes_all_move_families() {
     let diag_up_right_queen = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board12q,
             turn: 0,
@@ -1077,8 +1093,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux12q_next = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board12q_next,
             turn: 1,
@@ -1099,8 +1115,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux13 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board13,
             turn: 0,
@@ -1118,8 +1134,8 @@ fn muxed_chess_routes_all_move_families() {
     let diag_up_left = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board13,
             turn: 0,
@@ -1139,8 +1155,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux14 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board14,
             turn: 1,
@@ -1161,8 +1177,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux15 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board15,
             turn: 1,
@@ -1180,8 +1196,8 @@ fn muxed_chess_routes_all_move_families() {
     let diag_down_right = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board15,
             turn: 1,
@@ -1201,8 +1217,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux16 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board16,
             turn: 0,
@@ -1223,8 +1239,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux17 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board17,
             turn: 1,
@@ -1242,8 +1258,8 @@ fn muxed_chess_routes_all_move_families() {
     let diag_down_left = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board17,
             turn: 1,
@@ -1263,8 +1279,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux18 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board18,
             turn: 0,
@@ -1285,8 +1301,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux19 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board19,
             turn: 0,
@@ -1304,8 +1320,8 @@ fn muxed_chess_routes_all_move_families() {
     let king = compile_state(
         fix.king.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board19,
             turn: 0,
@@ -1325,8 +1341,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux20 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board20,
             turn: 1,
@@ -1348,8 +1364,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux21 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board21,
             turn: 0,
@@ -1367,8 +1383,8 @@ fn muxed_chess_routes_all_move_families() {
     let castle = compile_state(
         fix.castle.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board21,
             turn: 0,
@@ -1391,8 +1407,8 @@ fn muxed_chess_routes_all_move_families() {
     let mux22 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board22,
             turn: 1,
@@ -1422,8 +1438,8 @@ fn capturing_enemy_king_sets_terminal_status() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1442,8 +1458,8 @@ fn capturing_enemy_king_sets_terminal_status() {
     let vert = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1464,8 +1480,8 @@ fn capturing_enemy_king_sets_terminal_status() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1496,8 +1512,8 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1516,8 +1532,8 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
     let knight0 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1538,8 +1554,8 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1558,8 +1574,8 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
     let vert1 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1580,8 +1596,8 @@ fn ignoring_single_check_is_punishable_by_next_ply_king_capture() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board2,
             turn: 0,
@@ -1612,8 +1628,8 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1632,8 +1648,8 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
     let horiz0 = compile_state(
         fix.horiz.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1654,8 +1670,8 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1674,8 +1690,8 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
     let vert1 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1696,8 +1712,8 @@ fn moving_a_pinned_piece_is_punishable_by_next_ply_king_capture() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board2,
             turn: 0,
@@ -1727,8 +1743,8 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1747,8 +1763,8 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
     let king0 = compile_state(
         fix.king.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1769,8 +1785,8 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1789,8 +1805,8 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
     let vert1 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1811,8 +1827,8 @@ fn king_move_into_attack_is_punishable_by_next_ply_king_capture() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board2,
             turn: 0,
@@ -1843,8 +1859,8 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1863,8 +1879,8 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
     let diag0 = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1885,8 +1901,8 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1905,8 +1921,8 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
     let vert1 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -1925,8 +1941,8 @@ fn legal_interposition_blocks_the_immediate_king_capture_route() {
     let mux_fail = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -1958,8 +1974,8 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -1978,8 +1994,8 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
     let diag0 = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2000,8 +2016,8 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2020,8 +2036,8 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
     let diag1 = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2042,8 +2058,8 @@ fn illegal_double_check_reply_is_punishable_by_next_ply_king_capture() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board2,
             turn: 0,
@@ -2072,8 +2088,8 @@ fn pawn_underpromotion_to_knight_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2092,8 +2108,8 @@ fn pawn_underpromotion_to_knight_succeeds() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2114,8 +2130,8 @@ fn pawn_underpromotion_to_knight_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2144,8 +2160,8 @@ fn pawn_promotion_requires_choice() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2164,8 +2180,8 @@ fn pawn_promotion_requires_choice() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2186,8 +2202,8 @@ fn pawn_promotion_requires_choice() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2216,8 +2232,8 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2236,8 +2252,8 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2258,8 +2274,8 @@ fn non_promotion_pawn_move_rejects_promotion_choice() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2289,8 +2305,8 @@ fn white_en_passant_capture_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2309,8 +2325,8 @@ fn white_en_passant_capture_succeeds() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2331,8 +2347,8 @@ fn white_en_passant_capture_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2362,8 +2378,8 @@ fn black_en_passant_capture_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -2382,8 +2398,8 @@ fn black_en_passant_capture_succeeds() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -2404,8 +2420,8 @@ fn black_en_passant_capture_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -2434,8 +2450,8 @@ fn non_pawn_move_clears_en_passant_state() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2454,8 +2470,8 @@ fn non_pawn_move_clears_en_passant_state() {
     let knight0 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2476,8 +2492,8 @@ fn non_pawn_move_clears_en_passant_state() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2507,8 +2523,8 @@ fn pawn_diagonal_capture_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2527,8 +2543,8 @@ fn pawn_diagonal_capture_succeeds() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2549,8 +2565,8 @@ fn pawn_diagonal_capture_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2580,8 +2596,8 @@ fn pawn_double_step_blocked_by_occupied_middle_square_fails() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2600,8 +2616,8 @@ fn pawn_double_step_blocked_by_occupied_middle_square_fails() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2622,8 +2638,8 @@ fn pawn_double_step_blocked_by_occupied_middle_square_fails() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2652,8 +2668,8 @@ fn pawn_diagonal_move_into_empty_square_fails_without_en_passant() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2672,8 +2688,8 @@ fn pawn_diagonal_move_into_empty_square_fails_without_en_passant() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2694,8 +2710,8 @@ fn pawn_diagonal_move_into_empty_square_fails_without_en_passant() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2725,8 +2741,8 @@ fn expired_en_passant_attempt_fails() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2745,8 +2761,8 @@ fn expired_en_passant_attempt_fails() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -2767,8 +2783,8 @@ fn expired_en_passant_attempt_fails() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -2799,8 +2815,8 @@ fn ordinary_reply_after_castle_clears_recent_castle() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -2819,8 +2835,8 @@ fn ordinary_reply_after_castle_clears_recent_castle() {
     let knight0 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -2841,8 +2857,8 @@ fn ordinary_reply_after_castle_clears_recent_castle() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -2873,8 +2889,8 @@ fn castle_start_square_challenge_by_pawn_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -2893,8 +2909,8 @@ fn castle_start_square_challenge_by_pawn_succeeds() {
     let prep0 = compile_state(
         fix.castle_challenge.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -2917,8 +2933,8 @@ fn castle_start_square_challenge_by_pawn_succeeds() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &proof_board,
             turn: 1,
@@ -2939,8 +2955,8 @@ fn castle_start_square_challenge_by_pawn_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -2971,8 +2987,8 @@ fn castle_transit_square_challenge_by_rook_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -2991,8 +3007,8 @@ fn castle_transit_square_challenge_by_rook_succeeds() {
     let prep0 = compile_state(
         fix.castle_challenge.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3015,8 +3031,8 @@ fn castle_transit_square_challenge_by_rook_succeeds() {
     let vert0 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &proof_board,
             turn: 1,
@@ -3037,8 +3053,8 @@ fn castle_transit_square_challenge_by_rook_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -3069,8 +3085,8 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3089,8 +3105,8 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
     let prep0 = compile_state(
         fix.castle_challenge.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3109,8 +3125,8 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
     let vert0 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3131,8 +3147,8 @@ fn castle_destination_square_challenge_by_rook_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -3163,8 +3179,8 @@ fn white_queenside_castle_destination_challenge_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3183,8 +3199,8 @@ fn white_queenside_castle_destination_challenge_succeeds() {
     let prep0 = compile_state(
         fix.castle_challenge.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3203,8 +3219,8 @@ fn white_queenside_castle_destination_challenge_succeeds() {
     let vert0 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3225,8 +3241,8 @@ fn white_queenside_castle_destination_challenge_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -3257,8 +3273,8 @@ fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3277,8 +3293,8 @@ fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
     let prep0 = compile_state(
         fix.castle_challenge.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3301,8 +3317,8 @@ fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
     let pawn0 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &proof_board,
             turn: 0,
@@ -3323,8 +3339,8 @@ fn black_kingside_castle_start_challenge_by_pawn_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -3355,8 +3371,8 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3375,8 +3391,8 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
     let prep0 = compile_state(
         fix.castle_challenge.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3399,8 +3415,8 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
     let vert0 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &proof_board,
             turn: 0,
@@ -3421,8 +3437,8 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -3449,8 +3465,8 @@ fn claim_draw_flips_turn_and_enters_draw_state() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3469,8 +3485,8 @@ fn claim_draw_flips_turn_and_enters_draw_state() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3497,8 +3513,8 @@ fn surrender_routes_back_to_mux_with_terminal_status() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3517,8 +3533,8 @@ fn surrender_routes_back_to_mux_with_terminal_status() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3545,8 +3561,8 @@ fn ordinary_move_can_offer_draw_and_return_to_mux() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3565,8 +3581,8 @@ fn ordinary_move_can_offer_draw_and_return_to_mux() {
     let knight0 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3587,8 +3603,8 @@ fn ordinary_move_can_offer_draw_and_return_to_mux() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 1,
@@ -3617,8 +3633,8 @@ fn pending_draw_offer_can_be_accepted_on_next_mux_turn() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3637,8 +3653,8 @@ fn pending_draw_offer_can_be_accepted_on_next_mux_turn() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3667,8 +3683,8 @@ fn ordinary_reply_rejects_pending_draw_offer_and_clears_draw_state() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3687,8 +3703,8 @@ fn ordinary_reply_rejects_pending_draw_offer_and_clears_draw_state() {
     let knight1 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3709,8 +3725,8 @@ fn ordinary_reply_rejects_pending_draw_offer_and_clears_draw_state() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -3740,8 +3756,8 @@ fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3760,8 +3776,8 @@ fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3780,8 +3796,8 @@ fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
     let knight1 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3802,8 +3818,8 @@ fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -3822,8 +3838,8 @@ fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
     let knight2 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -3844,8 +3860,8 @@ fn knight_draw_negotiation_flips_side_control_and_false_claim_loses() {
     let mux3 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board2,
             turn: 1,
@@ -3875,8 +3891,8 @@ fn knight_draw_capture_awards_win_to_the_actor() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -3895,8 +3911,8 @@ fn knight_draw_capture_awards_win_to_the_actor() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3915,8 +3931,8 @@ fn knight_draw_capture_awards_win_to_the_actor() {
     let knight1 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3937,8 +3953,8 @@ fn knight_draw_capture_awards_win_to_the_actor() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -3968,8 +3984,8 @@ fn pawn_draw_capture_awards_win_to_the_actor() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -3988,8 +4004,8 @@ fn pawn_draw_capture_awards_win_to_the_actor() {
     let pawn1 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4010,8 +4026,8 @@ fn pawn_draw_capture_awards_win_to_the_actor() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -4040,8 +4056,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4059,8 +4075,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let pawn1 = compile_state(
         fix.pawn.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4080,8 +4096,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -4103,8 +4119,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4122,8 +4138,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let vert1 = compile_state(
         fix.vert.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4143,8 +4159,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -4166,8 +4182,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4185,8 +4201,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let horiz1 = compile_state(
         fix.horiz.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4206,8 +4222,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -4229,8 +4245,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4248,8 +4264,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let diag1 = compile_state(
         fix.diag.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4269,8 +4285,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -4292,8 +4308,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4311,8 +4327,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let king1 = compile_state(
         fix.king.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 1,
@@ -4332,8 +4348,8 @@ fn draw_mode_reuses_ordinary_workers() {
     let mux2 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board1,
             turn: 0,
@@ -4363,8 +4379,8 @@ fn draw_mode_disallows_castle_and_castle_challenge_routes() {
     let mux1 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board,
             turn: 1,
@@ -4382,8 +4398,8 @@ fn draw_mode_disallows_castle_and_castle_challenge_routes() {
     let castle1 = compile_state(
         fix.castle.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board,
             turn: 1,
@@ -4402,8 +4418,8 @@ fn draw_mode_disallows_castle_and_castle_challenge_routes() {
     let prep1 = compile_state(
         fix.castle_challenge.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board,
             turn: 1,
@@ -4430,8 +4446,8 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
     let knight1 = compile_state(
         fix.knight.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -4449,8 +4465,8 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
     let mux_terminal = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -4478,8 +4494,8 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
     let mux0 = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -4498,8 +4514,8 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
     let mux_terminal = compile_state(
         fix.mux.source,
         &fix,
-        &white.pubkey_hash,
-        &black.pubkey_hash,
+        &white.player_ref,
+        &black.player_ref,
         GameStateArgs {
             board: &board0,
             turn: 0,
@@ -4550,12 +4566,7 @@ fn league_registers_a_real_player_contract() {
 
     let league = compile_contract(
         LEAGUE_SOURCE,
-        &[
-            Expr::bytes(league_hash.clone()),
-            Expr::bytes(player_hash.clone()),
-            Expr::int(base_rating),
-            Expr::bytes(admin.clone()),
-        ],
+        &[Expr::bytes(league_hash.clone()), Expr::bytes(player_hash.clone()), Expr::int(base_rating), Expr::bytes(admin.clone())],
         CompileOptions::default(),
     )
     .expect("compile league succeeds");
@@ -4581,7 +4592,7 @@ fn league_registers_a_real_player_contract() {
         PLAYER_SOURCE,
         &[
             Expr::bytes(league_hash.clone()),
-            Expr::bytes(owner.pubkey_hash.clone()),
+            Expr::bytes(owner.owner_hash.clone()),
             Expr::bytes(player_id),
             Expr::int(base_rating),
             Expr::int(0),
