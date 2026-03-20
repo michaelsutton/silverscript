@@ -65,7 +65,7 @@ struct PlayerStateArgs<'a> {
     league_hash: &'a [u8],
     player_hash: &'a [u8],
     mux_hash: &'a [u8],
-    route_hashes: &'a [u8],
+    routes_commitment: &'a [u8],
     owner_hash: &'a [u8],
     player_id: &'a [u8],
     rating: i64,
@@ -97,6 +97,10 @@ fn packed_route_hashes(fix: &MuxChessFixture) -> Vec<u8> {
     out.extend_from_slice(&fix.castle.hash);
     out.extend_from_slice(&fix.castle_challenge.hash);
     out
+}
+
+fn routes_commitment(route_hashes: &[u8]) -> Vec<u8> {
+    Blake2bParams::new().hash_length(32).to_state().update(route_hashes).finalize().as_bytes().to_vec()
 }
 
 fn player_from_seed(seed: u8) -> Player {
@@ -259,7 +263,7 @@ fn compile_player_state(source: &'static str, state: PlayerStateArgs<'_>) -> Com
         Expr::bytes(state.league_hash.to_vec()),
         Expr::bytes(state.player_hash.to_vec()),
         Expr::bytes(state.mux_hash.to_vec()),
-        Expr::bytes(state.route_hashes.to_vec()),
+        Expr::bytes(state.routes_commitment.to_vec()),
         Expr::bytes(state.owner_hash.to_vec()),
         Expr::bytes(state.player_id.to_vec()),
         Expr::int(state.rating),
@@ -4569,6 +4573,7 @@ fn league_registers_a_real_player_contract() {
     let owner = player_from_seed(7);
     let fix = build_fixture();
     let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
 
     let league_hash = vec![0x11u8; 32];
     let admin = vec![0x33u8; 32];
@@ -4582,7 +4587,7 @@ fn league_registers_a_real_player_contract() {
             Expr::bytes(league_hash.clone()),
             Expr::bytes(vec![0x44u8; 32]),
             Expr::bytes(fix.mux.hash.clone()),
-            Expr::bytes(route_hashes.clone()),
+            Expr::bytes(routes_commitment.clone()),
             Expr::bytes(vec![0x55u8; 32]),
             Expr::bytes(vec![0x77u8; 32]),
             Expr::int(900),
@@ -4606,7 +4611,7 @@ fn league_registers_a_real_player_contract() {
             Expr::bytes(league_hash.clone()),
             Expr::bytes(player_hash.clone()),
             Expr::bytes(fix.mux.hash.clone()),
-            Expr::bytes(route_hashes.clone()),
+            Expr::bytes(routes_commitment.clone()),
             Expr::int(base_rating),
             Expr::bytes(admin.clone()),
         ],
@@ -4637,7 +4642,7 @@ fn league_registers_a_real_player_contract() {
             league_hash: &league_hash,
             player_hash: &player_hash,
             mux_hash: &fix.mux.hash,
-            route_hashes: &route_hashes,
+            routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &player_id,
             rating: base_rating,
@@ -4672,21 +4677,13 @@ fn league_registers_a_real_player_contract() {
 
     let register_result = execute_input_with_covenants(tx, entries, 0);
     assert!(register_result.is_ok(), "league register_player runtime failed: {}", register_result.unwrap_err());
-
-    let player_sigscript = entry_sigscript(&registered_player, "noop", vec![Expr::int(0)]);
-    let player_input = tx_input(0, player_sigscript);
-    let player_output =
-        TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&registered_player.script), covenant: None };
-    let player_tx = Transaction::new(1, vec![player_input], vec![player_output], 0, Default::default(), 0, vec![]);
-    let player_utxo = UtxoEntry::new(1_500, pay_to_script_hash_script(&registered_player.script), 0, false, None);
-    let player_result = execute_input_with_covenants(player_tx, vec![player_utxo], 0);
-    assert!(player_result.is_ok(), "registered Player.noop runtime failed: {}", player_result.unwrap_err());
 }
 
 #[test]
 fn players_can_start_a_real_mux_game() {
     let fix = build_fixture();
     let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
     let white = player_from_seed(7);
     let black = player_from_seed(9);
 
@@ -4700,7 +4697,7 @@ fn players_can_start_a_real_mux_game() {
             league_hash: &league_hash,
             player_hash: &[0x44u8; 32],
             mux_hash: &fix.mux.hash,
-            route_hashes: &route_hashes,
+            routes_commitment: &routes_commitment,
             owner_hash: &[0x55u8; 32],
             player_id: &[0x56u8; 32],
             rating: base_rating,
@@ -4728,7 +4725,7 @@ fn players_can_start_a_real_mux_game() {
             league_hash: &league_hash,
             player_hash: &player_hash,
             mux_hash: &fix.mux.hash,
-            route_hashes: &route_hashes,
+            routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
             rating: base_rating,
@@ -4744,7 +4741,7 @@ fn players_can_start_a_real_mux_game() {
             league_hash: &league_hash,
             player_hash: &player_hash,
             mux_hash: &fix.mux.hash,
-            route_hashes: &route_hashes,
+            routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
             rating: base_rating,
@@ -4782,6 +4779,7 @@ fn players_can_start_a_real_mux_game() {
             Expr::int(0),
             Expr::int(player_prefix_len),
             Expr::int(player_suffix_len),
+            Expr::bytes(route_hashes.clone()),
             Expr::bytes(fix.mux.prefix.clone()),
             Expr::bytes(fix.mux.suffix.clone()),
         ],
@@ -4825,6 +4823,7 @@ fn players_can_start_a_real_mux_game() {
             Expr::int(0),
             Expr::int(player_prefix_len),
             Expr::int(player_suffix_len),
+            Expr::bytes(route_hashes.clone()),
             Expr::bytes(fix.mux.prefix.clone()),
             Expr::bytes(fix.mux.suffix.clone()),
         ],

@@ -4,7 +4,7 @@ contract Player(
     byte[32] init_league_hash,
     byte[32] init_player_hash,
     byte[32] init_mux_hash,
-    byte[256] init_route_hashes,
+    byte[32] init_routes_commitment,
     byte[32] init_owner,
     byte[32] init_player_id,
     int init_rating,
@@ -17,7 +17,7 @@ contract Player(
         byte[32] league_hash;
         byte[32] player_hash;
         byte[32] mux_hash;
-        byte[256] route_hashes;
+        byte[32] routes_commitment;
         byte[32] owner;
         byte[32] player_id;
         int rating;
@@ -47,7 +47,7 @@ contract Player(
     byte[32] league_hash = init_league_hash;
     byte[32] player_hash = init_player_hash;
     byte[32] mux_hash = init_mux_hash;
-    byte[256] route_hashes = init_route_hashes;
+    byte[32] routes_commitment = init_routes_commitment;
     byte[32] owner = init_owner;
     byte[32] player_id = init_player_id;
     int rating = init_rating;
@@ -56,36 +56,20 @@ contract Player(
     int draws = init_draws;
     int losses = init_losses;
 
-    entrypoint function noop(int self_output_idx) {
-        State next_self = {
-            league_hash: league_hash,
-            player_hash: player_hash,
-            mux_hash: mux_hash,
-            route_hashes: route_hashes,
-            owner: owner,
-            player_id: player_id,
-            rating: rating,
-            games: games,
-            wins: wins,
-            draws: draws,
-            losses: losses
-        };
-
-        validateOutputState(self_output_idx, next_self);
-    }
-
     entrypoint function start_game(
         sig owner_sig,
         pubkey owner_pk,
         int self_side,
         int player_prefix_len,
         int player_suffix_len,
+        byte[256] route_hashes,
         byte[] mux_prefix,
         byte[] mux_suffix
     ) {
         require(self_side == 0 || self_side == 1);
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));
+        require(blake2b(route_hashes) == routes_commitment);
 
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) == 2);
@@ -108,7 +92,7 @@ contract Player(
             league_hash: league_hash,
             player_hash: player_hash,
             mux_hash: mux_hash,
-            route_hashes: route_hashes,
+            routes_commitment: routes_commitment,
             owner: owner,
             player_id: player_id,
             rating: rating,
@@ -122,7 +106,7 @@ contract Player(
             league_hash: other.league_hash,
             player_hash: other.player_hash,
             mux_hash: other.mux_hash,
-            route_hashes: other.route_hashes,
+            routes_commitment: other.routes_commitment,
             owner: other.owner,
             player_id: other.player_id,
             rating: other.rating,
