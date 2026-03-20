@@ -49,6 +49,7 @@ contract ChessMux(
         int termination_action,
         sig s,
         pubkey pk,
+        byte[32] player_id,
         byte[] target_prefix,
         byte[] target_suffix
     ) {
@@ -56,12 +57,15 @@ contract ChessMux(
         // they have validated and applied exactly one committed move.
         require(status == LIVE);
 
-        // The side to move authorizes the route once here. Downstream workers
-        // rely on the committed pending move and do not repeat signature checks.
+        // The side-to-move commitment is `blake2b(owner || player_id)`, where
+        // `owner = blake2b(pk)`. Downstream workers rely on the committed
+        // pending move and do not repeat signature checks.
+        byte[32] owner = blake2b(pk);
+        byte[32] player_ref = blake2b(owner + player_id);
         if (turn == WHITE) {
-            require(blake2b(pk) == white_player);
+            require(player_ref == white_player);
         } else {
-            require(blake2b(pk) == black_player);
+            require(player_ref == black_player);
         }
         require(checkSig(s, pk));
 
@@ -203,16 +207,19 @@ contract ChessMux(
         );
     }
 
-    entrypoint function timeout(sig s, pubkey pk) {
+    entrypoint function timeout(sig s, pubkey pk, byte[32] player_id) {
         // Timeout only applies while the game is still live.
         require(status == LIVE);
 
         // The side waiting on a response is `turn`, so the timeout claimant is
-        // always the opposite signer.
+        // always the opposite signer, authenticated by the same
+        // `blake2b(owner || player_id)` commitment used in `route`.
+        byte[32] owner = blake2b(pk);
+        byte[32] player_ref = blake2b(owner + player_id);
         if (turn == WHITE) {
-            require(blake2b(pk) == black_player);
+            require(player_ref == black_player);
         } else {
-            require(blake2b(pk) == white_player);
+            require(player_ref == white_player);
         }
         require(checkSig(s, pk));
 
