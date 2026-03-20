@@ -4,17 +4,16 @@ This is the core structural picture.
 
 ```mermaid
 flowchart TD
-    L[League mint lane<br/>immutable self-recreating contract]
+    L[League registration lane<br/>immutable self-recreating contract]
     P[Player<br/>persistent score contract]
     G[Game<br/>episodic chess contract]
 
-    L -- mints --> P
+    L -- registers --> P
     P -- starts --> G
     G -- settles into --> P
 
     L -. injects player_hash .-> P
     L -. injects game_hash .-> P
-    L -. injects id_domain .-> P
 
     P -. injects game_hash .-> G
     G -. injects player_hash .-> G
@@ -30,7 +29,6 @@ flowchart LR
     subgraph League
         LH[player_hash]
         LG[game_hash]
-        LD[id_domain]
     end
 
     subgraph Player
@@ -49,7 +47,6 @@ flowchart LR
 
     LH --> Player
     LG --> Player
-    LD --> Player
 
     PG --> Game
     PP --> Game
@@ -58,6 +55,10 @@ flowchart LR
     GW --> Player
     GB --> Player
 ```
+
+Today `player_id` does not come from injected League state. It is derived as
+`blake2b("LeaguePlayerId" || outpoint_txid || outpoint_index_le32)`, so the
+domain is fixed by the contract code itself.
 
 ## Why shared covenant id is not enough by itself
 
@@ -76,4 +77,3 @@ That is why the design depends on:
 
 - injected `player_hash` and `game_hash`
 - input-side template validation primitives
-
