@@ -7,10 +7,12 @@ flowchart TD
     L[League registration lane<br/>immutable self-recreating contract]
     P[Player<br/>persistent score contract]
     G[Game<br/>episodic chess contract]
+    S[Settle<br/>terminal settlement worker]
 
     L -- registers --> P
     P -- starts --> G
-    G -- settles into --> P
+    G -- routes terminal state --> S
+    S -- settles into --> P
 
     L -. injects player_hash .-> P
     L -. injects mux_hash .-> P
@@ -19,8 +21,8 @@ flowchart TD
     P -. injects mux_hash .-> G
     P -. witnesses route_hashes .-> G
 
-    G -. validates Player inputs by player_hash .-> P
-    P -. delegates to Game leader by mux_hash .-> G
+    S -. validates Player inputs by player_hash .-> P
+    P -. delegates to Settle leader by route commitment .-> S
 ```
 
 ## What each layer needs to know
@@ -48,6 +50,11 @@ flowchart LR
         GR[result / terminal state]
     end
 
+    subgraph Settle
+        SH[blake2b(settle_hash || player_hash)]
+        SR[terminal result]
+    end
+
     LH --> Player
     LM --> Player
     LR --> Player
@@ -55,6 +62,8 @@ flowchart LR
     PM --> Game
     PX --> Game
     PP --> Game
+
+    GH --> Settle
 
     GW --> Player
     GB --> Player
@@ -71,6 +80,16 @@ still letting settlement recover canonical player ids from `Player` inputs.
 Today `League` and `Player` keep only `routes_commitment = blake2b(route_hashes)`.
 The full `route_hashes` blob is supplied only when `Player.start_game` expands
 that commitment into a concrete game state.
+
+Today that `route_hashes` blob includes both:
+
+- the move-worker family hashes
+- a terminal settlement commitment at the tail:
+  `blake2b(settle_hash || player_hash)`
+
+That tail commitment lets `ChessMux.settle` safely witness the concrete settle
+template and the trusted `player_hash` together before materializing a
+`ChessSettle` state.
 
 ## Why shared covenant id is not enough by itself
 
@@ -89,3 +108,6 @@ That is why the design depends on:
 
 - injected `player_hash`, `mux_hash`, and `routes_commitment`
 - input-side template validation primitives
+
+And that is also why the terminal game route keeps a commitment to both
+`settle_hash` and `player_hash`, rather than only a bare settle worker hash.
