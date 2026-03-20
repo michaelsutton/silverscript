@@ -2,6 +2,9 @@ pragma silverscript ^0.1.0;
 
 contract Player(
     byte[32] init_league_hash,
+    byte[32] init_player_hash,
+    byte[32] init_mux_hash,
+    byte[256] init_route_hashes,
     byte[32] init_owner,
     byte[32] init_player_id,
     int init_rating,
@@ -10,9 +13,41 @@ contract Player(
     int init_draws,
     int init_losses
 ) {
-    // `Player` is intentionally minimal for now: a persistent score shell with
-    // no game-entry or settlement logic yet.
+    struct PlayerState {
+        byte[32] league_hash;
+        byte[32] player_hash;
+        byte[32] mux_hash;
+        byte[256] route_hashes;
+        byte[32] owner;
+        byte[32] player_id;
+        int rating;
+        int games;
+        int wins;
+        int draws;
+        int losses;
+    }
+
+    struct GameState {
+        byte[32] mux_hash;
+        byte[256] route_hashes;
+        byte[32] white_player;
+        byte[32] black_player;
+        byte[64] board;
+        int turn;
+        int status;
+        byte[4] castle_rights;
+        int en_passant_idx;
+        int pending_src_idx;
+        int pending_dst_idx;
+        int pending_promo;
+        int recent_castle;
+        int draw_state;
+    }
+
     byte[32] league_hash = init_league_hash;
+    byte[32] player_hash = init_player_hash;
+    byte[32] mux_hash = init_mux_hash;
+    byte[256] route_hashes = init_route_hashes;
     byte[32] owner = init_owner;
     byte[32] player_id = init_player_id;
     int rating = init_rating;
@@ -24,6 +59,9 @@ contract Player(
     entrypoint function noop(int self_output_idx) {
         State next_self = {
             league_hash: league_hash,
+            player_hash: player_hash,
+            mux_hash: mux_hash,
+            route_hashes: route_hashes,
             owner: owner,
             player_id: player_id,
             rating: rating,
@@ -34,5 +72,117 @@ contract Player(
         };
 
         validateOutputState(self_output_idx, next_self);
+    }
+
+    entrypoint function start_game(
+        sig owner_sig,
+        pubkey owner_pk,
+        int self_side,
+        int player_prefix_len,
+        int player_suffix_len,
+        byte[] mux_prefix,
+        byte[] mux_suffix
+    ) {
+        require(self_side == 0 || self_side == 1);
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+
+        byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(cov_id) == 2);
+        require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
+        int other_input_idx = OpCovInputIdx(cov_id, 1);
+
+        PlayerState other = readInputStateWithTemplate(other_input_idx, player_prefix_len, player_suffix_len, player_hash);
+        require(other.player_id != player_id);
+
+        byte[32] self_ref = blake2b(owner + player_id);
+        byte[32] other_ref = blake2b(other.owner + other.player_id);
+        byte[32] white_player = self_ref;
+        byte[32] black_player = other_ref;
+        if (self_side == 1) {
+            white_player = other_ref;
+            black_player = self_ref;
+        }
+
+        State next_self = {
+            league_hash: league_hash,
+            player_hash: player_hash,
+            mux_hash: mux_hash,
+            route_hashes: route_hashes,
+            owner: owner,
+            player_id: player_id,
+            rating: rating,
+            games: games,
+            wins: wins,
+            draws: draws,
+            losses: losses
+        };
+
+        State next_other = {
+            league_hash: other.league_hash,
+            player_hash: other.player_hash,
+            mux_hash: other.mux_hash,
+            route_hashes: other.route_hashes,
+            owner: other.owner,
+            player_id: other.player_id,
+            rating: other.rating,
+            games: other.games,
+            wins: other.wins,
+            draws: other.draws,
+            losses: other.losses
+        };
+
+        GameState next_game = {
+            mux_hash: mux_hash,
+            route_hashes: route_hashes,
+            white_player: white_player,
+            black_player: black_player,
+            board: 0x04020305060302040101010101010101000000000000000000000000000000000000000000000000000000000000000009090909090909090c0a0b0d0e0b0a0c,
+            turn: 0,
+            status: 0,
+            castle_rights: 0x01010101,
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3
+        };
+
+        require(OpAuthOutputCount(this.activeInputIndex) == 3);
+        validateOutputState(OpAuthOutputIdx(this.activeInputIndex, 0), next_self);
+        validateOutputState(OpAuthOutputIdx(this.activeInputIndex, 1), next_other);
+        validateOutputStateWithTemplate(
+            OpAuthOutputIdx(this.activeInputIndex, 2),
+            next_game,
+            mux_prefix,
+            mux_suffix,
+            mux_hash
+        );
+    }
+
+    entrypoint function delegate_start_game(
+        sig owner_sig,
+        pubkey owner_pk,
+        int player_prefix_len,
+        int player_suffix_len
+    ) {
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+
+        byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(cov_id) == 2);
+        require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);
+        require(OpAuthOutputCount(this.activeInputIndex) == 0);
+
+        int leader_input_idx = OpCovInputIdx(cov_id, 0);
+        // The delegate path still reads the leader so it independently verifies
+        // that input 0 is really another Player under `player_hash`, not just
+        // some arbitrary covenant peer in the same shared covenant group.
+        PlayerState leader = readInputStateWithTemplate(leader_input_idx, player_prefix_len, player_suffix_len, player_hash);
+        // The leader-side shape and output validation already force the peer to
+        // be a distinct Player, but we keep this check so the delegate path
+        // still exercises a meaningful foreign-input read.
+        require(leader.player_id != player_id);
     }
 }

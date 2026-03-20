@@ -3,11 +3,16 @@ pragma silverscript ^0.1.0;
 contract League(
     byte[32] init_league_hash,
     byte[32] init_player_hash,
+    byte[32] init_mux_hash,
+    byte[256] init_route_hashes,
     int init_base_rating,
     byte[32] init_admin
 ) {
     struct PlayerState {
         byte[32] league_hash;
+        byte[32] player_hash;
+        byte[32] mux_hash;
+        byte[256] route_hashes;
         byte[32] owner;
         byte[32] player_id;
         int rating;
@@ -29,6 +34,8 @@ contract League(
     // registration lanes to operate in parallel.
     byte[32] league_hash = init_league_hash;
     byte[32] player_hash = init_player_hash;
+    byte[32] mux_hash = init_mux_hash;
+    byte[256] route_hashes = init_route_hashes;
     int base_rating = init_base_rating;
     byte[32] admin = init_admin;
 
@@ -53,12 +60,17 @@ contract League(
         State next_league = {
             league_hash: league_hash,
             player_hash: player_hash,
+            mux_hash: mux_hash,
+            route_hashes: route_hashes,
             base_rating: base_rating,
             admin: admin
         };
 
         PlayerState next_player = {
             league_hash: league_hash,
+            player_hash: player_hash,
+            mux_hash: mux_hash,
+            route_hashes: route_hashes,
             owner: owner,
             player_id: player_id,
             rating: base_rating,
