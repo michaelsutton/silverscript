@@ -114,6 +114,14 @@ pub fn settle_contract_path() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_settle.sil")
 }
 
+pub fn league_contract_path() -> &'static str {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/league.sil")
+}
+
+pub fn player_contract_path() -> &'static str {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/player.sil")
+}
+
 pub fn pawn_contract_path() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/chess_pawn.sil")
 }

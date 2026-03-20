@@ -17,8 +17,8 @@ use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledCont
 
 use chess_covenant::{
     castle_challenge_contract_path, castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path,
-    knight_contract_path, load_contract_source as load_preprocessed_contract_source, mux_contract_path, pawn_contract_path,
-    settle_contract_path, vert_contract_path,
+    knight_contract_path, league_contract_path, load_contract_source as load_preprocessed_contract_source, mux_contract_path,
+    pawn_contract_path, player_contract_path, settle_contract_path, vert_contract_path,
 };
 
 struct Player {
@@ -77,9 +77,6 @@ struct PlayerStateArgs<'a> {
     losses: i64,
 }
 
-const LEAGUE_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/league.sil"));
-const PLAYER_SOURCE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/player.sil"));
-
 struct MoveArgs {
     from_x: i64,
     from_y: i64,
@@ -125,7 +122,7 @@ fn player_from_seed(seed: u8) -> Player {
 
 fn player_template_hash(fix: &MuxChessFixture) -> Vec<u8> {
     let compiled = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &[0x11u8; 32],
             player_hash: &[0x22u8; 32],
@@ -155,6 +152,14 @@ fn player_template_hash(fix: &MuxChessFixture) -> Vec<u8> {
 fn load_contract_source(path: &'static str) -> &'static str {
     let source = load_preprocessed_contract_source(path);
     Box::leak(source.into_boxed_str())
+}
+
+fn league_source() -> &'static str {
+    load_contract_source(league_contract_path())
+}
+
+fn player_source() -> &'static str {
+    load_contract_source(player_contract_path())
 }
 
 fn template_fixture(source: &'static str, ctor: &[Expr<'_>]) -> TemplateFixture {
@@ -419,7 +424,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
     let black = player_from_seed(0x22);
 
     let player_template = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &[0x44u8; 32],
@@ -445,7 +450,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
         .as_bytes()
         .to_vec();
     let white_player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -462,7 +467,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
         },
     );
     let black_player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -499,7 +504,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
     );
 
     let settled_white = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -516,7 +521,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
         },
     );
     let settled_black = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -556,15 +561,29 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             Expr::bytes(player_template.script[player_layout.start + player_layout.len..].to_vec()),
         ],
     );
+    let white_needs_sig = status == 1 || status == 3;
+    let black_needs_sig = status == 2 || status == 3;
     let white_delegate_sigscript = entry_sigscript(
         &white_player,
         "delegate_settle",
-        vec![Expr::int(settle_prefix_len), Expr::int(settle_suffix_len), Expr::bytes(fix.settle.hash.clone())],
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(white.pubkey_bytes.clone()),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
     );
     let black_delegate_sigscript = entry_sigscript(
         &black_player,
         "delegate_settle",
-        vec![Expr::int(settle_prefix_len), Expr::int(settle_suffix_len), Expr::bytes(fix.settle.hash.clone())],
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(black.pubkey_bytes.clone()),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
     );
 
     let outputs = vec![covenant_output(&settled_white, 0, covenant_id), covenant_output(&settled_black, 0, covenant_id)];
@@ -573,7 +592,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
         covenant_utxo(&white_player, covenant_id),
         covenant_utxo(&black_player, covenant_id),
     ];
-    let tx = Transaction::new(
+    let mut tx = Transaction::new(
         1,
         vec![tx_input(0, settle_sigscript), tx_input(1, white_delegate_sigscript), tx_input(2, black_delegate_sigscript)],
         outputs,
@@ -581,6 +600,32 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
         Default::default(),
         0,
         vec![],
+    );
+
+    let white_settle_sig = if white_needs_sig { sign_tx_input_schnorr(&tx, &entries, 1, &white) } else { vec![0u8; 65] };
+    let black_settle_sig = if black_needs_sig { sign_tx_input_schnorr(&tx, &entries, 2, &black) } else { vec![0u8; 65] };
+
+    tx.inputs[1].signature_script = entry_sigscript(
+        &white_player,
+        "delegate_settle",
+        vec![
+            Expr::bytes(white_settle_sig),
+            Expr::bytes(white.pubkey_bytes.clone()),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
+    );
+    tx.inputs[2].signature_script = entry_sigscript(
+        &black_player,
+        "delegate_settle",
+        vec![
+            Expr::bytes(black_settle_sig),
+            Expr::bytes(black.pubkey_bytes.clone()),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
     );
 
     let leader_result = execute_input_with_covenants(tx.clone(), entries.clone(), 0);
@@ -4819,7 +4864,7 @@ fn league_registers_a_real_player_contract() {
     let player_id_domain = b"LeaguePlayerId".to_vec();
 
     let player_template = compile_contract(
-        PLAYER_SOURCE,
+        player_source(),
         &[
             Expr::bytes(league_hash.clone()),
             Expr::bytes(vec![0x44u8; 32]),
@@ -4844,7 +4889,7 @@ fn league_registers_a_real_player_contract() {
         Blake2bParams::new().hash_length(32).to_state().update(&player_prefix).update(&player_suffix).finalize().as_bytes().to_vec();
 
     let league = compile_contract(
-        LEAGUE_SOURCE,
+        league_source(),
         &[
             Expr::bytes(league_hash.clone()),
             Expr::bytes(player_hash.clone()),
@@ -4875,7 +4920,7 @@ fn league_registers_a_real_player_contract() {
         .to_vec();
 
     let registered_player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -4931,7 +4976,7 @@ fn players_can_start_a_real_mux_game() {
     let covenant_id = Hash::from_bytes([0x71u8; 32]);
 
     let player_template = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &[0x44u8; 32],
@@ -4960,7 +5005,7 @@ fn players_can_start_a_real_mux_game() {
     let player_suffix_len = (player_template.script.len() - (player_layout.start + player_layout.len)) as i64;
 
     let white_player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -4977,7 +5022,7 @@ fn players_can_start_a_real_mux_game() {
         },
     );
     let black_player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -4994,7 +5039,7 @@ fn players_can_start_a_real_mux_game() {
         },
     );
     let next_white_player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -5011,7 +5056,7 @@ fn players_can_start_a_real_mux_game() {
         },
     );
     let next_black_player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &league_hash,
             player_hash: &player_hash,
@@ -5138,6 +5183,341 @@ fn terminal_mux_settles_draw_back_into_players() {
 }
 
 #[test]
+fn winning_player_must_sign_settlement_delegate() {
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+    let base_rating = 1200;
+    let league_hash = vec![0x35u8; 32];
+    let covenant_id = Hash::from_bytes([0x75u8; 32]);
+
+    let white = player_from_seed(0x41);
+    let black = player_from_seed(0x42);
+
+    let player_template = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &[0x44u8; 32],
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &[0x55u8; 32],
+            player_id: &[0x56u8; 32],
+            open_games: 0,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+    let player_layout = player_template.state_layout;
+    let player_hash = Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(&player_template.script[..player_layout.start])
+        .update(&player_template.script[player_layout.start + player_layout.len..])
+        .finalize()
+        .as_bytes()
+        .to_vec();
+    let white_player = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &white.owner_hash,
+            player_id: &white.player_id,
+            open_games: 1,
+            rating: base_rating,
+            games: 10,
+            wins: 6,
+            draws: 2,
+            losses: 2,
+        },
+    );
+    let black_player = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &black.owner_hash,
+            player_id: &black.player_id,
+            open_games: 1,
+            rating: base_rating,
+            games: 10,
+            wins: 2,
+            draws: 2,
+            losses: 6,
+        },
+    );
+    let routed_settle = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 1);
+    let settled_white = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &white.owner_hash,
+            player_id: &white.player_id,
+            open_games: 0,
+            rating: base_rating,
+            games: 11,
+            wins: 7,
+            draws: 2,
+            losses: 2,
+        },
+    );
+    let settled_black = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &black.owner_hash,
+            player_id: &black.player_id,
+            open_games: 0,
+            rating: base_rating,
+            games: 11,
+            wins: 2,
+            draws: 2,
+            losses: 7,
+        },
+    );
+
+    let settle_prefix_len = fix.settle.prefix.len() as i64;
+    let settle_suffix_len = fix.settle.suffix.len() as i64;
+    let settle_sigscript = entry_sigscript(
+        &routed_settle,
+        "settle",
+        vec![
+            Expr::bytes(player_template.script[..player_layout.start].to_vec()),
+            Expr::bytes(player_template.script[player_layout.start + player_layout.len..].to_vec()),
+        ],
+    );
+    let white_delegate_sigscript = entry_sigscript(
+        &white_player,
+        "delegate_settle",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(white.pubkey_bytes.clone()),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
+    );
+    let black_delegate_sigscript = entry_sigscript(
+        &black_player,
+        "delegate_settle",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(black.pubkey_bytes.clone()),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
+    );
+
+    let outputs = vec![covenant_output(&settled_white, 0, covenant_id), covenant_output(&settled_black, 0, covenant_id)];
+    let entries = vec![
+        covenant_utxo(&routed_settle, covenant_id),
+        covenant_utxo(&white_player, covenant_id),
+        covenant_utxo(&black_player, covenant_id),
+    ];
+    let tx = Transaction::new(
+        1,
+        vec![tx_input(0, settle_sigscript), tx_input(1, white_delegate_sigscript), tx_input(2, black_delegate_sigscript)],
+        outputs,
+        0,
+        Default::default(),
+        0,
+        vec![],
+    );
+
+    let white_delegate_result = execute_input_with_covenants(tx, entries, 1);
+    assert!(white_delegate_result.is_err(), "winning Player.delegate_settle should require a signature");
+}
+
+#[test]
+fn losing_player_may_delegate_settlement_unsigned() {
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+    let base_rating = 1200;
+    let league_hash = vec![0x36u8; 32];
+    let covenant_id = Hash::from_bytes([0x76u8; 32]);
+
+    let white = player_from_seed(0x43);
+    let black = player_from_seed(0x44);
+
+    let player_template = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &[0x44u8; 32],
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &[0x55u8; 32],
+            player_id: &[0x56u8; 32],
+            open_games: 0,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+    let player_layout = player_template.state_layout;
+    let player_hash = Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(&player_template.script[..player_layout.start])
+        .update(&player_template.script[player_layout.start + player_layout.len..])
+        .finalize()
+        .as_bytes()
+        .to_vec();
+    let white_player = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &white.owner_hash,
+            player_id: &white.player_id,
+            open_games: 1,
+            rating: base_rating,
+            games: 10,
+            wins: 6,
+            draws: 2,
+            losses: 2,
+        },
+    );
+    let black_player = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &black.owner_hash,
+            player_id: &black.player_id,
+            open_games: 1,
+            rating: base_rating,
+            games: 10,
+            wins: 2,
+            draws: 2,
+            losses: 6,
+        },
+    );
+    let routed_settle = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 1);
+    let settled_white = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &white.owner_hash,
+            player_id: &white.player_id,
+            open_games: 0,
+            rating: base_rating,
+            games: 11,
+            wins: 7,
+            draws: 2,
+            losses: 2,
+        },
+    );
+    let settled_black = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &black.owner_hash,
+            player_id: &black.player_id,
+            open_games: 0,
+            rating: base_rating,
+            games: 11,
+            wins: 2,
+            draws: 2,
+            losses: 7,
+        },
+    );
+
+    let settle_prefix_len = fix.settle.prefix.len() as i64;
+    let settle_suffix_len = fix.settle.suffix.len() as i64;
+    let settle_sigscript = entry_sigscript(
+        &routed_settle,
+        "settle",
+        vec![
+            Expr::bytes(player_template.script[..player_layout.start].to_vec()),
+            Expr::bytes(player_template.script[player_layout.start + player_layout.len..].to_vec()),
+        ],
+    );
+    let white_delegate_sigscript = entry_sigscript(
+        &white_player,
+        "delegate_settle",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(white.pubkey_bytes.clone()),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
+    );
+    let black_delegate_sigscript = entry_sigscript(
+        &black_player,
+        "delegate_settle",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(vec![0u8; 32]),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
+    );
+
+    let outputs = vec![covenant_output(&settled_white, 0, covenant_id), covenant_output(&settled_black, 0, covenant_id)];
+    let entries = vec![
+        covenant_utxo(&routed_settle, covenant_id),
+        covenant_utxo(&white_player, covenant_id),
+        covenant_utxo(&black_player, covenant_id),
+    ];
+    let mut tx = Transaction::new(
+        1,
+        vec![tx_input(0, settle_sigscript), tx_input(1, white_delegate_sigscript), tx_input(2, black_delegate_sigscript)],
+        outputs,
+        0,
+        Default::default(),
+        0,
+        vec![],
+    );
+
+    let white_settle_sig = sign_tx_input_schnorr(&tx, &entries, 1, &white);
+    tx.inputs[1].signature_script = entry_sigscript(
+        &white_player,
+        "delegate_settle",
+        vec![
+            Expr::bytes(white_settle_sig),
+            Expr::bytes(white.pubkey_bytes.clone()),
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+        ],
+    );
+
+    let black_delegate_result = execute_input_with_covenants(tx, entries, 2);
+    assert!(black_delegate_result.is_ok(), "losing Player.delegate_settle should allow zeroed unsigned args");
+}
+
+#[test]
 fn player_can_retire_with_no_open_games() {
     let fix = build_fixture();
     let route_hashes = packed_route_hashes(&fix);
@@ -5146,7 +5526,7 @@ fn player_can_retire_with_no_open_games() {
     let covenant_id = Hash::from_bytes([0x73u8; 32]);
 
     let player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &[0x41u8; 32],
             player_hash: &player_template_hash(&fix),
@@ -5183,7 +5563,7 @@ fn player_cannot_retire_with_open_games() {
     let covenant_id = Hash::from_bytes([0x74u8; 32]);
 
     let player = compile_player_state(
-        PLAYER_SOURCE,
+        player_source(),
         PlayerStateArgs {
             league_hash: &[0x42u8; 32],
             player_hash: &player_template_hash(&fix),

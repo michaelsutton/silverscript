@@ -1,4 +1,5 @@
 pragma silverscript ^0.1.0;
+// @consts constants.sil
 
 contract Player(
     byte[32] init_league_hash,
@@ -168,7 +169,13 @@ contract Player(
         require(leader.player_id != player_id);
     }
 
-    entrypoint function delegate_settle(int settle_prefix_len, int settle_suffix_len, byte[32] settle_hash) {
+    entrypoint function delegate_settle(
+        sig owner_sig,
+        pubkey owner_pk,
+        int settle_prefix_len,
+        int settle_suffix_len,
+        byte[32] settle_hash
+    ) {
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) == 3);
         require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);
@@ -185,6 +192,20 @@ contract Player(
 
         byte[32] self_ref = blake2b(owner + player_id);
         require(self_ref == leader.white_player || self_ref == leader.black_player);
+
+        int funds_entitled = 0;
+        if (leader.status == DRAW) {
+            funds_entitled = 1;
+        } else if (leader.status == WWIN && self_ref == leader.white_player) {
+            funds_entitled = 1;
+        } else if (leader.status == BWIN && self_ref == leader.black_player) {
+            funds_entitled = 1;
+        }
+
+        if (funds_entitled == 1) {
+            require(blake2b(owner_pk) == owner);
+            require(checkSig(owner_sig, owner_pk));
+        }
     }
 
     entrypoint function retire(sig owner_sig, pubkey owner_pk) {
