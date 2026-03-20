@@ -85,6 +85,45 @@ struct MoveArgs {
     promo_piece: i64,
 }
 
+const ELO_K: i64 = 32;
+const ELO_SCALE: i64 = 1000;
+
+fn approx_expected_score(diff: i64) -> i64 {
+    if diff < -800 {
+        990
+    } else if diff < -600 {
+        970
+    } else if diff < -400 {
+        910
+    } else if diff < -250 {
+        820
+    } else if diff < -150 {
+        700
+    } else if diff < -75 {
+        600
+    } else if diff < 75 {
+        500
+    } else if diff < 150 {
+        400
+    } else if diff < 250 {
+        300
+    } else if diff < 400 {
+        180
+    } else if diff < 600 {
+        90
+    } else if diff < 800 {
+        30
+    } else {
+        10
+    }
+}
+
+fn approx_updated_rating(self_rating: i64, opp_rating: i64, actual_score: i64) -> i64 {
+    let expected = approx_expected_score(opp_rating - self_rating);
+    let delta = (ELO_K * (actual_score - expected)) / ELO_SCALE;
+    self_rating + delta
+}
+
 fn packed_route_hashes(fix: &MuxChessFixture) -> Vec<u8> {
     let player_hash = player_template_hash(fix);
     let mut out = Vec::with_capacity(32 * 9);
@@ -483,6 +522,20 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             losses: 6,
         },
     );
+    let white_rating = if status == 1 {
+        approx_updated_rating(base_rating, base_rating, 1000)
+    } else if status == 3 {
+        approx_updated_rating(base_rating, base_rating, 500)
+    } else {
+        approx_updated_rating(base_rating, base_rating, 0)
+    };
+    let black_rating = if status == 2 {
+        approx_updated_rating(base_rating, base_rating, 1000)
+    } else if status == 3 {
+        approx_updated_rating(base_rating, base_rating, 500)
+    } else {
+        approx_updated_rating(base_rating, base_rating, 0)
+    };
 
     let terminal_mux = compile_state(
         fix.mux.source,
@@ -513,7 +566,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
             open_games: 0,
-            rating: base_rating,
+            rating: white_rating,
             games: expected_white.0,
             wins: expected_white.1,
             draws: expected_white.2,
@@ -530,7 +583,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
             open_games: 0,
-            rating: base_rating,
+            rating: black_rating,
             games: expected_black.0,
             wins: expected_black.1,
             draws: expected_black.2,
@@ -5254,6 +5307,8 @@ fn winning_player_must_sign_settlement_delegate() {
             losses: 6,
         },
     );
+    let white_rating = approx_updated_rating(base_rating, base_rating, 1000);
+    let black_rating = approx_updated_rating(base_rating, base_rating, 0);
     let routed_settle = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 1);
     let settled_white = compile_player_state(
         player_source(),
@@ -5265,7 +5320,7 @@ fn winning_player_must_sign_settlement_delegate() {
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
             open_games: 0,
-            rating: base_rating,
+            rating: white_rating,
             games: 11,
             wins: 7,
             draws: 2,
@@ -5282,7 +5337,7 @@ fn winning_player_must_sign_settlement_delegate() {
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
             open_games: 0,
-            rating: base_rating,
+            rating: black_rating,
             games: 11,
             wins: 2,
             draws: 2,
@@ -5415,6 +5470,8 @@ fn losing_player_may_delegate_settlement_unsigned() {
             losses: 6,
         },
     );
+    let white_rating = approx_updated_rating(base_rating, base_rating, 1000);
+    let black_rating = approx_updated_rating(base_rating, base_rating, 0);
     let routed_settle = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 1);
     let settled_white = compile_player_state(
         player_source(),
@@ -5426,7 +5483,7 @@ fn losing_player_may_delegate_settlement_unsigned() {
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
             open_games: 0,
-            rating: base_rating,
+            rating: white_rating,
             games: 11,
             wins: 7,
             draws: 2,
@@ -5443,7 +5500,7 @@ fn losing_player_may_delegate_settlement_unsigned() {
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
             open_games: 0,
-            rating: base_rating,
+            rating: black_rating,
             games: 11,
             wins: 2,
             draws: 2,
