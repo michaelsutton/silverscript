@@ -14,10 +14,10 @@ flowchart TD
 
     L -. injects player_hash .-> P
     L -. injects mux_hash .-> P
-    L -. injects route_hashes .-> P
+    L -. injects routes_commitment .-> P
 
     P -. injects mux_hash .-> G
-    P -. injects route_hashes .-> G
+    P -. witnesses route_hashes .-> G
 
     G -. validates Player inputs by player_hash .-> P
     P -. delegates to Game leader by mux_hash .-> G
@@ -30,18 +30,19 @@ flowchart LR
     subgraph League
         LH[player_hash]
         LM[mux_hash]
-        LR[route_hashes]
+        LR[routes_commitment]
     end
 
     subgraph Player
         PM[mux_hash]
-        PX[route_hashes]
+        PX[routes_commitment]
         PP[player_id]
         PO[owner]
         PR[rating]
     end
 
     subgraph Game
+        GH[route_hashes]
         GW[white_player_ref]
         GB[black_player_ref]
         GR[result / terminal state]
@@ -67,6 +68,10 @@ Today the game state binds each side as `blake2b(owner || player_id)`, not as a
 raw `player_id`. That keeps the game-side footprint to one field per side while
 still letting settlement recover canonical player ids from `Player` inputs.
 
+Today `League` and `Player` keep only `routes_commitment = blake2b(route_hashes)`.
+The full `route_hashes` blob is supplied only when `Player.start_game` expands
+that commitment into a concrete game state.
+
 ## Why shared covenant id is not enough by itself
 
 With one shared covenant id:
@@ -82,5 +87,5 @@ So settlement needs both:
 
 That is why the design depends on:
 
-- injected `player_hash`, `mux_hash`, and `route_hashes`
+- injected `player_hash`, `mux_hash`, and `routes_commitment`
 - input-side template validation primitives
