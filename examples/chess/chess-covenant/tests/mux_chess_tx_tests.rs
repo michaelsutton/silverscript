@@ -5117,6 +5117,133 @@ fn league_registers_a_real_player_contract() {
 }
 
 #[test]
+fn league_register_rejects_mutated_lane_output() {
+    let owner = player_from_seed(7);
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+
+    let league_hash = vec![0x11u8; 32];
+    let admin = vec![0x33u8; 32];
+    let base_rating = 1200i64;
+    let covenant_id = Hash::from_bytes([0x66u8; 32]);
+    let player_id_domain = b"LeaguePlayerId".to_vec();
+
+    let player_template = compile_contract(
+        player_source(),
+        &[
+            Expr::bytes(league_hash.clone()),
+            Expr::bytes(vec![0x44u8; 32]),
+            Expr::bytes(fix.mux.hash.clone()),
+            Expr::bytes(routes_commitment.clone()),
+            Expr::bytes(vec![0x55u8; 32]),
+            Expr::bytes(vec![0x77u8; 32]),
+            Expr::int(0),
+            Expr::int(900),
+            Expr::int(1),
+            Expr::int(2),
+            Expr::int(3),
+            Expr::int(4),
+        ],
+        CompileOptions::default(),
+    )
+    .expect("compile player template succeeds");
+    let layout = player_template.state_layout;
+    let player_prefix = player_template.script[..layout.start].to_vec();
+    let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
+    let player_hash =
+        Blake2bParams::new().hash_length(32).to_state().update(&player_prefix).update(&player_suffix).finalize().as_bytes().to_vec();
+
+    let league = compile_contract(
+        league_source(),
+        &[
+            Expr::bytes(league_hash.clone()),
+            Expr::bytes(player_hash.clone()),
+            Expr::bytes(fix.mux.hash.clone()),
+            Expr::bytes(routes_commitment.clone()),
+            Expr::int(base_rating),
+            Expr::bytes(admin.clone()),
+        ],
+        CompileOptions::default(),
+    )
+    .expect("compile league succeeds");
+
+    let bad_league = compile_contract(
+        league_source(),
+        &[
+            Expr::bytes(league_hash.clone()),
+            Expr::bytes(player_hash.clone()),
+            Expr::bytes(fix.mux.hash.clone()),
+            Expr::bytes(routes_commitment.clone()),
+            Expr::int(base_rating + 1),
+            Expr::bytes(admin.clone()),
+        ],
+        CompileOptions::default(),
+    )
+    .expect("compile mutated league succeeds");
+
+    let league_input = TransactionInput {
+        previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([0xabu8; 32]), index: 7 },
+        signature_script: vec![],
+        sequence: 0,
+        sig_op_count: 1,
+    };
+
+    let player_id = Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(&player_id_domain)
+        .update(&[0xabu8; 32])
+        .update(&7u32.to_le_bytes())
+        .finalize()
+        .as_bytes()
+        .to_vec();
+
+    let registered_player = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &owner.owner_hash,
+            player_id: &player_id,
+            open_games: 0,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+
+    let placeholder_sigscript = entry_sigscript(
+        &league,
+        "register_player",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(owner.pubkey_bytes.clone()),
+            Expr::bytes(player_prefix.clone()),
+            Expr::bytes(player_suffix.clone()),
+        ],
+    );
+    let outputs = vec![covenant_output(&bad_league, 0, covenant_id), covenant_output(&registered_player, 0, covenant_id)];
+    let entries = vec![covenant_utxo(&league, covenant_id)];
+    let mut tx = Transaction::new(1, vec![league_input], outputs, 0, Default::default(), 0, vec![]);
+    tx.inputs[0].signature_script = placeholder_sigscript;
+
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &owner);
+    tx.inputs[0].signature_script = entry_sigscript(
+        &league,
+        "register_player",
+        vec![Expr::bytes(sig), Expr::bytes(owner.pubkey_bytes.clone()), Expr::bytes(player_prefix), Expr::bytes(player_suffix)],
+    );
+
+    let err = execute_input_with_covenants(tx, entries, 0).expect_err("league register should fail when lane output mutates");
+    assert!(err.to_string().contains("verification failed"), "unexpected register failure: {err}");
+}
+
+#[test]
 fn players_can_start_a_real_mux_game() {
     let fix = build_fixture();
     let route_hashes = packed_route_hashes(&fix);
