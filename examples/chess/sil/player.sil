@@ -23,6 +23,7 @@ contract Player(
         byte[64] board;
         int turn;
         int status;
+        int move_timeout;
         byte[4] castle_rights;
         int en_passant_idx;
         int pending_src_idx;
@@ -60,10 +61,12 @@ contract Player(
         int player_prefix_len,
         int player_suffix_len,
         byte[288] route_hashes,
+        int move_timeout,
         byte[] mux_prefix,
         byte[] mux_suffix
     ) {
         require(self_side == 0 || self_side == 1);
+        require(move_timeout > 0);
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));
         require(blake2b(route_hashes) == routes_commitment);
@@ -123,6 +126,7 @@ contract Player(
             board: 0x04020305060302040101010101010101000000000000000000000000000000000000000000000000000000000000000009090909090909090c0a0b0d0e0b0a0c,
             turn: 0,
             status: 0,
+            move_timeout: move_timeout,
             castle_rights: 0x01010101,
             en_passant_idx: -1,
             pending_src_idx: -1,
@@ -147,9 +151,11 @@ contract Player(
     entrypoint function delegate_start_game(
         sig owner_sig,
         pubkey owner_pk,
+        int move_timeout,
         int player_prefix_len,
         int player_suffix_len
     ) {
+        require(move_timeout > 0);
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));
 

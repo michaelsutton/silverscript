@@ -11,6 +11,7 @@ use chess_covenant::{
 
 const LEAGUE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/league.sil");
 const PLAYER_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../sil/player.sil");
+const DEFAULT_MOVE_TIMEOUT: i64 = 600;
 
 #[test]
 fn isolated_rook_path_loop_reports_script_size() {
@@ -205,6 +206,7 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
         Expr::bytes(standard_board),
         Expr::int(0),
         Expr::int(0),
+        Expr::int(DEFAULT_MOVE_TIMEOUT),
         Expr::bytes(vec![1u8; 4]),
         Expr::int(-1),
         Expr::int(12),
@@ -226,6 +228,7 @@ fn mux_constructor_args() -> Vec<Expr<'static>> {
         Expr::bytes(vec![0u8; 64]),
         Expr::int(0),
         Expr::int(0),
+        Expr::int(DEFAULT_MOVE_TIMEOUT),
         Expr::bytes(vec![1u8; 4]),
         Expr::int(-1),
         Expr::int(-1),
