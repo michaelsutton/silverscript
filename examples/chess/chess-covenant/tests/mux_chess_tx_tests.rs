@@ -87,6 +87,7 @@ struct MoveArgs {
 
 const ELO_K: i64 = 32;
 const ELO_SCALE: i64 = 1000;
+const DEFAULT_MOVE_TIMEOUT: i64 = 600;
 
 fn approx_expected_score(diff: i64) -> i64 {
     if diff < -800 {
@@ -290,6 +291,7 @@ fn build_fixture() -> MuxChessFixture {
         Expr::bytes(dummy_board.clone()),
         Expr::int(0),
         Expr::int(0),
+        Expr::int(DEFAULT_MOVE_TIMEOUT),
         castle_rights_expr(full_castle_rights()),
         Expr::int(-1),
         Expr::int(-1),
@@ -329,6 +331,7 @@ fn compile_state(
         Expr::bytes(state.board.to_vec()),
         Expr::int(state.turn),
         Expr::int(state.status),
+        Expr::int(DEFAULT_MOVE_TIMEOUT),
         castle_rights_expr(state.castle_rights),
         Expr::int(state.en_passant_idx),
         Expr::int(state.pending_src_idx),
@@ -5262,6 +5265,7 @@ fn players_can_start_a_real_mux_game() {
             Expr::int(player_prefix_len),
             Expr::int(player_suffix_len),
             Expr::bytes(route_hashes.clone()),
+            Expr::int(DEFAULT_MOVE_TIMEOUT),
             Expr::bytes(fix.mux.prefix.clone()),
             Expr::bytes(fix.mux.suffix.clone()),
         ],
@@ -5272,6 +5276,7 @@ fn players_can_start_a_real_mux_game() {
         vec![
             Expr::bytes(vec![0u8; 65]),
             Expr::bytes(black.pubkey_bytes.clone()),
+            Expr::int(DEFAULT_MOVE_TIMEOUT),
             Expr::int(player_prefix_len),
             Expr::int(player_suffix_len),
         ],
@@ -5306,6 +5311,7 @@ fn players_can_start_a_real_mux_game() {
             Expr::int(player_prefix_len),
             Expr::int(player_suffix_len),
             Expr::bytes(route_hashes.clone()),
+            Expr::int(DEFAULT_MOVE_TIMEOUT),
             Expr::bytes(fix.mux.prefix.clone()),
             Expr::bytes(fix.mux.suffix.clone()),
         ],
@@ -5316,6 +5322,7 @@ fn players_can_start_a_real_mux_game() {
         vec![
             Expr::bytes(black_sig),
             Expr::bytes(black.pubkey_bytes.clone()),
+            Expr::int(DEFAULT_MOVE_TIMEOUT),
             Expr::int(player_prefix_len),
             Expr::int(player_suffix_len),
         ],

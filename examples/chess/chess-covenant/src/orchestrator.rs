@@ -136,6 +136,8 @@ pub enum Side {
     Black,
 }
 
+const DEFAULT_MOVE_TIMEOUT: i64 = 600;
+
 impl Side {
     fn other(self) -> Self {
         match self {
@@ -360,6 +362,7 @@ struct GameStateData {
     board: Vec<u8>,
     turn: i64,
     status: i64,
+    move_timeout: i64,
     castle_rights: [u8; 4],
     en_passant_idx: i64,
     pending_src_idx: i64,
@@ -1140,6 +1143,7 @@ impl TxArena {
             board: standard_board(),
             turn: 0,
             status: 0,
+            move_timeout: DEFAULT_MOVE_TIMEOUT,
             castle_rights: [1, 1, 1, 1],
             en_passant_idx: -1,
             pending_src_idx: -1,
@@ -1161,6 +1165,7 @@ impl TxArena {
                 Expr::int(self.player_prefix_len),
                 Expr::int(self.player_suffix_len),
                 Expr::bytes(packed_execution_route_hashes(&self.fix)),
+                Expr::int(DEFAULT_MOVE_TIMEOUT),
                 Expr::bytes(self.fix.mux.prefix.clone()),
                 Expr::bytes(self.fix.mux.suffix.clone()),
             ],
@@ -1171,6 +1176,7 @@ impl TxArena {
             vec![
                 Expr::bytes(vec![0u8; 65]),
                 Expr::bytes(black.pubkey_bytes.clone()),
+                Expr::int(DEFAULT_MOVE_TIMEOUT),
                 Expr::int(self.player_prefix_len),
                 Expr::int(self.player_suffix_len),
             ],
@@ -1202,6 +1208,7 @@ impl TxArena {
                 Expr::int(self.player_prefix_len),
                 Expr::int(self.player_suffix_len),
                 Expr::bytes(packed_execution_route_hashes(&self.fix)),
+                Expr::int(DEFAULT_MOVE_TIMEOUT),
                 Expr::bytes(self.fix.mux.prefix.clone()),
                 Expr::bytes(self.fix.mux.suffix.clone()),
             ],
@@ -1212,6 +1219,7 @@ impl TxArena {
             vec![
                 Expr::bytes(black_sig),
                 Expr::bytes(black.pubkey_bytes.clone()),
+                Expr::int(DEFAULT_MOVE_TIMEOUT),
                 Expr::int(self.player_prefix_len),
                 Expr::int(self.player_suffix_len),
             ],
@@ -1395,6 +1403,7 @@ impl TxArena {
             board: game.board.clone(),
             turn: game.turn,
             status: if game.turn == 0 { 2 } else { 1 },
+            move_timeout: game.move_timeout,
             castle_rights: game.castle_rights,
             en_passant_idx: -1,
             pending_src_idx: -1,
@@ -1862,6 +1871,7 @@ fn build_execution_fixture() -> ExecutionFixture {
         Expr::bytes(dummy_board),
         Expr::int(0),
         Expr::int(0),
+        Expr::int(DEFAULT_MOVE_TIMEOUT),
         Expr::bytes(vec![1u8; 4]),
         Expr::int(-1),
         Expr::int(-1),
@@ -2043,6 +2053,7 @@ fn pending_state_for_move(game: &GameStateData, mv: MoveSpec) -> GameStateData {
         board: game.board.clone(),
         turn: game.turn,
         status: game.status,
+        move_timeout: game.move_timeout,
         castle_rights: game.castle_rights,
         en_passant_idx: game.en_passant_idx,
         pending_src_idx: square_idx(mv.from_x, mv.from_y),
@@ -2129,6 +2140,7 @@ fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateDa
         board,
         turn: 1 - game.turn,
         status: game.status,
+        move_timeout: game.move_timeout,
         castle_rights,
         en_passant_idx,
         pending_src_idx: -1,
@@ -2157,6 +2169,7 @@ fn compile_game_state(source: &'static str, fix: &ExecutionFixture, state: &Game
         Expr::bytes(state.board.clone()),
         Expr::int(state.turn),
         Expr::int(state.status),
+        Expr::int(state.move_timeout),
         Expr::bytes(state.castle_rights.to_vec()),
         Expr::int(state.en_passant_idx),
         Expr::int(state.pending_src_idx),
@@ -2392,6 +2405,7 @@ fn worker_constructor_args(mux_hash: &[u8]) -> Vec<Expr<'static>> {
         Expr::bytes(standard_board()),
         Expr::int(0),
         Expr::int(0),
+        Expr::int(DEFAULT_MOVE_TIMEOUT),
         Expr::bytes(vec![1u8; 4]),
         Expr::int(-1),
         Expr::int(12),
@@ -2411,6 +2425,7 @@ fn mux_constructor_args() -> Vec<Expr<'static>> {
         Expr::bytes(vec![0u8; 64]),
         Expr::int(0),
         Expr::int(0),
+        Expr::int(DEFAULT_MOVE_TIMEOUT),
         Expr::bytes(vec![1u8; 4]),
         Expr::int(-1),
         Expr::int(-1),
