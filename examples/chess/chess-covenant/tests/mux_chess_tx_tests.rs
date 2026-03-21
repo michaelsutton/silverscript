@@ -647,12 +647,22 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
     let white_delegate_sigscript = entry_sigscript(
         &white_player,
         "delegate_settle",
-        vec![Expr::int(settle_prefix_len), Expr::int(settle_suffix_len), Expr::bytes(fix.settle.hash.clone())],
+        vec![
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+            Expr::bytes(route_hashes.clone()),
+        ],
     );
     let black_delegate_sigscript = entry_sigscript(
         &black_player,
         "delegate_settle",
-        vec![Expr::int(settle_prefix_len), Expr::int(settle_suffix_len), Expr::bytes(fix.settle.hash.clone())],
+        vec![
+            Expr::int(settle_prefix_len),
+            Expr::int(settle_suffix_len),
+            Expr::bytes(fix.settle.hash.clone()),
+            Expr::bytes(route_hashes.clone()),
+        ],
     );
 
     let outputs = vec![
@@ -812,6 +822,7 @@ fn build_draw_settlement_tx_with_values(
             Expr::int(fix.settle.prefix.len() as i64),
             Expr::int(fix.settle.suffix.len() as i64),
             Expr::bytes(fix.settle.hash.clone()),
+            Expr::bytes(route_hashes.clone()),
         ],
     );
     let black_delegate_sigscript = entry_sigscript(
@@ -821,6 +832,7 @@ fn build_draw_settlement_tx_with_values(
             Expr::int(fix.settle.prefix.len() as i64),
             Expr::int(fix.settle.suffix.len() as i64),
             Expr::bytes(fix.settle.hash.clone()),
+            Expr::bytes(route_hashes.clone()),
         ],
     );
 

@@ -178,7 +178,8 @@ contract Player(
     entrypoint function delegate_settle(
         int settle_prefix_len,
         int settle_suffix_len,
-        byte[32] settle_hash
+        byte[32] settle_hash,
+        byte[288] route_hashes
     ) {
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) == 3);
@@ -186,6 +187,8 @@ contract Player(
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
 
         int leader_input_idx = OpCovInputIdx(cov_id, 0);
+        require(blake2b(route_hashes) == routes_commitment);
+        require(blake2b(settle_hash + player_hash) == route_hashes.slice(256, 288));
         SettleState leader = readInputStateWithTemplate(leader_input_idx, settle_prefix_len, settle_suffix_len, settle_hash);
 
         // Settlement is driven by a terminal settle worker state, not by a

@@ -1603,6 +1603,7 @@ impl TxArena {
 
         let settled_white = self.compile_player(&next_white);
         let settled_black = self.compile_player(&next_black);
+        let route_hashes = packed_execution_route_hashes(&self.fix);
         let settle_sigscript = entry_sigscript(
             &routed_settle,
             "settle",
@@ -1616,6 +1617,7 @@ impl TxArena {
                 Expr::int(self.fix.settle.prefix.len() as i64),
                 Expr::int(self.fix.settle.suffix.len() as i64),
                 Expr::bytes(self.fix.settle.hash.clone()),
+                Expr::bytes(route_hashes.clone()),
             ],
         );
         let black_placeholder = entry_sigscript(
@@ -1625,6 +1627,7 @@ impl TxArena {
                 Expr::int(self.fix.settle.prefix.len() as i64),
                 Expr::int(self.fix.settle.suffix.len() as i64),
                 Expr::bytes(self.fix.settle.hash.clone()),
+                Expr::bytes(route_hashes.clone()),
             ],
         );
         let outputs = vec![
