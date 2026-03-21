@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use blake2b_simd::Params as Blake2bParams;
@@ -1181,8 +1181,15 @@ impl TxArena {
             covenant_output(&opening_mux, 0, self.covenant_id),
         ];
         let entries = vec![covenant_utxo(&white_contract, self.covenant_id), covenant_utxo(&black_contract, self.covenant_id)];
-        let mut tx =
-            Transaction::new(1, vec![tx_input(0, white_placeholder), tx_input(1, black_placeholder)], outputs, 0, Default::default(), 0, vec![]);
+        let mut tx = Transaction::new(
+            1,
+            vec![tx_input(0, white_placeholder), tx_input(1, black_placeholder)],
+            outputs,
+            0,
+            Default::default(),
+            0,
+            vec![],
+        );
         let white_sig = sign_tx_input_schnorr(&tx, &entries, 0, white);
         let black_sig = sign_tx_input_schnorr(&tx, &entries, 1, black);
         tx.inputs[0].signature_script = entry_sigscript(
@@ -1209,7 +1216,8 @@ impl TxArena {
                 Expr::int(self.player_suffix_len),
             ],
         );
-        execute_input_with_covenants(tx.clone(), entries.clone(), 0).map_err(|err| OrchestratorError(format!("start leader failed: {err}")))?;
+        execute_input_with_covenants(tx.clone(), entries.clone(), 0)
+            .map_err(|err| OrchestratorError(format!("start leader failed: {err}")))?;
         execute_input_with_covenants(tx, entries, 1).map_err(|err| OrchestratorError(format!("start delegate failed: {err}")))?;
 
         self.players.insert(white.name.clone(), next_white);
@@ -1303,8 +1311,11 @@ impl TxArena {
 
         let next = apply_move_to_state(&game, mv)?;
         let next_mux = self.compile_mux(&next);
-        let apply_sigscript =
-            entry_sigscript(&worker_contract, "apply", vec![Expr::bytes(self.fix.mux.prefix.clone()), Expr::bytes(self.fix.mux.suffix.clone())]);
+        let apply_sigscript = entry_sigscript(
+            &worker_contract,
+            "apply",
+            vec![Expr::bytes(self.fix.mux.prefix.clone()), Expr::bytes(self.fix.mux.suffix.clone())],
+        );
         let apply_tx = Transaction::new(
             1,
             vec![tx_input(0, apply_sigscript)],
@@ -1321,12 +1332,18 @@ impl TxArena {
         let recipient = if actor_side == Side::White {
             self.players
                 .iter()
-                .find_map(|(name, state)| (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == game.black_player).then_some(name.clone()))
+                .find_map(|(name, state)| {
+                    (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == game.black_player)
+                        .then_some(name.clone())
+                })
                 .ok_or_else(|| OrchestratorError("missing black owner".to_string()))?
         } else {
             self.players
                 .iter()
-                .find_map(|(name, state)| (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == game.white_player).then_some(name.clone()))
+                .find_map(|(name, state)| {
+                    (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == game.white_player)
+                        .then_some(name.clone())
+                })
                 .ok_or_else(|| OrchestratorError("missing white owner".to_string()))?
         };
         self.push_message(
@@ -1346,7 +1363,12 @@ impl TxArena {
                 produced: vec![],
                 signer_names: vec![actor.name.clone()],
             },
-            SubmittedTx { recipe_name: self.planner().worker_apply_recipe(worker).name, consumed: vec![], produced: vec![], signer_names: vec![] },
+            SubmittedTx {
+                recipe_name: self.planner().worker_apply_recipe(worker).name,
+                consumed: vec![],
+                produced: vec![],
+                signer_names: vec![],
+            },
         ];
         self.history.extend(submissions.clone());
         Ok(submissions)
@@ -1434,11 +1456,17 @@ impl TxArena {
         Ok(())
     }
 
-    pub fn request_settlement(&mut self, requester: &SigningPlayer, opponent: &SigningPlayer, result: GameResult) -> Result<(), OrchestratorError> {
+    pub fn request_settlement(
+        &mut self,
+        requester: &SigningPlayer,
+        opponent: &SigningPlayer,
+        result: GameResult,
+    ) -> Result<(), OrchestratorError> {
         self.require_registered(requester)?;
         self.require_registered(opponent)?;
         let game = self.game.as_ref().ok_or_else(|| OrchestratorError("missing game".to_string()))?;
-        let requester_ref = requester.player_ref.as_ref().ok_or_else(|| OrchestratorError("requester missing player ref".to_string()))?;
+        let requester_ref =
+            requester.player_ref.as_ref().ok_or_else(|| OrchestratorError("requester missing player ref".to_string()))?;
         let opponent_ref = opponent.player_ref.as_ref().ok_or_else(|| OrchestratorError("opponent missing player ref".to_string()))?;
         let white_name = if requester_ref == &game.white_player {
             requester.name.clone()
@@ -1472,7 +1500,10 @@ impl TxArena {
         let game = self.game.clone().ok_or_else(|| OrchestratorError("missing game".to_string()))?;
         let expected_status = status_from_result(result);
         if game.status != expected_status {
-            return Err(OrchestratorError(format!("terminal game status {} does not match requested result {}", game.status, expected_status)));
+            return Err(OrchestratorError(format!(
+                "terminal game status {} does not match requested result {}",
+                game.status, expected_status
+            )));
         }
         let terminal = self.compile_mux(&game);
         let white_state = self.players.get(&white.name).cloned().ok_or_else(|| OrchestratorError("missing white".to_string()))?;
@@ -1539,8 +1570,11 @@ impl TxArena {
 
         let settled_white = self.compile_player(&next_white);
         let settled_black = self.compile_player(&next_black);
-        let settle_sigscript =
-            entry_sigscript(&routed_settle, "settle", vec![Expr::bytes(self.player_prefix.clone()), Expr::bytes(self.player_suffix.clone())]);
+        let settle_sigscript = entry_sigscript(
+            &routed_settle,
+            "settle",
+            vec![Expr::bytes(self.player_prefix.clone()), Expr::bytes(self.player_suffix.clone())],
+        );
 
         let white_entitled = matches!(result, GameResult::WhiteWin | GameResult::Draw);
         let black_entitled = matches!(result, GameResult::BlackWin | GameResult::Draw);
@@ -1611,28 +1645,33 @@ impl TxArena {
                 ],
             );
         }
-        execute_input_with_covenants(tx.clone(), entries.clone(), 0).map_err(|err| OrchestratorError(format!("settle leader failed: {err}")))?;
+        execute_input_with_covenants(tx.clone(), entries.clone(), 0)
+            .map_err(|err| OrchestratorError(format!("settle leader failed: {err}")))?;
         execute_input_with_covenants(tx.clone(), entries.clone(), 1)
             .map_err(|err| OrchestratorError(format!("settle white delegate failed: {err}")))?;
-        execute_input_with_covenants(tx, entries, 2).map_err(|err| OrchestratorError(format!("settle black delegate failed: {err}")))?;
+        execute_input_with_covenants(tx, entries, 2)
+            .map_err(|err| OrchestratorError(format!("settle black delegate failed: {err}")))?;
 
         self.players.insert(white.name.clone(), next_white);
         self.players.insert(black.name.clone(), next_black);
         self.game = None;
         self.push_message(
             &white.name,
-            OffchainMessage { from: "arena".to_string(), to: white.name.clone(), kind: OffchainMessageKind::SettlementNotice { result } },
+            OffchainMessage {
+                from: "arena".to_string(),
+                to: white.name.clone(),
+                kind: OffchainMessageKind::SettlementNotice { result },
+            },
         );
         self.push_message(
             &black.name,
-            OffchainMessage { from: "arena".to_string(), to: black.name.clone(), kind: OffchainMessageKind::SettlementNotice { result } },
+            OffchainMessage {
+                from: "arena".to_string(),
+                to: black.name.clone(),
+                kind: OffchainMessageKind::SettlementNotice { result },
+            },
         );
-        self.history.push(SubmittedTx {
-            recipe_name: "mux_settle",
-            consumed: vec![],
-            produced: vec![],
-            signer_names: vec![],
-        });
+        self.history.push(SubmittedTx { recipe_name: "mux_settle", consumed: vec![], produced: vec![], signer_names: vec![] });
         self.history.push(SubmittedTx {
             recipe_name: "settle",
             consumed: vec![],
@@ -1666,36 +1705,52 @@ impl TxArena {
     fn planner(&self) -> ChessTxPlanner {
         ChessTxPlanner {
             family: ChessTemplateFamily {
-                league: TemplateWitness {
-                    prefix: Vec::new(),
-                    suffix: Vec::new(),
-                    hash: self.league_hash.clone(),
-                },
+                league: TemplateWitness { prefix: Vec::new(), suffix: Vec::new(), hash: self.league_hash.clone() },
                 player: TemplateWitness {
                     prefix: self.player_prefix.clone(),
                     suffix: self.player_suffix.clone(),
                     hash: self.player_hash.clone(),
                 },
-                mux: TemplateWitness { prefix: self.fix.mux.prefix.clone(), suffix: self.fix.mux.suffix.clone(), hash: self.fix.mux.hash.clone() },
+                mux: TemplateWitness {
+                    prefix: self.fix.mux.prefix.clone(),
+                    suffix: self.fix.mux.suffix.clone(),
+                    hash: self.fix.mux.hash.clone(),
+                },
                 settle: TemplateWitness {
                     prefix: self.fix.settle.prefix.clone(),
                     suffix: self.fix.settle.suffix.clone(),
                     hash: self.fix.settle.hash.clone(),
                 },
-                pawn: TemplateWitness { prefix: self.fix.pawn.prefix.clone(), suffix: self.fix.pawn.suffix.clone(), hash: self.fix.pawn.hash.clone() },
+                pawn: TemplateWitness {
+                    prefix: self.fix.pawn.prefix.clone(),
+                    suffix: self.fix.pawn.suffix.clone(),
+                    hash: self.fix.pawn.hash.clone(),
+                },
                 knight: TemplateWitness {
                     prefix: self.fix.knight.prefix.clone(),
                     suffix: self.fix.knight.suffix.clone(),
                     hash: self.fix.knight.hash.clone(),
                 },
-                vert: TemplateWitness { prefix: self.fix.vert.prefix.clone(), suffix: self.fix.vert.suffix.clone(), hash: self.fix.vert.hash.clone() },
+                vert: TemplateWitness {
+                    prefix: self.fix.vert.prefix.clone(),
+                    suffix: self.fix.vert.suffix.clone(),
+                    hash: self.fix.vert.hash.clone(),
+                },
                 horiz: TemplateWitness {
                     prefix: self.fix.horiz.prefix.clone(),
                     suffix: self.fix.horiz.suffix.clone(),
                     hash: self.fix.horiz.hash.clone(),
                 },
-                diag: TemplateWitness { prefix: self.fix.diag.prefix.clone(), suffix: self.fix.diag.suffix.clone(), hash: self.fix.diag.hash.clone() },
-                king: TemplateWitness { prefix: self.fix.king.prefix.clone(), suffix: self.fix.king.suffix.clone(), hash: self.fix.king.hash.clone() },
+                diag: TemplateWitness {
+                    prefix: self.fix.diag.prefix.clone(),
+                    suffix: self.fix.diag.suffix.clone(),
+                    hash: self.fix.diag.hash.clone(),
+                },
+                king: TemplateWitness {
+                    prefix: self.fix.king.prefix.clone(),
+                    suffix: self.fix.king.suffix.clone(),
+                    hash: self.fix.king.hash.clone(),
+                },
                 castle: TemplateWitness {
                     prefix: self.fix.castle.prefix.clone(),
                     suffix: self.fix.castle.suffix.clone(),
@@ -1727,18 +1782,20 @@ impl TxArena {
         self.players
             .iter()
             .find_map(|(name, state)| {
-                (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == player_ref).then_some(PlayerAccount {
-                    owner_name: name.clone(),
-                    owner_hash: state.owner_hash.clone(),
-                    player_id: state.player_id.clone(),
-                    player_ref: player_ref.to_vec(),
-                    open_games: state.open_games,
-                    rating: state.rating,
-                    games: state.games,
-                    wins: state.wins,
-                    draws: state.draws,
-                    losses: state.losses,
-                })
+                (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == player_ref).then_some(
+                    PlayerAccount {
+                        owner_name: name.clone(),
+                        owner_hash: state.owner_hash.clone(),
+                        player_id: state.player_id.clone(),
+                        player_ref: player_ref.to_vec(),
+                        open_games: state.open_games,
+                        rating: state.rating,
+                        games: state.games,
+                        wins: state.wins,
+                        draws: state.draws,
+                        losses: state.losses,
+                    },
+                )
             })
             .ok_or_else(|| OrchestratorError("missing player account".to_string()))
     }
@@ -1918,7 +1975,11 @@ fn worker_selector(worker: WorkerKind) -> i64 {
 }
 
 fn side_from_turn(turn: i64) -> Side {
-    if turn == 0 { Side::White } else { Side::Black }
+    if turn == 0 {
+        Side::White
+    } else {
+        Side::Black
+    }
 }
 
 fn status_from_result(result: GameResult) -> i64 {
@@ -2145,13 +2206,15 @@ fn compile_league_state(
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile league state")
 }
 
-fn compile_settle_state(source: &'static str, player_hash: &[u8], white_hash: &[u8], black_hash: &[u8], status: i64) -> CompiledContract<'static> {
-    let ctor = vec![
-        Expr::bytes(player_hash.to_vec()),
-        Expr::bytes(white_hash.to_vec()),
-        Expr::bytes(black_hash.to_vec()),
-        Expr::int(status),
-    ];
+fn compile_settle_state(
+    source: &'static str,
+    player_hash: &[u8],
+    white_hash: &[u8],
+    black_hash: &[u8],
+    status: i64,
+) -> CompiledContract<'static> {
+    let ctor =
+        vec![Expr::bytes(player_hash.to_vec()), Expr::bytes(white_hash.to_vec()), Expr::bytes(black_hash.to_vec()), Expr::int(status)];
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile settle state")
 }
 
@@ -2178,7 +2241,7 @@ fn covenant_output(compiled: &CompiledContract<'_>, authorizing_input: u16, cove
 }
 
 fn covenant_utxo(compiled: &CompiledContract<'_>, covenant_id: Hash) -> UtxoEntry {
-    UtxoEntry::new(1_500, pay_to_script_hash_script(&compiled.script), 0, false, Some(covenant_id))
+    UtxoEntry::new(1_000, pay_to_script_hash_script(&compiled.script), 0, false, Some(covenant_id))
 }
 
 fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> Hash {
@@ -2190,7 +2253,10 @@ fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> H
     };
     let covenant_id = kaspa_consensus_core::hashing::covenant_id::covenant_id(
         input.previous_outpoint,
-        std::iter::once((0u32, &TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&compiled.script), covenant: None })),
+        std::iter::once((
+            0u32,
+            &TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&compiled.script), covenant: None },
+        )),
     );
     let output = TransactionOutput {
         value: 1_000,
@@ -2198,7 +2264,7 @@ fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> H
         covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id }),
     };
     let tx = Transaction::new(1, vec![input], vec![output], 0, Default::default(), 0, vec![]);
-    let populated = PopulatedTransaction::new(&tx, vec![UtxoEntry::new(1_500, Default::default(), 0, false, None)]);
+    let populated = PopulatedTransaction::new(&tx, vec![UtxoEntry::new(1_000, Default::default(), 0, false, None)]);
     CovenantsContext::from_tx(&populated).expect("validate genesis covenant bindings");
     covenant_id
 }
@@ -2512,29 +2578,17 @@ mod tests {
 
         white.send_game_invite(&black).expect("white sends invite");
         let invite_mail = black.inbox();
-        assert!(matches!(
-            invite_mail.as_slice(),
-            [OffchainMessage { kind: OffchainMessageKind::GameInvite { .. }, .. }]
-        ));
+        assert!(matches!(invite_mail.as_slice(), [OffchainMessage { kind: OffchainMessageKind::GameInvite { .. }, .. }]));
 
         black.accept_game_invite(&white).expect("black accepts invite");
         let accepted_mail = white.inbox();
-        assert!(matches!(
-            accepted_mail.as_slice(),
-            [OffchainMessage { kind: OffchainMessageKind::InviteAccepted { .. }, .. }]
-        ));
+        assert!(matches!(accepted_mail.as_slice(), [OffchainMessage { kind: OffchainMessageKind::InviteAccepted { .. }, .. }]));
 
         white.start_game(&black).expect("start game tx passes");
         let started_mail_white = white.inbox();
         let started_mail = black.inbox();
-        assert!(matches!(
-            started_mail_white.as_slice(),
-            [OffchainMessage { kind: OffchainMessageKind::GameStarted { .. }, .. }]
-        ));
-        assert!(matches!(
-            started_mail.as_slice(),
-            [OffchainMessage { kind: OffchainMessageKind::GameStarted { .. }, .. }]
-        ));
+        assert!(matches!(started_mail_white.as_slice(), [OffchainMessage { kind: OffchainMessageKind::GameStarted { .. }, .. }]));
+        assert!(matches!(started_mail.as_slice(), [OffchainMessage { kind: OffchainMessageKind::GameStarted { .. }, .. }]));
 
         white.submit_move(MoveSpec::new(4, 1, 4, 3)).expect("white e2e4 txs pass");
         let move_mail = black.inbox();

@@ -199,8 +199,10 @@ contract ChessCastle(
             draw_state: draw_state
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
         validateOutputStateWithTemplate(
-            OpAuthOutputIdx(this.activeInputIndex, 0),
+            output_idx,
             next_state,
             mux_prefix,
             mux_suffix,
@@ -242,8 +244,10 @@ contract ChessCastle(
             draw_state: draw_state
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
         validateOutputStateWithTemplate(
-            OpAuthOutputIdx(this.activeInputIndex, 0),
+            output_idx,
             next_state,
             mux_prefix,
             mux_suffix,
