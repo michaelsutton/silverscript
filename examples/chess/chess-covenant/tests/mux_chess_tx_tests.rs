@@ -5649,6 +5649,99 @@ fn draw_settlement_rejects_the_wrong_odd_split() {
 }
 
 #[test]
+fn player_rebalance_allows_same_spk_with_new_value() {
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+    let owner = player_from_seed(0x33);
+    let covenant_id = Hash::from_bytes([0x79u8; 32]);
+
+    let player = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &[0x43u8; 32],
+            player_hash: &player_template_hash(&fix),
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &owner.owner_hash,
+            player_id: &[0x53u8; 32],
+            open_games: 1,
+            rating: 1200,
+            games: 12,
+            wins: 6,
+            draws: 3,
+            losses: 3,
+        },
+    );
+
+    let placeholder = entry_sigscript(&player, "rebalance", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(owner.pubkey_bytes.clone())]);
+    let entries = vec![covenant_utxo(&player, covenant_id)];
+    let outputs = vec![covenant_output_with_value(&player, 0, covenant_id, 1_500)];
+    let mut tx = Transaction::new(1, vec![tx_input(0, placeholder, 1)], outputs, 0, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &owner);
+    tx.inputs[0].signature_script =
+        entry_sigscript(&player, "rebalance", vec![Expr::bytes(sig), Expr::bytes(owner.pubkey_bytes.clone())]);
+
+    let rebalance_result = execute_input_with_covenants(tx, entries, 0);
+    assert!(rebalance_result.is_ok(), "Player.rebalance runtime failed: {}", rebalance_result.unwrap_err());
+}
+
+#[test]
+fn player_rebalance_rejects_changed_state_spk() {
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+    let owner = player_from_seed(0x34);
+    let covenant_id = Hash::from_bytes([0x7au8; 32]);
+
+    let player = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &[0x44u8; 32],
+            player_hash: &player_template_hash(&fix),
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &owner.owner_hash,
+            player_id: &[0x54u8; 32],
+            open_games: 1,
+            rating: 1200,
+            games: 12,
+            wins: 6,
+            draws: 3,
+            losses: 3,
+        },
+    );
+    let mutated = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &[0x44u8; 32],
+            player_hash: &player_template_hash(&fix),
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &owner.owner_hash,
+            player_id: &[0x54u8; 32],
+            open_games: 1,
+            rating: 1201,
+            games: 12,
+            wins: 6,
+            draws: 3,
+            losses: 3,
+        },
+    );
+
+    let placeholder = entry_sigscript(&player, "rebalance", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(owner.pubkey_bytes.clone())]);
+    let entries = vec![covenant_utxo(&player, covenant_id)];
+    let outputs = vec![covenant_output(&mutated, 0, covenant_id)];
+    let mut tx = Transaction::new(1, vec![tx_input(0, placeholder, 1)], outputs, 0, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &owner);
+    tx.inputs[0].signature_script =
+        entry_sigscript(&player, "rebalance", vec![Expr::bytes(sig), Expr::bytes(owner.pubkey_bytes.clone())]);
+
+    let rebalance_result = execute_input_with_covenants(tx, entries, 0);
+    assert!(rebalance_result.is_err(), "Player.rebalance should reject a changed player state/SPK");
+}
+
+#[test]
 fn player_can_retire_with_no_open_games() {
     let fix = build_fixture();
     let route_hashes = packed_route_hashes(&fix);
