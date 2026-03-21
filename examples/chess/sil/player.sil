@@ -201,6 +201,18 @@ contract Player(
         require(self_ref == leader.white_player || self_ref == leader.black_player);
     }
 
+    // Owner-signed same-SPK continuity path for depositing to or withdrawing
+    // from the Player UTXO without changing its serialized state.
+    entrypoint function rebalance(sig owner_sig, pubkey owner_pk) {
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
+    }
+
+    // Terminal owner-signed path for closing the Player account. Requiring
+    // open_games == 0 prevents abandoning live game obligations.
     entrypoint function retire(sig owner_sig, pubkey owner_pk) {
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));
