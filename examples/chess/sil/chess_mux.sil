@@ -220,7 +220,14 @@ contract ChessMux(
         );
     }
 
-    entrypoint function timeout(sig s, pubkey pk, byte[32] player_id) {
+    entrypoint function timeout(
+        sig s,
+        pubkey pk,
+        byte[32] player_id,
+        byte[32] player_hash,
+        byte[] settle_prefix,
+        byte[] settle_suffix
+    ) {
         // Timeout only applies while the game is still live.
         require(status == LIVE);
 
@@ -250,27 +257,19 @@ contract ChessMux(
             next_status = DRAW;
         }
 
-        State next_state = {
-            mux_hash: mux_hash,
-            route_hashes: route_hashes,
+        byte[32] settle_hash = blake2b(settle_prefix + settle_suffix);
+        require(blake2b(settle_hash + player_hash) == route_hashes.slice(256, 288));
+
+        SettleState next_state = {
+            player_hash: player_hash,
             white_player: white_player,
             black_player: black_player,
-            board: board,
-            turn: turn,
-            status: next_status,
-            move_timeout: move_timeout,
-            castle_rights: castle_rights,
-            en_passant_idx: en_passant_idx,
-            pending_src_idx: pending_src_idx,
-            pending_dst_idx: pending_dst_idx,
-            pending_promo: pending_promo,
-            recent_castle: recent_castle,
-            draw_state: draw_state
+            status: next_status
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
         require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
-        validateOutputState(output_idx, next_state);
+        validateOutputStateWithTemplate(output_idx, next_state, settle_prefix, settle_suffix, settle_hash);
     }
 
     entrypoint function settle(byte[32] player_hash, byte[] settle_prefix, byte[] settle_suffix) {
