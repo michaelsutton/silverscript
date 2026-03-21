@@ -176,8 +176,6 @@ contract Player(
     }
 
     entrypoint function delegate_settle(
-        sig owner_sig,
-        pubkey owner_pk,
         int settle_prefix_len,
         int settle_suffix_len,
         byte[32] settle_hash
@@ -198,20 +196,6 @@ contract Player(
 
         byte[32] self_ref = blake2b(owner + player_id);
         require(self_ref == leader.white_player || self_ref == leader.black_player);
-
-        int funds_entitled = 0;
-        if (leader.status == DRAW) {
-            funds_entitled = 1;
-        } else if (leader.status == WWIN && self_ref == leader.white_player) {
-            funds_entitled = 1;
-        } else if (leader.status == BWIN && self_ref == leader.black_player) {
-            funds_entitled = 1;
-        }
-
-        if (funds_entitled == 1) {
-            require(blake2b(owner_pk) == owner);
-            require(checkSig(owner_sig, owner_pk));
-        }
     }
 
     entrypoint function retire(sig owner_sig, pubkey owner_pk) {

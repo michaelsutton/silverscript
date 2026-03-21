@@ -75,8 +75,6 @@ pub enum SignerRequirement {
     Owner,
     SideToMove,
     WaitingOpponent,
-    WhiteIfEntitled,
-    BlackIfEntitled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,6 +182,7 @@ pub struct PlayerAccount {
     pub owner_hash: Vec<u8>,
     pub player_id: Vec<u8>,
     pub player_ref: Vec<u8>,
+    pub value: u64,
     pub open_games: i64,
     pub rating: i64,
     pub games: i64,
@@ -233,7 +232,7 @@ pub enum OffchainMessageKind {
     InviteAccepted { white: String, black: String },
     GameStarted { white: String, black: String },
     MoveNotice { actor: String, worker: WorkerKind, move_label: String, mv: MoveSpec },
-    SettlementRequest { result: GameResult, required_signers: Vec<String> },
+    SettlementRequest { result: GameResult },
     SettlementNotice { result: GameResult },
 }
 
@@ -332,6 +331,7 @@ struct ExecutionFixture {
 struct PlayerStateData {
     owner_hash: Vec<u8>,
     player_id: Vec<u8>,
+    value: u64,
     open_games: i64,
     rating: i64,
     games: i64,
@@ -444,7 +444,7 @@ impl ChessTxPlanner {
         TxRecipe {
             name: "mux_timeout",
             calls: vec![PlannedCall { role: ContractRole::Mux, function: "timeout", signer: SignerRequirement::WaitingOpponent }],
-            outputs: vec![PlannedOutput { role: ContractRole::Mux, count: 1 }],
+            outputs: vec![PlannedOutput { role: ContractRole::Settle, count: 1 }],
         }
     }
 
@@ -452,17 +452,11 @@ impl ChessTxPlanner {
         TxRecipe {
             name: "worker_timeout",
             calls: vec![PlannedCall { role: ContractRole::Worker(worker), function: "timeout", signer: SignerRequirement::None }],
-            outputs: vec![PlannedOutput { role: ContractRole::Mux, count: 1 }],
+            outputs: vec![PlannedOutput { role: ContractRole::Settle, count: 1 }],
         }
     }
 
-    pub fn settlement_recipe(&self, result: GameResult) -> SettlementRecipe {
-        let (white_signer, black_signer) = match result {
-            GameResult::WhiteWin => (SignerRequirement::WhiteIfEntitled, SignerRequirement::None),
-            GameResult::BlackWin => (SignerRequirement::None, SignerRequirement::BlackIfEntitled),
-            GameResult::Draw => (SignerRequirement::WhiteIfEntitled, SignerRequirement::BlackIfEntitled),
-        };
-
+    pub fn settlement_recipe(&self, _result: GameResult) -> SettlementRecipe {
         SettlementRecipe {
             mux_step: TxRecipe {
                 name: "mux_settle",
@@ -473,8 +467,8 @@ impl ChessTxPlanner {
                 name: "settle",
                 calls: vec![
                     PlannedCall { role: ContractRole::Settle, function: "settle", signer: SignerRequirement::None },
-                    PlannedCall { role: ContractRole::Player, function: "delegate_settle", signer: white_signer },
-                    PlannedCall { role: ContractRole::Player, function: "delegate_settle", signer: black_signer },
+                    PlannedCall { role: ContractRole::Player, function: "delegate_settle", signer: SignerRequirement::None },
+                    PlannedCall { role: ContractRole::Player, function: "delegate_settle", signer: SignerRequirement::None },
                 ],
                 outputs: vec![PlannedOutput { role: ContractRole::Player, count: 2 }],
             },
@@ -537,6 +531,7 @@ impl LocalArena {
             owner_hash: player.owner_hash.clone(),
             player_id: player_id.clone(),
             player_ref: player_ref.clone(),
+            value: 1_000,
             open_games: 0,
             rating: self.base_rating,
             games: 0,
@@ -757,23 +752,33 @@ impl LocalArena {
         white_account.rating = approx_updated_rating(white_old_rating, black_old_rating, white_actual);
         black_account.rating = approx_updated_rating(black_old_rating, white_old_rating, black_actual);
 
+        let stake = 1_000u64;
+        match result {
+            GameResult::WhiteWin => {
+                white_account.value += stake;
+            }
+            GameResult::BlackWin => {
+                black_account.value += stake;
+            }
+            GameResult::Draw => {
+                let white_share = stake / 2;
+                let black_share = stake - white_share;
+                white_account.value += white_share;
+                black_account.value += black_share;
+            }
+        }
+
         self.utxos.remove(&settle_id);
         self.utxos.remove(&white_player_id);
         self.utxos.remove(&black_player_id);
 
         let next_white_id = self.alloc_utxo(LocalUtxo::Player(white_account));
         let next_black_id = self.alloc_utxo(LocalUtxo::Player(black_account));
-
-        let signers = match result {
-            GameResult::WhiteWin => vec![white.name.clone()],
-            GameResult::BlackWin => vec![black.name.clone()],
-            GameResult::Draw => vec![white.name.clone(), black.name.clone()],
-        };
         let settle_tx = SubmittedTx {
             recipe_name: self.planner.settlement_recipe(result).settle_step.name,
             consumed: vec![settle_id, white_player_id, black_player_id],
             produced: vec![next_white_id, next_black_id],
-            signer_names: signers,
+            signer_names: vec![],
         };
         self.history.push(settle_tx.clone());
 
@@ -1077,6 +1082,7 @@ impl TxArena {
             PlayerStateData {
                 owner_hash: player.owner_hash.clone(),
                 player_id,
+                value: 1_000,
                 open_games: 0,
                 rating: self.base_rating,
                 games: 0,
@@ -1182,14 +1188,17 @@ impl TxArena {
             ],
         );
         let outputs = vec![
-            covenant_output(&next_white_contract, 0, self.covenant_id),
-            covenant_output(&next_black_contract, 0, self.covenant_id),
+            covenant_output_with_value(&next_white_contract, 0, self.covenant_id, next_white.value),
+            covenant_output_with_value(&next_black_contract, 0, self.covenant_id, next_black.value),
             covenant_output(&opening_mux, 0, self.covenant_id),
         ];
-        let entries = vec![covenant_utxo(&white_contract, self.covenant_id), covenant_utxo(&black_contract, self.covenant_id)];
+        let entries = vec![
+            covenant_utxo_with_value(&white_contract, self.covenant_id, white_state.value),
+            covenant_utxo_with_value(&black_contract, self.covenant_id, black_state.value),
+        ];
         let mut tx = Transaction::new(
             1,
-            vec![tx_input(0, white_placeholder), tx_input(1, black_placeholder)],
+            vec![tx_input(0, white_placeholder, 1), tx_input(1, black_placeholder, 1)],
             outputs,
             0,
             Default::default(),
@@ -1295,7 +1304,7 @@ impl TxArena {
         );
         let outputs = vec![covenant_output(&worker_contract, 0, self.covenant_id)];
         let entries = vec![covenant_utxo(&active, self.covenant_id)];
-        let mut route_tx = Transaction::new(1, vec![tx_input(0, placeholder)], outputs, 0, Default::default(), 0, vec![]);
+        let mut route_tx = Transaction::new(1, vec![tx_input(0, placeholder, 1)], outputs, 0, Default::default(), 0, vec![]);
         let sig = sign_tx_input_schnorr(&route_tx, &entries, 0, actor);
         route_tx.inputs[0].signature_script = entry_sigscript(
             &active,
@@ -1326,7 +1335,7 @@ impl TxArena {
         );
         let apply_tx = Transaction::new(
             1,
-            vec![tx_input(0, apply_sigscript)],
+            vec![tx_input(0, apply_sigscript, 0)],
             vec![covenant_output(&next_mux, 0, self.covenant_id)],
             0,
             Default::default(),
@@ -1434,7 +1443,7 @@ impl TxArena {
         );
         let outputs = vec![covenant_output(&terminal, 0, self.covenant_id)];
         let entries = vec![covenant_utxo(&active, self.covenant_id)];
-        let mut tx = Transaction::new(1, vec![tx_input(0, placeholder)], outputs, 0, Default::default(), 0, vec![]);
+        let mut tx = Transaction::new(1, vec![tx_input(0, placeholder, 1)], outputs, 0, Default::default(), 0, vec![]);
         let sig = sign_tx_input_schnorr(&tx, &entries, 0, actor);
         tx.inputs[0].signature_script = entry_sigscript(
             &active,
@@ -1491,14 +1500,13 @@ impl TxArena {
         } else {
             return Err(OrchestratorError("missing black player in settlement request".to_string()));
         };
-        let signers = entitled_signers(result, white_name, black_name);
-        for recipient in signers.clone() {
+        for recipient in [white_name, black_name] {
             self.push_message(
                 &recipient,
                 OffchainMessage {
                     from: requester.name.clone(),
                     to: recipient.clone(),
-                    kind: OffchainMessageKind::SettlementRequest { result, required_signers: signers.clone() },
+                    kind: OffchainMessageKind::SettlementRequest { result },
                 },
             );
         }
@@ -1534,7 +1542,7 @@ impl TxArena {
         );
         let mux_tx = Transaction::new(
             1,
-            vec![tx_input(0, mux_settle_sigscript)],
+            vec![tx_input(0, mux_settle_sigscript, 0)],
             vec![covenant_output(&routed_settle, 0, self.covenant_id)],
             0,
             Default::default(),
@@ -1577,6 +1585,22 @@ impl TxArena {
         next_white.rating = approx_updated_rating(white_old_rating, black_old_rating, white_actual);
         next_black.rating = approx_updated_rating(black_old_rating, white_old_rating, black_actual);
 
+        let stake = 1_000u64;
+        match result {
+            GameResult::WhiteWin => {
+                next_white.value += stake;
+            }
+            GameResult::BlackWin => {
+                next_black.value += stake;
+            }
+            GameResult::Draw => {
+                let white_share = stake / 2;
+                let black_share = stake - white_share;
+                next_white.value += white_share;
+                next_black.value += black_share;
+            }
+        }
+
         let settled_white = self.compile_player(&next_white);
         let settled_black = self.compile_player(&next_black);
         let settle_sigscript = entry_sigscript(
@@ -1585,16 +1609,10 @@ impl TxArena {
             vec![Expr::bytes(self.player_prefix.clone()), Expr::bytes(self.player_suffix.clone())],
         );
 
-        let white_entitled = matches!(result, GameResult::WhiteWin | GameResult::Draw);
-        let black_entitled = matches!(result, GameResult::BlackWin | GameResult::Draw);
-        let white_pubkey = if white_entitled { white.pubkey_bytes.clone() } else { vec![0u8; 32] };
-        let black_pubkey = if black_entitled { black.pubkey_bytes.clone() } else { vec![0u8; 32] };
         let white_placeholder = entry_sigscript(
             &white_contract,
             "delegate_settle",
             vec![
-                Expr::bytes(vec![0u8; 65]),
-                Expr::bytes(white_pubkey.clone()),
                 Expr::int(self.fix.settle.prefix.len() as i64),
                 Expr::int(self.fix.settle.suffix.len() as i64),
                 Expr::bytes(self.fix.settle.hash.clone()),
@@ -1604,56 +1622,29 @@ impl TxArena {
             &black_contract,
             "delegate_settle",
             vec![
-                Expr::bytes(vec![0u8; 65]),
-                Expr::bytes(black_pubkey.clone()),
                 Expr::int(self.fix.settle.prefix.len() as i64),
                 Expr::int(self.fix.settle.suffix.len() as i64),
                 Expr::bytes(self.fix.settle.hash.clone()),
             ],
         );
-        let outputs = vec![covenant_output(&settled_white, 0, self.covenant_id), covenant_output(&settled_black, 0, self.covenant_id)];
+        let outputs = vec![
+            covenant_output_with_value(&settled_white, 0, self.covenant_id, next_white.value),
+            covenant_output_with_value(&settled_black, 0, self.covenant_id, next_black.value),
+        ];
         let entries = vec![
             covenant_utxo(&routed_settle, self.covenant_id),
-            covenant_utxo(&white_contract, self.covenant_id),
-            covenant_utxo(&black_contract, self.covenant_id),
+            covenant_utxo_with_value(&white_contract, self.covenant_id, white_state.value),
+            covenant_utxo_with_value(&black_contract, self.covenant_id, black_state.value),
         ];
-        let mut tx = Transaction::new(
+        let tx = Transaction::new(
             1,
-            vec![tx_input(0, settle_sigscript), tx_input(1, white_placeholder), tx_input(2, black_placeholder)],
+            vec![tx_input(0, settle_sigscript, 0), tx_input(1, white_placeholder, 0), tx_input(2, black_placeholder, 0)],
             outputs,
             0,
             Default::default(),
             0,
             vec![],
         );
-        if white_entitled {
-            let white_sig = sign_tx_input_schnorr(&tx, &entries, 1, white);
-            tx.inputs[1].signature_script = entry_sigscript(
-                &white_contract,
-                "delegate_settle",
-                vec![
-                    Expr::bytes(white_sig),
-                    Expr::bytes(white.pubkey_bytes.clone()),
-                    Expr::int(self.fix.settle.prefix.len() as i64),
-                    Expr::int(self.fix.settle.suffix.len() as i64),
-                    Expr::bytes(self.fix.settle.hash.clone()),
-                ],
-            );
-        }
-        if black_entitled {
-            let black_sig = sign_tx_input_schnorr(&tx, &entries, 2, black);
-            tx.inputs[2].signature_script = entry_sigscript(
-                &black_contract,
-                "delegate_settle",
-                vec![
-                    Expr::bytes(black_sig),
-                    Expr::bytes(black.pubkey_bytes.clone()),
-                    Expr::int(self.fix.settle.prefix.len() as i64),
-                    Expr::int(self.fix.settle.suffix.len() as i64),
-                    Expr::bytes(self.fix.settle.hash.clone()),
-                ],
-            );
-        }
         execute_input_with_covenants(tx.clone(), entries.clone(), 0)
             .map_err(|err| OrchestratorError(format!("settle leader failed: {err}")))?;
         execute_input_with_covenants(tx.clone(), entries.clone(), 1)
@@ -1681,12 +1672,7 @@ impl TxArena {
             },
         );
         self.history.push(SubmittedTx { recipe_name: "mux_settle", consumed: vec![], produced: vec![], signer_names: vec![] });
-        self.history.push(SubmittedTx {
-            recipe_name: "settle",
-            consumed: vec![],
-            produced: vec![],
-            signer_names: entitled_signers(result, white.name.clone(), black.name.clone()),
-        });
+        self.history.push(SubmittedTx { recipe_name: "settle", consumed: vec![], produced: vec![], signer_names: vec![] });
         Ok(())
     }
 
@@ -1695,8 +1681,8 @@ impl TxArena {
         let contract = self.compile_player(&state);
         let placeholder =
             entry_sigscript(&contract, "retire", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(player.pubkey_bytes.clone())]);
-        let entries = vec![covenant_utxo(&contract, self.covenant_id)];
-        let mut tx = Transaction::new(1, vec![tx_input(0, placeholder)], vec![], 0, Default::default(), 0, vec![]);
+        let entries = vec![covenant_utxo_with_value(&contract, self.covenant_id, state.value)];
+        let mut tx = Transaction::new(1, vec![tx_input(0, placeholder, 1)], vec![], 0, Default::default(), 0, vec![]);
         let sig = sign_tx_input_schnorr(&tx, &entries, 0, player);
         tx.inputs[0].signature_script =
             entry_sigscript(&contract, "retire", vec![Expr::bytes(sig), Expr::bytes(player.pubkey_bytes.clone())]);
@@ -1797,6 +1783,7 @@ impl TxArena {
                         owner_hash: state.owner_hash.clone(),
                         player_id: state.player_id.clone(),
                         player_ref: player_ref.to_vec(),
+                        value: state.value,
                         open_games: state.open_games,
                         rating: state.rating,
                         games: state.games,
@@ -2152,14 +2139,6 @@ fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateDa
     })
 }
 
-fn entitled_signers(result: GameResult, white_name: String, black_name: String) -> Vec<String> {
-    match result {
-        GameResult::WhiteWin => vec![white_name],
-        GameResult::BlackWin => vec![black_name],
-        GameResult::Draw => vec![white_name, black_name],
-    }
-}
-
 fn compile_game_state(source: &'static str, fix: &ExecutionFixture, state: &GameStateData) -> CompiledContract<'static> {
     let ctor = vec![
         Expr::bytes(fix.mux.hash.clone()),
@@ -2236,25 +2215,38 @@ fn entry_sigscript(compiled: &CompiledContract<'_>, function: &str, args: Vec<Ex
     pay_to_script_hash_signature_script(compiled.script.clone(), sigscript).expect("wrap p2sh sigscript")
 }
 
-fn tx_input(index: u32, signature_script: Vec<u8>) -> TransactionInput {
+fn tx_input(index: u32, signature_script: Vec<u8>, sig_op_count: u8) -> TransactionInput {
     TransactionInput {
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([index as u8 + 1; 32]), index },
         signature_script,
         sequence: 0,
-        sig_op_count: 1,
+        sig_op_count,
     }
 }
 
-fn covenant_output(compiled: &CompiledContract<'_>, authorizing_input: u16, covenant_id: Hash) -> TransactionOutput {
+fn covenant_output_with_value(
+    compiled: &CompiledContract<'_>,
+    authorizing_input: u16,
+    covenant_id: Hash,
+    value: u64,
+) -> TransactionOutput {
     TransactionOutput {
-        value: 1_000,
+        value,
         script_public_key: pay_to_script_hash_script(&compiled.script),
         covenant: Some(CovenantBinding { authorizing_input, covenant_id }),
     }
 }
 
+fn covenant_output(compiled: &CompiledContract<'_>, authorizing_input: u16, covenant_id: Hash) -> TransactionOutput {
+    covenant_output_with_value(compiled, authorizing_input, covenant_id, 1_000)
+}
+
+fn covenant_utxo_with_value(compiled: &CompiledContract<'_>, covenant_id: Hash, value: u64) -> UtxoEntry {
+    UtxoEntry::new(value, pay_to_script_hash_script(&compiled.script), 0, false, Some(covenant_id))
+}
+
 fn covenant_utxo(compiled: &CompiledContract<'_>, covenant_id: Hash) -> UtxoEntry {
-    UtxoEntry::new(1_000, pay_to_script_hash_script(&compiled.script), 0, false, Some(covenant_id))
+    covenant_utxo_with_value(compiled, covenant_id, 1_000)
 }
 
 fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> Hash {
@@ -2522,15 +2514,15 @@ mod tests {
     }
 
     #[test]
-    fn settlement_recipe_tracks_entitled_signers() {
+    fn settlement_recipe_uses_unsigned_player_delegates() {
         let planner = ChessTxPlanner::load().expect("template family loads");
         let white_win = planner.settlement_recipe(GameResult::WhiteWin);
-        assert_eq!(white_win.settle_step.calls[1].signer, SignerRequirement::WhiteIfEntitled);
+        assert_eq!(white_win.settle_step.calls[1].signer, SignerRequirement::None);
         assert_eq!(white_win.settle_step.calls[2].signer, SignerRequirement::None);
 
         let draw = planner.settlement_recipe(GameResult::Draw);
-        assert_eq!(draw.settle_step.calls[1].signer, SignerRequirement::WhiteIfEntitled);
-        assert_eq!(draw.settle_step.calls[2].signer, SignerRequirement::BlackIfEntitled);
+        assert_eq!(draw.settle_step.calls[1].signer, SignerRequirement::None);
+        assert_eq!(draw.settle_step.calls[2].signer, SignerRequirement::None);
     }
 
     #[test]
@@ -2573,6 +2565,8 @@ mod tests {
         assert_eq!(black_state.games, 1);
         assert_eq!(white_state.wins, 1);
         assert_eq!(black_state.losses, 1);
+        assert_eq!(white_state.value, 2_000);
+        assert_eq!(black_state.value, 1_000);
         assert!(white_state.rating > 1200);
         assert!(black_state.rating < 1200);
 
@@ -2632,10 +2626,17 @@ mod tests {
 
         white.settle(&black, GameResult::WhiteWin).expect("settlement txs pass");
         let settlement_notice = black.inbox();
-        assert!(matches!(
-            settlement_notice.as_slice(),
-            [OffchainMessage { kind: OffchainMessageKind::SettlementNotice { result: GameResult::WhiteWin }, .. }]
-        ));
+        assert!(settlement_notice
+            .iter()
+            .any(|message| { matches!(message.kind, OffchainMessageKind::SettlementNotice { result: GameResult::WhiteWin }) }));
+
+        {
+            let arena = shared.borrow();
+            let white_state = arena.player_account_snapshot(&white.player).expect("white player remains after settlement");
+            let black_state = arena.player_account_snapshot(&black.player).expect("black player remains after settlement");
+            assert_eq!(white_state.value, 2_000);
+            assert_eq!(black_state.value, 1_000);
+        }
 
         white.retire().expect("retire tx passes");
 
