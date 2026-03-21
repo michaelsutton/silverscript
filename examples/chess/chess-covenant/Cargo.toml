@@ -10,6 +10,8 @@ kaspa-consensus-core = { git = "https://github.com/kaspanet/rusty-kaspa", branch
 kaspa-txscript = { git = "https://github.com/kaspanet/rusty-kaspa", branch = "tn12" }
 kaspa-txscript-errors = { git = "https://github.com/kaspanet/rusty-kaspa", branch = "tn12" }
 secp256k1 = { version = "0.29.0", features = ["global-context"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 silverscript-lang = { path = "../../../silverscript-lang" }
 
 [dev-dependencies]

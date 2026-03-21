@@ -728,6 +728,8 @@ dependencies = [
  "kaspa-txscript",
  "kaspa-txscript-errors",
  "secp256k1",
+ "serde",
+ "serde_json",
  "silverscript-lang",
 ]
 
