@@ -393,7 +393,7 @@ fn covenant_output(compiled: &CompiledContract<'_>, authorizing_input: u16, cove
 }
 
 fn covenant_utxo(compiled: &CompiledContract<'_>, covenant_id: Hash) -> UtxoEntry {
-    UtxoEntry::new(1_500, pay_to_script_hash_script(&compiled.script), 0, false, Some(covenant_id))
+    UtxoEntry::new(1_000, pay_to_script_hash_script(&compiled.script), 0, false, Some(covenant_id))
 }
 
 fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> Hash {
@@ -416,7 +416,7 @@ fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> H
         covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id }),
     };
     let tx = Transaction::new(1, vec![input], vec![output], 0, Default::default(), 0, vec![]);
-    let populated = PopulatedTransaction::new(&tx, vec![UtxoEntry::new(1_500, Default::default(), 0, false, None)]);
+    let populated = PopulatedTransaction::new(&tx, vec![UtxoEntry::new(1_000, Default::default(), 0, false, None)]);
     CovenantsContext::from_tx(&populated).expect("validate genesis covenant bindings");
     covenant_id
 }
@@ -834,6 +834,61 @@ fn run_route_err(
         ],
     );
     execute_input_with_covenants(tx, entries, 0).expect_err("route should fail")
+}
+
+fn run_route_err_with_output_value(
+    active: &CompiledContract<'_>,
+    selector: i64,
+    mv: MoveArgs,
+    player: &Player,
+    target: &TemplateFixture,
+    out: &CompiledContract<'_>,
+    output_value: u64,
+    covenant_id: Hash,
+) -> TxScriptError {
+    let placeholder_sig = vec![0u8; 65];
+    let placeholder_sigscript = entry_sigscript(
+        active,
+        "route",
+        vec![
+            selector.into(),
+            mv.from_x.into(),
+            mv.from_y.into(),
+            mv.to_x.into(),
+            mv.to_y.into(),
+            mv.promo_piece.into(),
+            0.into(),
+            Expr::bytes(placeholder_sig),
+            Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(player.player_id.clone()),
+            Expr::bytes(target.prefix.clone()),
+            Expr::bytes(target.suffix.clone()),
+        ],
+    );
+    let mut outputs = vec![covenant_output(out, 0, covenant_id)];
+    outputs[0].value = output_value;
+    let entries = vec![covenant_utxo(active, covenant_id)];
+    let mut tx = Transaction::new(1, vec![tx_input(0, placeholder_sigscript)], outputs, 0, Default::default(), 0, vec![]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, player);
+    tx.inputs[0].signature_script = entry_sigscript(
+        active,
+        "route",
+        vec![
+            selector.into(),
+            mv.from_x.into(),
+            mv.from_y.into(),
+            mv.to_x.into(),
+            mv.to_y.into(),
+            mv.promo_piece.into(),
+            0.into(),
+            Expr::bytes(sig),
+            Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(player.player_id.clone()),
+            Expr::bytes(target.prefix.clone()),
+            Expr::bytes(target.suffix.clone()),
+        ],
+    );
+    execute_input_with_covenants(tx, entries, 0).expect_err("route should fail when output value changes")
 }
 
 fn run_worker_apply(
@@ -3989,6 +4044,59 @@ fn ordinary_move_can_offer_draw_and_return_to_mux() {
         },
     );
     run_worker_apply("offer_draw_with_move", &knight0, &mux1, covenant_id, &fix.mux);
+}
+
+#[test]
+fn route_rejects_changing_the_locked_game_value() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    let board0 = standard_board();
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.player_ref,
+        &black.player_ref,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let knight0 = compile_state(
+        fix.knight.source,
+        &fix,
+        &white.player_ref,
+        &black.player_ref,
+        GameStateArgs {
+            board: &board0,
+            turn: 0,
+            status: 0,
+            castle_rights: full_castle_rights(),
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(6, 0),
+            pending_dst_idx: square_idx(5, 2),
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+
+    let err = run_route_err_with_output_value(&mux0, 1, mv(6, 0, 5, 2), &white, &fix.knight, &knight0, 999, covenant_id);
+    assert!(
+        err.to_string().contains("verification failed"),
+        "route with changed output value should fail the covenant check, got: {err}"
+    );
 }
 
 #[test]

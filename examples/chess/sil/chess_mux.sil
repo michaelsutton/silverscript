@@ -206,8 +206,10 @@ contract ChessMux(
         };
         // Mux must produce exactly one authorized output with the selected template.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
         validateOutputStateWithTemplate(
-            OpAuthOutputIdx(this.activeInputIndex, 0),
+            output_idx,
             next_state,
             target_prefix,
             target_suffix,
@@ -262,7 +264,9 @@ contract ChessMux(
             draw_state: draw_state
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        validateOutputState(OpAuthOutputIdx(this.activeInputIndex, 0), next_state);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
+        validateOutputState(output_idx, next_state);
     }
 
     entrypoint function settle(byte[32] player_hash, byte[] settle_prefix, byte[] settle_suffix) {
@@ -277,8 +281,10 @@ contract ChessMux(
             status: status,
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
         validateOutputStateWithTemplate(
-            OpAuthOutputIdx(this.activeInputIndex, 0),
+            output_idx,
             next_state,
             settle_prefix,
             settle_suffix,

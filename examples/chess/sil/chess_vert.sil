@@ -228,7 +228,9 @@ contract ChessVert(
         // The worker must produce exactly one authorized covenant output back to
         // the mux template with the new state above.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        validateOutputStateWithTemplate(OpAuthOutputIdx(this.activeInputIndex, 0), next_state, mux_prefix, mux_suffix, mux_hash);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
+        validateOutputStateWithTemplate(output_idx, next_state, mux_prefix, mux_suffix, mux_hash);
     }
 
     entrypoint function timeout(byte[] mux_prefix, byte[] mux_suffix) {
@@ -265,6 +267,8 @@ contract ChessVert(
             draw_state: draw_state
         };
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        validateOutputStateWithTemplate(OpAuthOutputIdx(this.activeInputIndex, 0), next_state, mux_prefix, mux_suffix, mux_hash);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
+        validateOutputStateWithTemplate(output_idx, next_state, mux_prefix, mux_suffix, mux_hash);
     }
 }
