@@ -278,9 +278,7 @@ fn format_message(owner: &str, message: &OffchainMessage) -> String {
         OffchainMessageKind::InviteAccepted { white, black } => format!("{owner} inbox: invite accepted for {white} vs {black}"),
         OffchainMessageKind::GameStarted { white, black } => format!("{owner} inbox: game started for {white} vs {black}"),
         OffchainMessageKind::MoveNotice { actor, move_label, .. } => format!("{owner} inbox: {actor} played {move_label}"),
-        OffchainMessageKind::SettlementRequest { result, required_signers } => {
-            format!("{owner} inbox: settlement request {:?} signers={required_signers:?}", result)
-        }
+        OffchainMessageKind::SettlementRequest { result } => format!("{owner} inbox: settlement request {:?}", result),
         OffchainMessageKind::SettlementNotice { result } => format!("{owner} inbox: settlement complete {:?}", result),
     }
 }

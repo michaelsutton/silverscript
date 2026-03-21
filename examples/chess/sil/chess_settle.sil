@@ -38,15 +38,22 @@ contract ChessSettle(
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) == 3);
         require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
+        require(OpAuthOutputCount(this.activeInputIndex) == 2);
 
         int white_input_idx = OpCovInputIdx(cov_id, 1);
         int black_input_idx = OpCovInputIdx(cov_id, 2);
+        int white_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        int black_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
 
         PlayerState white_in = readInputStateWithTemplate(white_input_idx, player_prefix_len, player_suffix_len, player_hash);
         PlayerState black_in = readInputStateWithTemplate(black_input_idx, player_prefix_len, player_suffix_len, player_hash);
 
         require(blake2b(white_in.owner + white_in.player_id) == white_player);
         require(blake2b(black_in.owner + black_in.player_id) == black_player);
+
+        int stake = tx.inputs[this.activeInputIndex].value;
+        int white_output_value = tx.inputs[white_input_idx].value;
+        int black_output_value = tx.inputs[black_input_idx].value;
 
         int white_wins = white_in.wins;
         int white_draws = white_in.draws;
@@ -63,16 +70,22 @@ contract ChessSettle(
             white_wins = white_wins + 1;
             black_losses = black_losses + 1;
             white_actual = 1000;
+            white_output_value = white_output_value + stake;
         } else if (status == BWIN) {
             black_wins = black_wins + 1;
             white_losses = white_losses + 1;
             black_actual = 1000;
+            black_output_value = black_output_value + stake;
         } else {
             require(status == DRAW);
             white_draws = white_draws + 1;
             black_draws = black_draws + 1;
             white_actual = 500;
             black_actual = 500;
+            int white_share = stake / 2;
+            int black_share = stake - white_share;
+            white_output_value = white_output_value + white_share;
+            black_output_value = black_output_value + black_share;
         }
 
         // Approximate Elo update used here:
@@ -162,16 +175,17 @@ contract ChessSettle(
             losses: black_losses
         };
 
-        require(OpAuthOutputCount(this.activeInputIndex) == 2);
+        require(tx.outputs[white_output_idx].value == white_output_value);
+        require(tx.outputs[black_output_idx].value == black_output_value);
         validateOutputStateWithTemplate(
-            OpAuthOutputIdx(this.activeInputIndex, 0),
+            white_output_idx,
             next_white,
             player_prefix,
             player_suffix,
             player_hash
         );
         validateOutputStateWithTemplate(
-            OpAuthOutputIdx(this.activeInputIndex, 1),
+            black_output_idx,
             next_black,
             player_prefix,
             player_suffix,
