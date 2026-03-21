@@ -914,11 +914,16 @@ fn run_worker_timeout(
     active: &CompiledContract<'_>,
     next: &CompiledContract<'_>,
     covenant_id: Hash,
-    mux: &TemplateFixture,
+    settle: &TemplateFixture,
+    player_hash: &[u8],
     lock_time: u64,
     sequence: u64,
 ) {
-    let sigscript = entry_sigscript(active, "timeout", vec![Expr::bytes(mux.prefix.clone()), Expr::bytes(mux.suffix.clone())]);
+    let sigscript = entry_sigscript(
+        active,
+        "timeout",
+        vec![Expr::bytes(player_hash.to_vec()), Expr::bytes(settle.prefix.clone()), Expr::bytes(settle.suffix.clone())],
+    );
     let outputs = vec![covenant_output(next, 0, covenant_id)];
     let entries = vec![covenant_utxo(active, covenant_id)];
     let input = TransactionInput {
@@ -938,6 +943,8 @@ fn run_mux_timeout(
     next: &CompiledContract<'_>,
     covenant_id: Hash,
     player: &Player,
+    settle: &TemplateFixture,
+    player_hash: &[u8],
     lock_time: u64,
     sequence: u64,
 ) {
@@ -945,7 +952,14 @@ fn run_mux_timeout(
     let placeholder_sigscript = entry_sigscript(
         active,
         "timeout",
-        vec![Expr::bytes(placeholder_sig), Expr::bytes(player.pubkey_bytes.clone()), Expr::bytes(player.player_id.clone())],
+        vec![
+            Expr::bytes(placeholder_sig),
+            Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(player.player_id.clone()),
+            Expr::bytes(player_hash.to_vec()),
+            Expr::bytes(settle.prefix.clone()),
+            Expr::bytes(settle.suffix.clone()),
+        ],
     );
     let outputs = vec![covenant_output(next, 0, covenant_id)];
     let entries = vec![covenant_utxo(active, covenant_id)];
@@ -960,7 +974,14 @@ fn run_mux_timeout(
     tx.inputs[0].signature_script = entry_sigscript(
         active,
         "timeout",
-        vec![Expr::bytes(sig), Expr::bytes(player.pubkey_bytes.clone()), Expr::bytes(player.player_id.clone())],
+        vec![
+            Expr::bytes(sig),
+            Expr::bytes(player.pubkey_bytes.clone()),
+            Expr::bytes(player.player_id.clone()),
+            Expr::bytes(player_hash.to_vec()),
+            Expr::bytes(settle.prefix.clone()),
+            Expr::bytes(settle.suffix.clone()),
+        ],
     );
     let result = execute_input_with_covenants(tx, entries, 0);
     assert!(result.is_ok(), "{label} mux timeout should succeed: {:?}", result.unwrap_err());
@@ -4922,6 +4943,7 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
     let fix = build_fixture();
     let white = player_from_seed(1);
     let black = player_from_seed(2);
+    let player_hash = player_template_hash(&fix);
 
     let board0 = standard_board();
     let knight1 = compile_state(
@@ -4943,26 +4965,9 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&knight1);
-    let mux_terminal = compile_state(
-        fix.mux.source,
-        &fix,
-        &white.player_ref,
-        &black.player_ref,
-        GameStateArgs {
-            board: &board0,
-            turn: 0,
-            status: 2,
-            castle_rights: full_castle_rights(),
-            en_passant_idx: -1,
-            pending_src_idx: -1,
-            pending_dst_idx: -1,
-            pending_promo: 0,
-            recent_castle: 0,
-            draw_state: 3,
-        },
-    );
+    let settle_terminal = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 2);
 
-    run_worker_timeout("knight_timeout", &knight1, &mux_terminal, covenant_id, &fix.mux, 0, 600);
+    run_worker_timeout("knight_timeout", &knight1, &settle_terminal, covenant_id, &fix.settle, &player_hash, 0, 600);
 }
 
 #[test]
@@ -4970,6 +4975,7 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
     let fix = build_fixture();
     let white = player_from_seed(1);
     let black = player_from_seed(2);
+    let player_hash = player_template_hash(&fix);
 
     let board0 = standard_board();
     let mux0 = compile_state(
@@ -4992,26 +4998,9 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
-    let mux_terminal = compile_state(
-        fix.mux.source,
-        &fix,
-        &white.player_ref,
-        &black.player_ref,
-        GameStateArgs {
-            board: &board0,
-            turn: 0,
-            status: 2,
-            castle_rights: full_castle_rights(),
-            en_passant_idx: -1,
-            pending_src_idx: -1,
-            pending_dst_idx: -1,
-            pending_promo: 0,
-            recent_castle: 0,
-            draw_state: 3,
-        },
-    );
+    let settle_terminal = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 2);
 
-    run_mux_timeout("mux_timeout", &mux0, &mux_terminal, covenant_id, &black, 0, 600);
+    run_mux_timeout("mux_timeout", &mux0, &settle_terminal, covenant_id, &black, &fix.settle, &player_hash, 0, 600);
 }
 
 #[test]
