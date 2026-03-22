@@ -3,10 +3,13 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::rc::Rc;
 
+use chess_covenant::indexer::{ActiveEntry, ChessChainIndex, ChessIndexer, IndexedPlayer, IndexedTransaction, OutputRef};
+use chess_covenant::observer::{ChessEvent, ChessInputKind, ChessState, GameState, SettleState};
 use chess_covenant::orchestrator::{
     ActualGameSnapshot, GameResult, MoveSpec, OffchainMessage, OffchainMessageKind, SigningPlayer, SubmittedTx, TxArena,
     TxOrchestrator,
 };
+use kaspa_consensus_core::{tx::TransactionId, Hash};
 use serde::{Deserialize, Serialize};
 
 const ADDRESS: &str = "127.0.0.1:8080";
@@ -125,6 +128,7 @@ fn write_response(stream: &mut TcpStream, status: u16, content_type: &str, body:
 
 struct LocalWebController {
     arena: Rc<RefCell<TxArena>>,
+    indexer: ChessIndexer,
     white: TxOrchestrator,
     black: TxOrchestrator,
     notices: Vec<String>,
@@ -133,9 +137,10 @@ struct LocalWebController {
 impl LocalWebController {
     fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let arena = TxArena::shared()?;
+        let indexer = ChessIndexer::load()?;
         let white = TxOrchestrator::new("white", 0x41, arena.clone());
         let black = TxOrchestrator::new("black", 0x42, arena.clone());
-        Ok(Self { arena, white, black, notices: Vec::new() })
+        Ok(Self { arena, indexer, white, black, notices: Vec::new() })
     }
 
     fn handle_action(&mut self, action: ActionRequest) -> Result<(), Box<dyn std::error::Error>> {
@@ -148,7 +153,12 @@ impl LocalWebController {
                 let mv = parse_move_label(action.move_label.as_deref().ok_or("missing move label")?)?;
                 self.player(action.actor.as_deref().ok_or("missing actor")?)?.submit_move(mv)?;
             }
+            "force_move" => {
+                let mv = parse_move_label(action.move_label.as_deref().ok_or("missing move label")?)?;
+                self.player(action.actor.as_deref().ok_or("missing actor")?)?.force_move(mv)?;
+            }
             "surrender" => self.player(action.actor.as_deref().ok_or("missing actor")?)?.surrender()?,
+            "claim_timeout" => self.player(action.actor.as_deref().ok_or("missing actor")?)?.claim_timeout()?,
             "request_settlement" => {
                 let result = parse_result(action.result.as_deref().ok_or("missing result")?)?;
                 let actor = action.actor.as_deref().ok_or("missing actor")?;
@@ -167,11 +177,25 @@ impl LocalWebController {
 
     fn snapshot(&self) -> AppSnapshot {
         let arena = self.arena.borrow();
+        let observed = match self.indexer.index_transactions(arena.transactions(), arena.covenant_id()) {
+            Ok(chain) => observer_view(&chain, &self.white.player, &self.black.player),
+            Err(err) => ObserverView { error: Some(err.to_string()), ..ObserverView::default() },
+        };
         AppSnapshot {
-            players: vec![player_view(&arena, &self.white.player, "white"), player_view(&arena, &self.black.player, "black")],
-            game: arena.active_game_snapshot().map(game_view),
+            players: if observed.error.is_none() && !observed.players.is_empty() {
+                observed.players.clone()
+            } else {
+                vec![player_view(&arena, &self.white.player, "white"), player_view(&arena, &self.black.player, "black")]
+            },
+            game: observed
+                .active_games
+                .first()
+                .cloned()
+                .map(observed_game_board_view)
+                .or_else(|| arena.active_game_snapshot().map(game_view)),
             history: arena.history().iter().map(history_view).collect(),
             notices: self.notices.clone(),
+            observer: observed,
         }
     }
 
@@ -211,6 +235,8 @@ fn player_view(arena: &TxArena, player: &SigningPlayer, role: &str) -> PlayerVie
     match arena.player_account_snapshot(player) {
         Ok(account) => PlayerView {
             role: role.to_string(),
+            player_ref: short_hash(account.player_ref),
+            value: Some(account.value),
             registered: true,
             open_games: account.open_games,
             rating: account.rating,
@@ -219,14 +245,24 @@ fn player_view(arena: &TxArena, player: &SigningPlayer, role: &str) -> PlayerVie
             draws: account.draws,
             losses: account.losses,
         },
-        Err(_) => {
-            PlayerView { role: role.to_string(), registered: false, open_games: 0, rating: 0, games: 0, wins: 0, draws: 0, losses: 0 }
-        }
+        Err(_) => PlayerView {
+            role: role.to_string(),
+            player_ref: "unregistered".to_string(),
+            value: None,
+            registered: false,
+            open_games: 0,
+            rating: 0,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
     }
 }
 
 fn game_view(game: ActualGameSnapshot) -> GameView {
     GameView {
+        phase: game.phase,
         turn: match game.turn {
             chess_covenant::orchestrator::Side::White => "white".to_string(),
             chess_covenant::orchestrator::Side::Black => "black".to_string(),
@@ -238,8 +274,176 @@ fn game_view(game: ActualGameSnapshot) -> GameView {
             3 => "draw".to_string(),
             other => format!("status_{other}"),
         },
+        value: None,
+        move_timeout: None,
         board_rows: board_rows(&game.board),
         move_log: game.move_log,
+    }
+}
+
+fn observer_view(chain: &ChessChainIndex, white: &SigningPlayer, black: &SigningPlayer) -> ObserverView {
+    ObserverView {
+        error: None,
+        league_lane_count: chain.league_lane_count,
+        latest_league_rating: chain.latest_league.as_ref().map(|league| league.base_rating),
+        players: chain.players.iter().map(|player| indexed_player_view(player, white, black)).collect(),
+        active_games: chain.active_games.iter().map(observed_game_view).collect(),
+        active_settles: chain.active_settles.iter().map(observed_settle_view).collect(),
+        transactions: chain.transactions.iter().map(observed_tx_view).collect(),
+        warnings: chain.warnings.clone(),
+    }
+}
+
+fn indexed_player_view(player: &IndexedPlayer, white: &SigningPlayer, black: &SigningPlayer) -> PlayerView {
+    let role = if white.player_ref == Some(player.player_ref) {
+        "white".to_string()
+    } else if black.player_ref == Some(player.player_ref) {
+        "black".to_string()
+    } else {
+        short_hash(player.player_ref)
+    };
+    PlayerView {
+        role,
+        player_ref: short_hash(player.player_ref),
+        value: Some(player.value),
+        registered: true,
+        open_games: player.state.open_games,
+        rating: player.state.rating,
+        games: player.state.games,
+        wins: player.state.wins,
+        draws: player.state.draws,
+        losses: player.state.losses,
+    }
+}
+
+fn observed_game_view(game: &ActiveEntry<GameState>) -> ObservedGameView {
+    ObservedGameView {
+        outpoint: short_outpoint(game.outpoint),
+        pair: format!("{} vs {}", short_hash(game.pair.white_player), short_hash(game.pair.black_player)),
+        value: game.value,
+        turn: match game.state.turn {
+            0 => "white".to_string(),
+            1 => "black".to_string(),
+            other => format!("turn_{other}"),
+        },
+        status: status_label(game.state.status),
+        move_timeout: game.state.move_timeout,
+        board_rows: board_rows(&game.state.board),
+        move_log: Vec::new(),
+    }
+}
+
+fn observed_game_board_view(game: ObservedGameView) -> GameView {
+    GameView {
+        phase: "mux".to_string(),
+        turn: game.turn,
+        status: game.status,
+        value: Some(game.value),
+        move_timeout: Some(game.move_timeout),
+        board_rows: game.board_rows,
+        move_log: game.move_log,
+    }
+}
+
+fn observed_settle_view(settle: &ActiveEntry<SettleState>) -> ObservedSettleView {
+    ObservedSettleView {
+        outpoint: short_outpoint(settle.outpoint),
+        pair: format!("{} vs {}", short_hash(settle.pair.white_player), short_hash(settle.pair.black_player)),
+        value: settle.value,
+        status: status_label(settle.state.status),
+    }
+}
+
+fn observed_tx_view(tx: &IndexedTransaction) -> ObservedTxView {
+    ObservedTxView {
+        txid: short_txid(tx.txid),
+        input_lines: tx.observed.inputs.iter().map(observed_input_line).collect(),
+        event_lines: tx.observed.events.iter().map(observed_event_line).collect(),
+    }
+}
+
+fn observed_input_line(input: &chess_covenant::observer::ObservedInput) -> String {
+    let outputs = input
+        .outputs
+        .iter()
+        .map(|output| format!("{}@{}", observed_state_kind(&output.state), output.output_index))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("in{} {}.{} -> {}", input.input_index, observed_kind_label(input.kind), input.function, outputs)
+}
+
+fn observed_kind_label(kind: ChessInputKind) -> &'static str {
+    match kind {
+        ChessInputKind::League => "league",
+        ChessInputKind::Player => "player",
+        ChessInputKind::Mux => "mux",
+        ChessInputKind::Settle => "settle",
+        ChessInputKind::Worker(_) => "worker",
+    }
+}
+
+fn observed_state_kind(state: &ChessState) -> &'static str {
+    match state {
+        ChessState::League(_) => "league",
+        ChessState::Player(_) => "player",
+        ChessState::Game(_) => "game",
+        ChessState::Settle(_) => "settle",
+    }
+}
+
+fn observed_event_line(event: &ChessEvent) -> String {
+    match event {
+        ChessEvent::PlayerRegistered { player_ref, rating, .. } => {
+            format!("player registered {} rating={rating}", short_hash(*player_ref))
+        }
+        ChessEvent::LeagueRebalanced { output_index } => format!("league rebalanced -> output {output_index}"),
+        ChessEvent::LeagueForked { left_output_index, right_output_index } => {
+            format!("league forked -> outputs {left_output_index}, {right_output_index}")
+        }
+        ChessEvent::GameStarted { white_player, black_player, move_timeout, .. } => {
+            format!("game started {} vs {} timeout={move_timeout}", short_hash(*white_player), short_hash(*black_player))
+        }
+        ChessEvent::PlayerRebalanced { player_ref, output_index } => {
+            format!("player rebalanced {} -> output {output_index}", short_hash(*player_ref))
+        }
+        ChessEvent::PlayerRetired { player_ref } => format!("player retired {}", short_hash(*player_ref)),
+        ChessEvent::MoveRouted { selector, termination_action, output_index } => {
+            format!("move routed selector={selector} term={termination_action} -> output {output_index}")
+        }
+        ChessEvent::WorkerApplied { worker, status, next_turn, output_index } => {
+            format!("worker {:?} applied status={} next_turn={} -> output {}", worker, status, next_turn, output_index)
+        }
+        ChessEvent::TimeoutRoutedToSettle { source, status, output_index } => {
+            format!("timeout {:?} -> settle status={} output {}", source, status, output_index)
+        }
+        ChessEvent::SettleCreated { status, output_index } => {
+            format!("settle created status={} -> output {}", status_label(*status), output_index)
+        }
+        ChessEvent::SettlementApplied { status, white_output_index, black_output_index } => {
+            format!("settlement applied status={} -> outputs {}, {}", status_label(*status), white_output_index, black_output_index)
+        }
+    }
+}
+
+fn short_hash(hash: Hash) -> String {
+    hash.to_string().chars().take(10).collect()
+}
+
+fn short_txid(txid: TransactionId) -> String {
+    txid.to_string().chars().take(12).collect()
+}
+
+fn short_outpoint(outpoint: OutputRef) -> String {
+    format!("{}:{}", short_hash(outpoint.txid), outpoint.output_index)
+}
+
+fn status_label(status: i64) -> String {
+    match status {
+        0 => "live".to_string(),
+        1 => "white_win".to_string(),
+        2 => "black_win".to_string(),
+        3 => "draw".to_string(),
+        other => format!("status_{other}"),
     }
 }
 
@@ -278,6 +482,9 @@ fn format_message(owner: &str, message: &OffchainMessage) -> String {
         OffchainMessageKind::InviteAccepted { white, black } => format!("{owner} inbox: invite accepted for {white} vs {black}"),
         OffchainMessageKind::GameStarted { white, black } => format!("{owner} inbox: game started for {white} vs {black}"),
         OffchainMessageKind::MoveNotice { actor, move_label, .. } => format!("{owner} inbox: {actor} played {move_label}"),
+        OffchainMessageKind::TimeoutClaimAvailable { result, worker, move_label } => {
+            format!("{owner} inbox: {move_label} entered {:?}; timeout win {:?} can now be claimed", worker, result)
+        }
         OffchainMessageKind::SettlementRequest { result } => format!("{owner} inbox: settlement request {:?}", result),
         OffchainMessageKind::SettlementNotice { result } => format!("{owner} inbox: settlement complete {:?}", result),
     }
@@ -363,11 +570,14 @@ struct AppSnapshot {
     game: Option<GameView>,
     history: Vec<HistoryView>,
     notices: Vec<String>,
+    observer: ObserverView,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct PlayerView {
     role: String,
+    player_ref: String,
+    value: Option<u64>,
     registered: bool,
     open_games: i64,
     rating: i64,
@@ -379,8 +589,11 @@ struct PlayerView {
 
 #[derive(Serialize)]
 struct GameView {
+    phase: String,
     turn: String,
     status: String,
+    value: Option<u64>,
+    move_timeout: Option<i64>,
     board_rows: Vec<String>,
     move_log: Vec<String>,
 }
@@ -389,6 +602,45 @@ struct GameView {
 struct HistoryView {
     recipe_name: String,
     signer_names: Vec<String>,
+}
+
+#[derive(Serialize, Clone, Default)]
+struct ObserverView {
+    error: Option<String>,
+    league_lane_count: usize,
+    latest_league_rating: Option<i64>,
+    players: Vec<PlayerView>,
+    active_games: Vec<ObservedGameView>,
+    active_settles: Vec<ObservedSettleView>,
+    transactions: Vec<ObservedTxView>,
+    warnings: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
+struct ObservedGameView {
+    outpoint: String,
+    pair: String,
+    value: u64,
+    turn: String,
+    status: String,
+    move_timeout: i64,
+    board_rows: Vec<String>,
+    move_log: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
+struct ObservedSettleView {
+    outpoint: String,
+    pair: String,
+    value: u64,
+    status: String,
+}
+
+#[derive(Serialize, Clone)]
+struct ObservedTxView {
+    txid: String,
+    input_lines: Vec<String>,
+    event_lines: Vec<String>,
 }
 
 const INDEX_HTML: &str = r#"<!doctype html>
@@ -402,10 +654,48 @@ const INDEX_HTML: &str = r#"<!doctype html>
     .row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
     .card { background: #fffaf2; border: 1px solid #d8c8ae; padding: 16px; border-radius: 12px; min-width: 280px; }
     button, select, input { padding: 8px 10px; margin: 4px 0; font: inherit; }
-    pre { margin: 0; font-size: 20px; line-height: 1.2; }
     ul { margin-top: 0.5rem; }
     .error { color: #9d1c1c; min-height: 1.5rem; }
     .ok { color: #245b2a; min-height: 1.5rem; }
+    .board-wrap { display: inline-block; border: 1px solid #8f7a5b; border-radius: 10px; overflow: hidden; background: #d7c0a2; }
+    .board-grid { display: grid; grid-template-columns: repeat(8, 54px); grid-template-rows: repeat(8, 54px); }
+    .square {
+      width: 54px;
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 34px;
+      line-height: 1;
+      user-select: none;
+      cursor: pointer;
+    }
+    .light { background: #f1e3c6; }
+    .dark { background: #b88b5a; }
+    .piece-white { color: #fff8ef; text-shadow: 0 1px 0 rgba(0,0,0,0.35); }
+    .piece-black { color: #24160d; }
+    .selected-square { box-shadow: inset 0 0 0 4px #1f6f59; }
+    .target-square { box-shadow: inset 0 0 0 4px #b33b2e; }
+    .board-empty {
+      min-width: 430px;
+      min-height: 430px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #6e5b47;
+      background: #f7ecda;
+    }
+    .board-files, .board-ranks {
+      display: grid;
+      color: #6e5b47;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .board-files { grid-template-columns: repeat(8, 54px); margin-top: 6px; }
+    .board-files span, .board-ranks span { display: flex; align-items: center; justify-content: center; }
+    .board-shell { display: flex; gap: 8px; align-items: stretch; }
+    .board-ranks { grid-template-rows: repeat(8, 54px); }
   </style>
 </head>
 <body>
@@ -429,7 +719,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
         <option value="black">black</option>
       </select>
       <input id="moveLabel" value="e2e4" />
-      <button onclick="submitMove()">Submit Move</button><br/>
+      <button onclick="submitMove()">Submit Move</button>
+      <button onclick="forceMove()">Force Move</button><br/>
       <select id="surrenderActor">
         <option value="white">white</option>
         <option value="black">black</option>
@@ -448,7 +739,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
         <option value="draw">draw</option>
       </select><br/>
       <button onclick="requestSettlement()">Request Settlement</button>
-      <button onclick="settle()">Settle</button><br/>
+      <button onclick="settle()">Settle</button>
+      <button onclick="claimTimeout()">Claim Timeout</button><br/>
       <select id="retireActor">
         <option value="white">white</option>
         <option value="black">black</option>
@@ -463,7 +755,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
     </div>
     <div class="card">
       <h2>Board</h2>
-      <pre id="board">No active game</pre>
+      <div id="board" class="board-empty">No active game</div>
       <div id="gameMeta"></div>
     </div>
     <div class="card">
@@ -475,7 +767,26 @@ const INDEX_HTML: &str = r#"<!doctype html>
       <ul id="history"></ul>
     </div>
   </div>
+  <div class="row" style="margin-top: 24px;">
+    <div class="card">
+      <h2>Observed Chain</h2>
+      <div id="observerMeta"></div>
+      <ul id="observerGames"></ul>
+      <ul id="observerWarnings"></ul>
+    </div>
+    <div class="card">
+      <h2>Observed Settles</h2>
+      <ul id="observerSettles"></ul>
+    </div>
+    <div class="card">
+      <h2>Observed Tx Events</h2>
+      <ul id="observerTxs"></ul>
+    </div>
+  </div>
   <script>
+    let latestState = null;
+    let selectedSource = null;
+
     async function fetchState() {
       const res = await fetch('/api/state');
       const data = await res.json();
@@ -504,6 +815,13 @@ const INDEX_HTML: &str = r#"<!doctype html>
         move_label: document.getElementById('moveLabel').value
       });
     }
+    function forceMove() {
+      act({
+        action: 'force_move',
+        actor: document.getElementById('moveActor').value,
+        move_label: document.getElementById('moveLabel').value
+      });
+    }
     function submitSurrender() {
       act({
         action: 'surrender',
@@ -523,25 +841,183 @@ const INDEX_HTML: &str = r#"<!doctype html>
         result: document.getElementById('settlementResult').value
       });
     }
+    function claimTimeout() {
+      act({
+        action: 'claim_timeout',
+        actor: document.getElementById('settlementActor').value
+      });
+    }
     function retirePlayer() {
       act({
         action: 'retire',
         actor: document.getElementById('retireActor').value
       });
     }
+    function pieceAt(boardRows, square) {
+      const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const file = files.indexOf(square[0]);
+      const rank = parseInt(square[1], 10);
+      if (file < 0 || !(rank >= 1 && rank <= 8)) return '.';
+      return boardRows[8 - rank][file];
+    }
+    function pieceSide(piece) {
+      if (!piece || piece === '.') return null;
+      return piece === piece.toUpperCase() ? 'white' : 'black';
+    }
+    function isPromotionMove(boardRows, source, target) {
+      const piece = pieceAt(boardRows, source);
+      return (piece === 'P' && target[1] === '8') || (piece === 'p' && target[1] === '1');
+    }
+    function clearSelection() {
+      selectedSource = null;
+    }
+    function beginSourceSelection(square) {
+      if (!latestState || !latestState.game) return;
+      const piece = pieceAt(latestState.game.board_rows, square);
+      const side = pieceSide(piece);
+      if (!side) {
+        document.getElementById('status').textContent = 'Choose a source square with a piece.';
+        return;
+      }
+      if (side !== latestState.game.turn) {
+        document.getElementById('status').textContent = `It is ${latestState.game.turn}'s turn.`;
+        return;
+      }
+      selectedSource = square;
+      document.getElementById('moveActor').value = latestState.game.turn;
+      document.getElementById('status').textContent = `Selected ${square}. Choose a destination square.`;
+      render(latestState);
+    }
+    function finishSquareMove(source, target) {
+      if (!latestState || !latestState.game) return;
+      if (source === target) {
+        clearSelection();
+        document.getElementById('status').textContent = 'Selection cleared.';
+        render(latestState);
+        return;
+      }
+      document.getElementById('moveActor').value = latestState.game.turn;
+      document.getElementById('moveLabel').value = `${source}${target}`;
+      clearSelection();
+      render(latestState);
+      if (isPromotionMove(latestState.game.board_rows, source, target)) {
+        document.getElementById('status').textContent = `Move filled as ${source}${target}. Append promotion piece like q/n/r/b if needed.`;
+        return;
+      }
+      submitMove();
+    }
+    function handleSquareClick(square) {
+      if (!latestState || !latestState.game) return;
+      if (!selectedSource) {
+        beginSourceSelection(square);
+        return;
+      }
+      finishSquareMove(selectedSource, square);
+    }
+    function handleSquareDragStart(event, square) {
+      if (!latestState || !latestState.game) return;
+      const piece = pieceAt(latestState.game.board_rows, square);
+      if (pieceSide(piece) !== latestState.game.turn) {
+        event.preventDefault();
+        return;
+      }
+      selectedSource = square;
+      event.dataTransfer.setData('text/plain', square);
+      event.dataTransfer.effectAllowed = 'move';
+      document.getElementById('moveActor').value = latestState.game.turn;
+      document.getElementById('status').textContent = `Dragging from ${square}. Drop on a destination square.`;
+      render(latestState);
+    }
+    function handleSquareDragOver(event) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+    }
+    function handleSquareDrop(event, square) {
+      event.preventDefault();
+      const source = event.dataTransfer.getData('text/plain') || selectedSource;
+      if (!source) return;
+      finishSquareMove(source, square);
+    }
+    function renderBoard(boardRows) {
+      const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const pieceGlyph = {
+        'P': ['♙', 'piece-white'],
+        'N': ['♘', 'piece-white'],
+        'B': ['♗', 'piece-white'],
+        'R': ['♖', 'piece-white'],
+        'Q': ['♕', 'piece-white'],
+        'K': ['♔', 'piece-white'],
+        'p': ['♟', 'piece-black'],
+        'n': ['♞', 'piece-black'],
+        'b': ['♝', 'piece-black'],
+        'r': ['♜', 'piece-black'],
+        'q': ['♛', 'piece-black'],
+        'k': ['♚', 'piece-black'],
+      };
+      const squares = [];
+      for (let row = 0; row < 8; row++) {
+        const rank = 8 - row;
+        for (let col = 0; col < 8; col++) {
+          const piece = boardRows[row][col];
+          const square = `${files[col]}${rank}`;
+          const tone = ((row + col) % 2 === 0) ? 'light' : 'dark';
+          const glyphInfo = pieceGlyph[piece] ?? ['',''];
+          const selectionClass = square === selectedSource ? 'selected-square' : '';
+          squares.push(
+            `<div class="square ${tone} ${glyphInfo[1]} ${selectionClass}" title="${square}" draggable="${piece !== '.'}"
+              onclick="handleSquareClick('${square}')"
+              ondragstart="handleSquareDragStart(event, '${square}')"
+              ondragover="handleSquareDragOver(event)"
+              ondrop="handleSquareDrop(event, '${square}')">${glyphInfo[0]}</div>`
+          );
+        }
+      }
+      const ranks = [8,7,6,5,4,3,2,1].map(rank => `<span>${rank}</span>`).join('');
+      const fileLabels = files.map(file => `<span>${file}</span>`).join('');
+      return `
+        <div class="board-shell">
+          <div class="board-ranks">${ranks}</div>
+          <div>
+            <div class="board-wrap"><div class="board-grid">${squares.join('')}</div></div>
+            <div class="board-files">${fileLabels}</div>
+          </div>
+        </div>
+      `;
+    }
     function render(state) {
+      latestState = state;
       document.getElementById('players').innerHTML = state.players.map(p =>
-        `<div><strong>${p.role}</strong>: registered=${p.registered}, rating=${p.rating}, open=${p.open_games}, W/D/L=${p.wins}/${p.draws}/${p.losses}</div>`
+        `<div><strong>${p.role}</strong>: ref=${p.player_ref}, value=${p.value ?? 'n/a'}, rating=${p.rating}, open=${p.open_games}, W/D/L=${p.wins}/${p.draws}/${p.losses}</div>`
       ).join('');
       if (state.game) {
-        document.getElementById('board').textContent = state.game.board_rows.join('\n');
-        document.getElementById('gameMeta').textContent = `turn=${state.game.turn}, status=${state.game.status}, moves=${state.game.move_log.join(', ')}`;
+        document.getElementById('board').className = '';
+        document.getElementById('board').innerHTML = renderBoard(state.game.board_rows);
+        document.getElementById('gameMeta').textContent =
+          `phase=${state.game.phase}, turn=${state.game.turn}, status=${state.game.status}, value=${state.game.value ?? 'n/a'}, timeout=${state.game.move_timeout ?? 'n/a'}, moves=${state.game.move_log.join(', ')}`;
       } else {
+        clearSelection();
+        document.getElementById('board').className = 'board-empty';
         document.getElementById('board').textContent = 'No active game';
         document.getElementById('gameMeta').textContent = '';
       }
       document.getElementById('notices').innerHTML = state.notices.map(n => `<li>${n}</li>`).join('');
       document.getElementById('history').innerHTML = state.history.map(h => `<li>${h.recipe_name} [${h.signer_names.join(', ')}]</li>`).join('');
+      const observer = state.observer;
+      document.getElementById('observerMeta').textContent = observer.error
+        ? `observer error: ${observer.error}`
+        : `league lanes=${observer.league_lane_count}, base rating=${observer.latest_league_rating ?? 'n/a'}, active games=${observer.active_games.length}, active settles=${observer.active_settles.length}`;
+      document.getElementById('observerGames').innerHTML = observer.active_games.map(g =>
+        `<li>${g.pair} @ ${g.outpoint}: value=${g.value}, turn=${g.turn}, status=${g.status}, timeout=${g.move_timeout}</li>`
+      ).join('');
+      document.getElementById('observerWarnings').innerHTML = observer.warnings.map(w => `<li>${w}</li>`).join('');
+      document.getElementById('observerSettles').innerHTML = observer.active_settles.map(s =>
+        `<li>${s.pair} @ ${s.outpoint}: value=${s.value}, status=${s.status}</li>`
+      ).join('');
+      document.getElementById('observerTxs').innerHTML = observer.transactions.map(tx => {
+        const events = tx.event_lines.length ? tx.event_lines.join(' | ') : 'no high-level events';
+        const inputs = tx.input_lines.join(' ; ');
+        return `<li><strong>${tx.txid}</strong><br/>${events}<br/><small>${inputs}</small></li>`;
+      }).join('');
     }
     fetchState();
   </script>
@@ -603,6 +1079,9 @@ mod tests {
         assert!(snapshot.game.is_none());
         assert!(snapshot.notices.iter().any(|n| n.contains("e2e4")));
         assert!(snapshot.notices.iter().any(|n| n.contains("settlement complete")));
+        assert!(snapshot.observer.error.is_none());
+        assert_eq!(snapshot.observer.league_lane_count, 1);
+        assert!(snapshot.observer.transactions.iter().any(|tx| tx.event_lines.iter().any(|line| line.contains("settlement applied"))));
     }
 
     #[test]
