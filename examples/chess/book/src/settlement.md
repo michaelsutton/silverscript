@@ -10,8 +10,8 @@ The intended auth split is:
 - the terminal route tail is a commitment to `blake2b(settle_template || player_template)`
 - `ChessSettle` is the settlement leader
 - both `Player` inputs are delegates
-- entitled delegates sign, while losing delegates stay signature-free
-- current first cut keeps rating unchanged and only settles win/draw/loss counts
+- `ChessSettle` validates both `Player` outputs and the objective payout split
+- player delegates only verify that the leader is the expected terminal settle contract
 
 ```mermaid
 sequenceDiagram
@@ -29,13 +29,17 @@ sequenceDiagram
     S->>S: verify bound player refs match inputs
     S->>OW: decrement open_games
     S->>OB: decrement open_games
+    S->>OW: update rating and result counters
+    S->>OB: update rating and result counters
+    S->>OW: verify winner-takes-all or draw split output value
+    S->>OB: verify winner-takes-all or draw split output value
     S->>OW: verify output template == player_template
     S->>OB: verify output template == player_template
     S->>OW: verify stat transition
     S->>OB: verify stat transition
 
-    PW->>S: if owed funds, sign delegate; else stay unsigned
-    PB->>S: if owed funds, sign delegate; else stay unsigned
+    PW->>S: verify settle leader references this player
+    PB->>S: verify settle leader references this player
 ```
 
 ## Current Slice
@@ -50,23 +54,23 @@ What is implemented now:
 - settlement decrements `open_games` for both players
 - settlement increments `games`
 - terminal result updates `wins` / `draws` / `losses`
-- a winning player must sign its `delegate_settle` path
-- on draw, both players must sign their `delegate_settle` paths
-- a losing player may still delegate settlement unsigned
-- `rating` is intentionally left unchanged for now
+- settlement applies the bounded Elo-style rating update
+- settlement validates objective KAS payouts on chain:
+  winner takes all, draw splits, odd extra goes to black
+- `Player.delegate_settle` is fully signature-free and only verifies settle/player linkage
 
 This means the durable layer now has one concrete lifecycle invariant:
 
 - a `Player` can retire only when `open_games == 0`
 
-And one first funds-oriented auth invariant:
+And one concrete funds invariant:
 
-- the players who are plausibly entitled to payout already consent on chain
-- payout shape itself is still left to off-chain review for now
+- once a game UTXO has been created, its value is preserved through live play
+- terminal settlement routes exactly that value into the two recreated `Player`
+  outputs according to the objective result rule
 
 What is still open:
 
-- rating math
 - stronger guarantees around output ordering or template commitments if we want
   delegates to reason more directly about the produced `Player` outputs
 - whether `Player.start_game` should also require `open_games == 0` and forbid
