@@ -7,7 +7,7 @@ Target transaction:
 The intended auth split is:
 
 - `ChessMux` routes terminal state into `ChessSettle`
-- the terminal route tail is a commitment to `blake2b(settle_hash || player_hash)`
+- the terminal route tail is a commitment to `blake2b(settle_template || player_template)`
 - `ChessSettle` is the settlement leader
 - both `Player` inputs are delegates
 - entitled delegates sign, while losing delegates stay signature-free
@@ -22,15 +22,15 @@ sequenceDiagram
     participant OW as Player output A
     participant OB as Player output B
 
-    G->>S: witness settle template and player_hash, then route terminal state
+    G->>S: witness settle template and player_template, then route terminal state
     S->>S: verify terminal chess result
-    S->>PW: verify input template == player_hash
-    S->>PB: verify input template == player_hash
+    S->>PW: verify input template == player_template
+    S->>PB: verify input template == player_template
     S->>S: verify bound player refs match inputs
     S->>OW: decrement open_games
     S->>OB: decrement open_games
-    S->>OW: verify output template == player_hash
-    S->>OB: verify output template == player_hash
+    S->>OW: verify output template == player_template
+    S->>OB: verify output template == player_template
     S->>OW: verify stat transition
     S->>OB: verify stat transition
 
@@ -44,7 +44,7 @@ What is implemented now:
 
 - `ChessMux` routes a terminal mux state into `ChessSettle`
 - that route is authenticated against the tail commitment
-  `blake2b(settle_hash || player_hash)`
+  `blake2b(settle_template || player_template)`
 - `ChessSettle` settles into two `Player` outputs
 - settlement requires both players to have `open_games > 0`
 - settlement decrements `open_games` for both players

@@ -2,8 +2,8 @@ pragma silverscript ^0.1.0;
 // @consts constants.sil
 
 contract ChessMux(
-    byte[32] init_mux_hash,
-    byte[288] init_route_hashes,
+    byte[32] init_mux_template,
+    byte[288] init_route_templates,
     byte[32] init_white_player,
     byte[32] init_black_player,
     byte[64] init_board,
@@ -18,6 +18,9 @@ contract ChessMux(
     int init_recent_castle,
     int init_draw_state
 ) {
+    // Naming convention: `*_template` fields carry template selectors (hash-
+    // sized values), not state-object identities.
+    //
     // Shared chess state layout, reused verbatim by mux and every worker:
     // - status: 0 live, 1 white win, 2 black win, 3 draw
     // - castle_rights[0..3]: white K, white Q, black K, black Q
@@ -25,8 +28,8 @@ contract ChessMux(
     // - pending_*: the move committed by mux for the selected worker
     // - recent_castle: 0 none, 1 wK, 2 wQ, 3 bK, 4 bQ
     // - draw_state: 3 normal, 1 draw claimed, 2 counterplay step, 4 white offered draw, 5 black offered draw
-    byte[32] mux_hash = init_mux_hash;
-    byte[288] route_hashes = init_route_hashes;
+    byte[32] mux_template = init_mux_template;
+    byte[288] route_templates = init_route_templates;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     byte[64] board = init_board;
@@ -42,7 +45,7 @@ contract ChessMux(
     int draw_state = init_draw_state;
 
     struct SettleState {
-        byte[32] player_hash;
+        byte[32] player_template;
         byte[32] white_player;
         byte[32] black_player;
         int status;
@@ -78,7 +81,7 @@ contract ChessMux(
         }
         require(checkSig(s, pk));
 
-        // route_hashes layout:
+        // route_templates layout:
         // 0  -> pawn
         // 1  -> knight
         // 2  -> vert
@@ -87,7 +90,9 @@ contract ChessMux(
         // 5  -> king
         // 6  -> castle
         // 7  -> castle challenge prep
-        // 8  -> blake2b(settle_hash || player_hash)
+        // 8  -> blake2b(settle_template || player_template)
+        // The first 8 items are direct worker templates; the last item is a
+        // commitment to two templates packed together.
         require(selector >= PAWN && selector <= MUX);
 
         // termination_action intent:
@@ -98,12 +103,12 @@ contract ChessMux(
         // 4 -> accept draw in mux
         require(termination_action >= CLEAR && termination_action <= ACCEPT);
 
-        // selector -> target contract hash
-        byte[] move_route_hashes = route_hashes.slice(0, 256);
-        byte[] all_route_hashes = move_route_hashes + mux_hash;
+        // selector -> target template
+        byte[] move_route_templates = route_templates.slice(0, 256);
+        byte[] all_route_templates = move_route_templates + mux_template;
         int hash_start = selector * 32;
         int hash_end = hash_start + 32;
-        byte[32] target_hash = all_route_hashes.slice(hash_start, hash_end);
+        byte[32] target_template = all_route_templates.slice(hash_start, hash_end);
 
         int next_status = status;
         int next_turn = turn;
@@ -191,8 +196,8 @@ contract ChessMux(
         }
 
         State next_state = {
-            mux_hash: mux_hash,
-            route_hashes: route_hashes,
+            mux_template: mux_template,
+            route_templates: route_templates,
             white_player: white_player,
             black_player: black_player,
             board: board,
@@ -216,7 +221,7 @@ contract ChessMux(
             next_state,
             target_prefix,
             target_suffix,
-            target_hash
+            target_template
         );
     }
 
@@ -224,7 +229,7 @@ contract ChessMux(
         sig s,
         pubkey pk,
         byte[32] player_id,
-        byte[32] player_hash,
+        byte[32] player_template,
         byte[] settle_prefix,
         byte[] settle_suffix
     ) {
@@ -257,11 +262,11 @@ contract ChessMux(
             next_status = DRAW;
         }
 
-        byte[32] settle_hash = blake2b(settle_prefix + settle_suffix);
-        require(blake2b(settle_hash + player_hash) == route_hashes.slice(256, 288));
+        byte[32] settle_template = blake2b(settle_prefix + settle_suffix);
+        require(blake2b(settle_template + player_template) == route_templates.slice(256, 288));
 
         SettleState next_state = {
-            player_hash: player_hash,
+            player_template: player_template,
             white_player: white_player,
             black_player: black_player,
             status: next_status
@@ -269,16 +274,16 @@ contract ChessMux(
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
         require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
-        validateOutputStateWithTemplate(output_idx, next_state, settle_prefix, settle_suffix, settle_hash);
+        validateOutputStateWithTemplate(output_idx, next_state, settle_prefix, settle_suffix, settle_template);
     }
 
-    entrypoint function settle(byte[32] player_hash, byte[] settle_prefix, byte[] settle_suffix) {
+    entrypoint function settle(byte[32] player_template, byte[] settle_prefix, byte[] settle_suffix) {
         require(status != LIVE);
-        byte[32] settle_hash = blake2b(settle_prefix + settle_suffix);
-        require(blake2b(settle_hash + player_hash) == route_hashes.slice(256, 288));
+        byte[32] settle_template = blake2b(settle_prefix + settle_suffix);
+        require(blake2b(settle_template + player_template) == route_templates.slice(256, 288));
 
         SettleState next_state = {
-            player_hash: player_hash,
+            player_template: player_template,
             white_player: white_player,
             black_player: black_player,
             status: status,
@@ -291,7 +296,7 @@ contract ChessMux(
             next_state,
             settle_prefix,
             settle_suffix,
-            settle_hash
+            settle_template
         );
     }
 

@@ -34,18 +34,18 @@ const WOFFER: i64 = 4;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeagueState {
     pub admin: Vec<u8>,
-    pub league_hash: Vec<u8>,
-    pub player_hash: Vec<u8>,
-    pub mux_hash: Vec<u8>,
+    pub league_template: Vec<u8>,
+    pub player_template: Vec<u8>,
+    pub mux_template: Vec<u8>,
     pub routes_commitment: Vec<u8>,
     pub base_rating: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerState {
-    pub league_hash: Vec<u8>,
-    pub player_hash: Vec<u8>,
-    pub mux_hash: Vec<u8>,
+    pub league_template: Vec<u8>,
+    pub player_template: Vec<u8>,
+    pub mux_template: Vec<u8>,
     pub routes_commitment: Vec<u8>,
     pub owner: Vec<u8>,
     pub player_id: Vec<u8>,
@@ -59,8 +59,8 @@ pub struct PlayerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameState {
-    pub mux_hash: Vec<u8>,
-    pub route_hashes: Vec<u8>,
+    pub mux_template: Vec<u8>,
+    pub route_templates: Vec<u8>,
     pub white_player: Vec<u8>,
     pub black_player: Vec<u8>,
     pub board: Vec<u8>,
@@ -78,7 +78,7 @@ pub struct GameState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettleState {
-    pub player_hash: Vec<u8>,
+    pub player_template: Vec<u8>,
     pub white_player: Vec<u8>,
     pub black_player: Vec<u8>,
     pub status: i64,
@@ -202,9 +202,9 @@ impl ChessEventEmitter {
                     let owner_pk = bytes_arg(&decoded.call, "owner_pk")?;
                     let owner = blake2b(&owner_pk);
                     let player = PlayerState {
-                        league_hash: state.league_hash.clone(),
-                        player_hash: state.player_hash.clone(),
-                        mux_hash: state.mux_hash.clone(),
+                        league_template: state.league_template.clone(),
+                        player_template: state.player_template.clone(),
+                        mux_template: state.mux_template.clone(),
                         routes_commitment: state.routes_commitment.clone(),
                         owner,
                         player_id: owner_pk.clone(),
@@ -276,7 +276,7 @@ impl ChessEventEmitter {
                     }
 
                     let self_side = int_arg(&decoded.call, "self_side")?;
-                    let route_hashes = bytes_arg(&decoded.call, "route_hashes")?;
+                    let route_templates = bytes_arg(&decoded.call, "route_templates")?;
                     let move_timeout = int_arg(&decoded.call, "move_timeout")?;
 
                     let self_ref = blake2b(&[self_state.owner.clone(), self_state.player_id.clone()].concat());
@@ -286,8 +286,8 @@ impl ChessEventEmitter {
                     let next_self = PlayerState { open_games: self_state.open_games + 1, ..self_state.clone() };
                     let next_other = PlayerState { open_games: other_state.open_games + 1, ..other_state.clone() };
                     let opening_game = GameState {
-                        mux_hash: self_state.mux_hash.clone(),
-                        route_hashes,
+                        mux_template: self_state.mux_template.clone(),
+                        route_templates,
                         white_player: white_player.clone(),
                         black_player: black_player.clone(),
                         board: opening_board(),
@@ -366,9 +366,9 @@ impl ChessEventEmitter {
                             output_indexes.len()
                         )));
                     }
-                    let player_hash = bytes_arg(&decoded.call, "player_hash")?;
+                    let player_template = bytes_arg(&decoded.call, "player_template")?;
                     let next = SettleState {
-                        player_hash,
+                        player_template,
                         white_player: state.white_player.clone(),
                         black_player: state.black_player.clone(),
                         status: timeout_status(state.turn, state.draw_state),
@@ -391,9 +391,9 @@ impl ChessEventEmitter {
                             output_indexes.len()
                         )));
                     }
-                    let player_hash = bytes_arg(&decoded.call, "player_hash")?;
+                    let player_template = bytes_arg(&decoded.call, "player_template")?;
                     let next = SettleState {
-                        player_hash,
+                        player_template,
                         white_player: state.white_player.clone(),
                         black_player: state.black_player.clone(),
                         status: state.status,
@@ -432,9 +432,9 @@ impl ChessEventEmitter {
                             output_indexes.len()
                         )));
                     }
-                    let player_hash = bytes_arg(&decoded.call, "player_hash")?;
+                    let player_template = bytes_arg(&decoded.call, "player_template")?;
                     let next = SettleState {
-                        player_hash,
+                        player_template,
                         white_player: state.white_player.clone(),
                         black_player: state.black_player.clone(),
                         status: timeout_status(state.turn, state.draw_state),
@@ -642,9 +642,9 @@ fn int_field(object: &DecodedObject, name: &str) -> Result<i64, ObserverError> {
 fn league_from_decoded(object: &DecodedObject) -> Result<LeagueState, ObserverError> {
     Ok(LeagueState {
         admin: bytes_field(object, "admin")?,
-        league_hash: bytes_field(object, "league_hash")?,
-        player_hash: bytes_field(object, "player_hash")?,
-        mux_hash: bytes_field(object, "mux_hash")?,
+        league_template: bytes_field(object, "league_template")?,
+        player_template: bytes_field(object, "player_template")?,
+        mux_template: bytes_field(object, "mux_template")?,
         routes_commitment: bytes_field(object, "routes_commitment")?,
         base_rating: int_field(object, "base_rating")?,
     })
@@ -652,9 +652,9 @@ fn league_from_decoded(object: &DecodedObject) -> Result<LeagueState, ObserverEr
 
 fn player_from_decoded(object: &DecodedObject) -> Result<PlayerState, ObserverError> {
     Ok(PlayerState {
-        league_hash: bytes_field(object, "league_hash")?,
-        player_hash: bytes_field(object, "player_hash")?,
-        mux_hash: bytes_field(object, "mux_hash")?,
+        league_template: bytes_field(object, "league_template")?,
+        player_template: bytes_field(object, "player_template")?,
+        mux_template: bytes_field(object, "mux_template")?,
         routes_commitment: bytes_field(object, "routes_commitment")?,
         owner: bytes_field(object, "owner")?,
         player_id: bytes_field(object, "player_id")?,
@@ -669,8 +669,8 @@ fn player_from_decoded(object: &DecodedObject) -> Result<PlayerState, ObserverEr
 
 fn game_from_decoded(object: &DecodedObject) -> Result<GameState, ObserverError> {
     Ok(GameState {
-        mux_hash: bytes_field(object, "mux_hash")?,
-        route_hashes: bytes_field(object, "route_hashes")?,
+        mux_template: bytes_field(object, "mux_template")?,
+        route_templates: bytes_field(object, "route_templates")?,
         white_player: bytes_field(object, "white_player")?,
         black_player: bytes_field(object, "black_player")?,
         board: bytes_field(object, "board")?,
@@ -689,7 +689,7 @@ fn game_from_decoded(object: &DecodedObject) -> Result<GameState, ObserverError>
 
 fn settle_from_decoded(object: &DecodedObject) -> Result<SettleState, ObserverError> {
     Ok(SettleState {
-        player_hash: bytes_field(object, "player_hash")?,
+        player_template: bytes_field(object, "player_template")?,
         white_player: bytes_field(object, "white_player")?,
         black_player: bytes_field(object, "black_player")?,
         status: int_field(object, "status")?,
@@ -1049,8 +1049,8 @@ fn blake2b(bytes: &[u8]) -> Vec<u8> {
 fn load_templates() -> Result<ObserverTemplates, ObserverError> {
     let dummy = vec![0x11; 32];
     let game = GameState {
-        mux_hash: dummy.clone(),
-        route_hashes: vec![0x22; 288],
+        mux_template: dummy.clone(),
+        route_templates: vec![0x22; 288],
         white_player: vec![0x33; 32],
         black_player: vec![0x44; 32],
         board: opening_board(),
@@ -1066,9 +1066,9 @@ fn load_templates() -> Result<ObserverTemplates, ObserverError> {
         draw_state: NORMAL,
     };
     let player = PlayerState {
-        league_hash: vec![0x55; 32],
-        player_hash: vec![0x66; 32],
-        mux_hash: dummy.clone(),
+        league_template: vec![0x55; 32],
+        player_template: vec![0x66; 32],
+        mux_template: dummy.clone(),
         routes_commitment: vec![0x77; 32],
         owner: vec![0x88; 32],
         player_id: vec![0x99; 32],
@@ -1081,14 +1081,14 @@ fn load_templates() -> Result<ObserverTemplates, ObserverError> {
     };
     let league = LeagueState {
         admin: vec![0xaa; 32],
-        league_hash: vec![0xbb; 32],
-        player_hash: player.player_hash.clone(),
-        mux_hash: dummy.clone(),
+        league_template: vec![0xbb; 32],
+        player_template: player.player_template.clone(),
+        mux_template: dummy.clone(),
         routes_commitment: player.routes_commitment.clone(),
         base_rating: 1200,
     };
     let settle = SettleState {
-        player_hash: player.player_hash.clone(),
+        player_template: player.player_template.clone(),
         white_player: vec![0xcc; 32],
         black_player: vec![0xdd; 32],
         status: LIVE,
@@ -1138,9 +1138,9 @@ fn compile_league_template(state: &LeagueState) -> Result<silverscript_lang::com
     compile_template(
         leak_source(league_contract_path()),
         &[
-            Expr::bytes(state.league_hash.clone()),
-            Expr::bytes(state.player_hash.clone()),
-            Expr::bytes(state.mux_hash.clone()),
+            Expr::bytes(state.league_template.clone()),
+            Expr::bytes(state.player_template.clone()),
+            Expr::bytes(state.mux_template.clone()),
             Expr::bytes(state.routes_commitment.clone()),
             Expr::int(state.base_rating),
             Expr::bytes(state.admin.clone()),
@@ -1152,9 +1152,9 @@ fn compile_player_template(state: &PlayerState) -> Result<silverscript_lang::com
     compile_template(
         leak_source(player_contract_path()),
         &[
-            Expr::bytes(state.league_hash.clone()),
-            Expr::bytes(state.player_hash.clone()),
-            Expr::bytes(state.mux_hash.clone()),
+            Expr::bytes(state.league_template.clone()),
+            Expr::bytes(state.player_template.clone()),
+            Expr::bytes(state.mux_template.clone()),
             Expr::bytes(state.routes_commitment.clone()),
             Expr::bytes(state.owner.clone()),
             Expr::bytes(state.player_id.clone()),
@@ -1175,8 +1175,8 @@ fn compile_game_template(
     compile_template(
         leak_source(path),
         &[
-            Expr::bytes(state.mux_hash.clone()),
-            Expr::bytes(state.route_hashes.clone()),
+            Expr::bytes(state.mux_template.clone()),
+            Expr::bytes(state.route_templates.clone()),
             Expr::bytes(state.white_player.clone()),
             Expr::bytes(state.black_player.clone()),
             Expr::bytes(state.board.clone()),
@@ -1198,7 +1198,7 @@ fn compile_settle_template(state: &SettleState) -> Result<silverscript_lang::com
     compile_template(
         leak_source(settle_contract_path()),
         &[
-            Expr::bytes(state.player_hash.clone()),
+            Expr::bytes(state.player_template.clone()),
             Expr::bytes(state.white_player.clone()),
             Expr::bytes(state.black_player.clone()),
             Expr::int(state.status),

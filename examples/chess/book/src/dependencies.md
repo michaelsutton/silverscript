@@ -14,14 +14,14 @@ flowchart TD
     G -- routes terminal state --> S
     S -- settles into --> P
 
-    L -. injects player_hash .-> P
-    L -. injects mux_hash .-> P
+    L -. injects player_template .-> P
+    L -. injects mux_template .-> P
     L -. injects routes_commitment .-> P
 
-    P -. injects mux_hash .-> G
-    P -. witnesses route_hashes .-> G
+    P -. injects mux_template .-> G
+    P -. witnesses route_templates .-> G
 
-    S -. validates Player inputs by player_hash .-> P
+    S -. validates Player inputs by player_template .-> P
     P -. delegates to Settle leader by route commitment .-> S
 ```
 
@@ -30,13 +30,13 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph League
-        LH[player_hash]
-        LM[mux_hash]
+        LH[player_template]
+        LM[mux_template]
         LR[routes_commitment]
     end
 
     subgraph Player
-        PM[mux_hash]
+        PM[mux_template]
         PX[routes_commitment]
         PP[player_id]
         PO[owner]
@@ -44,14 +44,14 @@ flowchart LR
     end
 
     subgraph Game
-        GH[route_hashes]
+        GH[route_templates]
         GW[white_player_ref]
         GB[black_player_ref]
         GR[result / terminal state]
     end
 
     subgraph Settle
-        SH[blake2b(settle_hash || player_hash)]
+        SH[blake2b(settle_template || player_template)]
         SR[terminal result]
     end
 
@@ -77,18 +77,18 @@ Today the game state binds each side as `blake2b(owner || player_id)`, not as a
 raw `player_id`. That keeps the game-side footprint to one field per side while
 still letting settlement recover canonical player ids from `Player` inputs.
 
-Today `League` and `Player` keep only `routes_commitment = blake2b(route_hashes)`.
-The full `route_hashes` blob is supplied only when `Player.start_game` expands
+Today `League` and `Player` keep only `routes_commitment = blake2b(route_templates)`.
+The full `route_templates` blob is supplied only when `Player.start_game` expands
 that commitment into a concrete game state.
 
-Today that `route_hashes` blob includes both:
+Today that `route_templates` blob includes both:
 
 - the move-worker family hashes
 - a terminal settlement commitment at the tail:
-  `blake2b(settle_hash || player_hash)`
+  `blake2b(settle_template || player_template)`
 
 That tail commitment lets `ChessMux.settle` safely witness the concrete settle
-template and the trusted `player_hash` together before materializing a
+template and the trusted `player_template` together before materializing a
 `ChessSettle` state.
 
 ## Why shared covenant id is not enough by itself
@@ -106,8 +106,8 @@ So settlement needs both:
 
 That is why the design depends on:
 
-- injected `player_hash`, `mux_hash`, and `routes_commitment`
+- injected `player_template`, `mux_template`, and `routes_commitment`
 - input-side template validation primitives
 
 And that is also why the terminal game route keeps a commitment to both
-`settle_hash` and `player_hash`, rather than only a bare settle worker hash.
+`settle_template` and `player_template`, rather than only a bare settle worker hash.

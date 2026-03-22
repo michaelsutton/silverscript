@@ -182,25 +182,25 @@ fn standard_board() -> Vec<u8> {
     ]
 }
 
-fn sample_route_hashes() -> Vec<u8> {
-    let mut route_hashes = Vec::with_capacity(32 * 9);
+fn sample_route_templates() -> Vec<u8> {
+    let mut route_templates = Vec::with_capacity(32 * 9);
     for byte in 0x12u8..=0x1au8 {
-        route_hashes.extend_from_slice(&[byte; 32]);
+        route_templates.extend_from_slice(&[byte; 32]);
     }
-    route_hashes
+    route_templates
 }
 
 fn sample_routes_commitment() -> Vec<u8> {
-    blake2b(sample_route_hashes())
+    blake2b(sample_route_templates())
 }
 
 fn pawn_constructor_args() -> Vec<Expr<'static>> {
     let standard_board = standard_board();
-    let route_hashes = sample_route_hashes();
+    let route_templates = sample_route_templates();
 
     vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(route_hashes),
+        Expr::bytes(route_templates),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(standard_board),
@@ -218,11 +218,11 @@ fn pawn_constructor_args() -> Vec<Expr<'static>> {
 }
 
 fn mux_constructor_args() -> Vec<Expr<'static>> {
-    let route_hashes = sample_route_hashes();
+    let route_templates = sample_route_templates();
 
     vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(route_hashes),
+        Expr::bytes(route_templates),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(vec![0u8; 64]),
