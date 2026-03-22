@@ -68,13 +68,14 @@ here in the same change that updates their status.
 ### Funds And Settlement
 
 - [✓] Enforce objective on-chain payout rules at settlement: winner takes all, and draws split with the odd extra unit going to black.
-- [ ] Allow the game to begin from a mutual KAS deposit into the initial contract state.
-- [ ] Allow the winner to claim the KAS and terminate the contract after winning.
-- [ ] On draw, allow a split withdrawal path.
+- [✓] Let mutually signed game start define the initial game stake flexibly, with the live game UTXO preserving that value exactly across play.
+- [✓] Route terminal game stake objectively into the winner's `Player` output at settlement.
+- [✓] Route drawn game stake objectively into both `Player` outputs at settlement, with the odd extra unit going to black.
 
 ### Off-Chain Enforcement
 
 - [✓] Add an initial off-chain Rust orchestrator that can register players, exchange invites and settlement requests, and drive real local tx execution for short games.
+- [✓] Add a tx-only covenant observer that decodes chess-family inputs and reconstructs typed authored output states and events without prior UTXO knowledge.
 - [ ] Implement an off-chain Rust wrapper for the on-chain logic so a player can enforce classical rules by challenging and proving wrong behavior.
 - [ ] Base that wrapper on a well-established Rust chess crate as the main rules engine and source of truth.
 - [ ] Import a strong chess benchmark or test suite with many complex games and verify them against this protocol.
