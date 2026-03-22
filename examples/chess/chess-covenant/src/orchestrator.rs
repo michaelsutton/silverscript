@@ -1472,11 +1472,7 @@ impl TxArena {
             self.transactions.push(executed_route_tx);
             self.game = None;
             self.game_outpoint = None;
-            self.active_worker = Some(ActiveWorkerState {
-                kind: worker,
-                state: pending,
-                outpoint: worker_outpoint,
-            });
+            self.active_worker = Some(ActiveWorkerState { kind: worker, state: pending, outpoint: worker_outpoint });
 
             let winner = actor_side.other();
             let result = if winner == Side::White { GameResult::WhiteWin } else { GameResult::BlackWin };
@@ -1578,8 +1574,13 @@ impl TxArena {
 
         let worker_fixture = self.worker_fixture(active_worker.kind);
         let worker_contract = self.compile_worker(worker_fixture.source, &active_worker.state);
-        let routed_settle =
-            compile_settle_state(self.fix.settle.source, &self.player_template, &active_worker.state.white_player, &active_worker.state.black_player, status);
+        let routed_settle = compile_settle_state(
+            self.fix.settle.source,
+            &self.player_template,
+            &active_worker.state.white_player,
+            &active_worker.state.black_player,
+            status,
+        );
         let timeout_sigscript = entry_sigscript(
             &worker_contract,
             "timeout",
@@ -1631,7 +1632,12 @@ impl TxArena {
                 kind: OffchainMessageKind::SettlementRequest { result },
             },
         );
-        self.history.push(SubmittedTx { recipe_name: self.planner().worker_timeout_recipe(active_worker.kind).name, consumed: vec![], produced: vec![], signer_names: vec![] });
+        self.history.push(SubmittedTx {
+            recipe_name: self.planner().worker_timeout_recipe(active_worker.kind).name,
+            consumed: vec![],
+            produced: vec![],
+            signer_names: vec![],
+        });
         Ok(())
     }
 
@@ -1830,11 +1836,7 @@ impl TxArena {
             execute_input_with_covenants(mux_tx, vec![covenant_utxo(&terminal, self.covenant_id)], 0)
                 .map_err(|err| OrchestratorError(format!("mux settle failed: {err}")))?;
             self.transactions.push(executed_mux_tx.clone());
-            (
-                routed_settle,
-                TransactionOutpoint { transaction_id: executed_mux_tx.id(), index: 0 },
-                true,
-            )
+            (routed_settle, TransactionOutpoint { transaction_id: executed_mux_tx.id(), index: 0 }, true)
         };
 
         let mut next_white = white_state.clone();
@@ -2960,11 +2962,7 @@ mod tests {
 
         let (history_before, txs_before, game_before) = {
             let arena = shared.borrow();
-            (
-                arena.history().len(),
-                arena.transactions().len(),
-                arena.active_game_snapshot().expect("active game exists"),
-            )
+            (arena.history().len(), arena.transactions().len(), arena.active_game_snapshot().expect("active game exists"))
         };
 
         let err = white.submit_move(MoveSpec::new(4, 1, 4, 4)).expect_err("illegal e2e5 should fail");
@@ -3017,9 +3015,9 @@ mod tests {
 
         black.claim_timeout().expect("black claims timeout");
         let settlement_request = white.inbox();
-        assert!(settlement_request.iter().any(|message| {
-            matches!(message.kind, OffchainMessageKind::SettlementRequest { result: GameResult::BlackWin, .. })
-        }));
+        assert!(settlement_request
+            .iter()
+            .any(|message| { matches!(message.kind, OffchainMessageKind::SettlementRequest { result: GameResult::BlackWin, .. }) }));
 
         white.settle(&black, GameResult::BlackWin).expect("timeout win settles");
         {

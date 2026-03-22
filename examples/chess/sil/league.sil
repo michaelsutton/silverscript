@@ -86,7 +86,7 @@ contract League(
         require(tx.outputs[output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
         require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
 
-        // Auth output 1 is the freshly minted Player, validated against the
+        // Auth output 1 is the freshly registered Player, validated against the
         // foreign Player state layout and template selector.
         validateOutputStateWithTemplate(
             OpAuthOutputIdx(this.activeInputIndex, 1),
