@@ -4107,6 +4107,120 @@ fn black_queenside_castle_transit_challenge_by_rook_succeeds() {
 }
 
 #[test]
+fn invalid_castle_destination_challenge_loses_by_worker_timeout() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+    let player_template = player_template_hash(&fix);
+
+    let mut board0 = vec![0u8; 64];
+    board0[5] = 0x04;
+    board0[6] = 0x06;
+    board0[38] = 0x09;
+    board0[62] = 0x0c;
+
+    let mux0 = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.player_ref,
+        &black.player_ref,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 1,
+            draw_state: 3,
+        },
+    );
+    let covenant_id = populate_single_output_genesis_covenant(&mux0);
+
+    let prep0 = compile_state(
+        fix.castle_challenge.source,
+        &fix,
+        &white.player_ref,
+        &black.player_ref,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(6, 7),
+            pending_dst_idx: square_idx(6, 0),
+            pending_promo: 0,
+            recent_castle: 1,
+            draw_state: 3,
+        },
+    );
+    run_route(&mux0, 7, mv(6, 7, 6, 0), &black, &fix.castle_challenge, &prep0, covenant_id);
+
+    let vert0 = compile_state(
+        fix.vert.source,
+        &fix,
+        &white.player_ref,
+        &black.player_ref,
+        GameStateArgs {
+            board: &board0,
+            turn: 1,
+            status: 0,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: square_idx(6, 7),
+            pending_dst_idx: square_idx(6, 0),
+            pending_promo: 0,
+            recent_castle: 1,
+            draw_state: 3,
+        },
+    );
+    run_prep_apply("invalid_castle_destination_challenge_prep", &prep0, &vert0, covenant_id, &fix.vert);
+
+    let mut impossible_board = board0.clone();
+    move_piece(&mut impossible_board, 6, 7, 6, 0);
+    let impossible_mux = compile_state(
+        fix.mux.source,
+        &fix,
+        &white.player_ref,
+        &black.player_ref,
+        GameStateArgs {
+            board: &impossible_board,
+            turn: 0,
+            status: 2,
+            castle_rights: [0, 0, 1, 1],
+            en_passant_idx: -1,
+            pending_src_idx: -1,
+            pending_dst_idx: -1,
+            pending_promo: 0,
+            recent_castle: 0,
+            draw_state: 3,
+        },
+    );
+    let _err = run_worker_apply_err(
+        "invalid_castle_destination_challenge_should_not_apply",
+        &vert0,
+        &impossible_mux,
+        covenant_id,
+        &fix.mux,
+    );
+
+    let settle_terminal = compile_settle_state(fix.settle.source, &player_template, &white.player_ref, &black.player_ref, 1);
+    run_worker_timeout(
+        "invalid_castle_destination_challenge_timeout",
+        &vert0,
+        &settle_terminal,
+        covenant_id,
+        &fix.settle,
+        &player_template,
+        0,
+        600,
+    );
+}
+
+#[test]
 fn claim_draw_flips_turn_and_enters_draw_state() {
     let fix = build_fixture();
     let white = player_from_seed(1);
