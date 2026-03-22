@@ -373,6 +373,26 @@ fn compile_player_state(source: &'static str, state: PlayerStateArgs<'_>) -> Com
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile player state")
 }
 
+fn compile_league_state(
+    source: &'static str,
+    league_hash: &[u8],
+    player_hash: &[u8],
+    mux_hash: &[u8],
+    routes_commitment: &[u8],
+    base_rating: i64,
+    admin_hash: &[u8],
+) -> CompiledContract<'static> {
+    let ctor = vec![
+        Expr::bytes(league_hash.to_vec()),
+        Expr::bytes(player_hash.to_vec()),
+        Expr::bytes(mux_hash.to_vec()),
+        Expr::bytes(routes_commitment.to_vec()),
+        Expr::int(base_rating),
+        Expr::bytes(admin_hash.to_vec()),
+    ];
+    compile_contract(source, &ctor, CompileOptions::default()).expect("compile league state")
+}
+
 fn entry_sigscript(compiled: &CompiledContract<'_>, function: &str, args: Vec<Expr<'_>>) -> Vec<u8> {
     let sigscript = compiled.build_sig_script(function, args).expect("sigscript builds");
     pay_to_script_hash_signature_script(compiled.script.clone(), sigscript).expect("wrap p2sh sigscript")
@@ -5403,6 +5423,280 @@ fn league_register_rejects_mutated_lane_output() {
 
     let err = execute_input_with_covenants(tx, entries, 0).expect_err("league register should fail when lane output mutates");
     assert!(err.to_string().contains("verification failed"), "unexpected register failure: {err}");
+}
+
+#[test]
+fn league_register_rejects_changed_lane_value() {
+    let owner = player_from_seed(7);
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+
+    let league_hash = vec![0x11u8; 32];
+    let admin_hash = vec![0x33u8; 32];
+    let base_rating = 1200i64;
+    let covenant_id = Hash::from_bytes([0x66u8; 32]);
+    let player_id_domain = b"LeaguePlayerId".to_vec();
+
+    let player_template = compile_contract(
+        player_source(),
+        &[
+            Expr::bytes(league_hash.clone()),
+            Expr::bytes(vec![0x44u8; 32]),
+            Expr::bytes(fix.mux.hash.clone()),
+            Expr::bytes(routes_commitment.clone()),
+            Expr::bytes(vec![0x55u8; 32]),
+            Expr::bytes(vec![0x77u8; 32]),
+            Expr::int(0),
+            Expr::int(900),
+            Expr::int(1),
+            Expr::int(2),
+            Expr::int(3),
+            Expr::int(4),
+        ],
+        CompileOptions::default(),
+    )
+    .expect("compile player template succeeds");
+    let layout = player_template.state_layout;
+    let player_prefix = player_template.script[..layout.start].to_vec();
+    let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
+    let player_hash =
+        Blake2bParams::new().hash_length(32).to_state().update(&player_prefix).update(&player_suffix).finalize().as_bytes().to_vec();
+
+    let league =
+        compile_league_state(league_source(), &league_hash, &player_hash, &fix.mux.hash, &routes_commitment, base_rating, &admin_hash);
+
+    let player_id = Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(&player_id_domain)
+        .update(&[0xabu8; 32])
+        .update(&7u32.to_le_bytes())
+        .finalize()
+        .as_bytes()
+        .to_vec();
+
+    let registered_player = compile_player_state(
+        player_source(),
+        PlayerStateArgs {
+            league_hash: &league_hash,
+            player_hash: &player_hash,
+            mux_hash: &fix.mux.hash,
+            routes_commitment: &routes_commitment,
+            owner_hash: &owner.owner_hash,
+            player_id: &player_id,
+            open_games: 0,
+            rating: base_rating,
+            games: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+        },
+    );
+
+    let mut tx = Transaction::new(
+        1,
+        vec![tx_input(7, vec![], 1)],
+        vec![covenant_output_with_value(&league, 0, covenant_id, 999), covenant_output(&registered_player, 0, covenant_id)],
+        0,
+        Default::default(),
+        0,
+        vec![],
+    );
+    let entries = vec![covenant_utxo(&league, covenant_id)];
+    tx.inputs[0].signature_script = entry_sigscript(
+        &league,
+        "register_player",
+        vec![
+            Expr::bytes(vec![0u8; 65]),
+            Expr::bytes(owner.pubkey_bytes.clone()),
+            Expr::bytes(player_prefix.clone()),
+            Expr::bytes(player_suffix.clone()),
+        ],
+    );
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &owner);
+    tx.inputs[0].signature_script = entry_sigscript(
+        &league,
+        "register_player",
+        vec![Expr::bytes(sig), Expr::bytes(owner.pubkey_bytes), Expr::bytes(player_prefix), Expr::bytes(player_suffix)],
+    );
+
+    let err = execute_input_with_covenants(tx, entries, 0).expect_err("league register should fail when lane value changes");
+    assert!(err.to_string().contains("verification failed"), "unexpected register failure: {err}");
+}
+
+#[test]
+fn league_rebalance_allows_same_spk_with_new_value() {
+    let admin = player_from_seed(13);
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+
+    let league_hash = vec![0x21u8; 32];
+    let base_rating = 1200i64;
+    let covenant_id = Hash::from_bytes([0x67u8; 32]);
+    let league = compile_league_state(
+        league_source(),
+        &league_hash,
+        &[0x44u8; 32],
+        &fix.mux.hash,
+        &routes_commitment,
+        base_rating,
+        &admin.owner_hash,
+    );
+
+    let mut tx = Transaction::new(
+        1,
+        vec![tx_input(8, vec![], 1)],
+        vec![covenant_output_with_value(&league, 0, covenant_id, 777)],
+        0,
+        Default::default(),
+        0,
+        vec![],
+    );
+    let entries = vec![covenant_utxo(&league, covenant_id)];
+    tx.inputs[0].signature_script =
+        entry_sigscript(&league, "rebalance", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(admin.pubkey_bytes.clone())]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &admin);
+    tx.inputs[0].signature_script = entry_sigscript(&league, "rebalance", vec![Expr::bytes(sig), Expr::bytes(admin.pubkey_bytes)]);
+
+    let result = execute_input_with_covenants(tx, entries, 0);
+    assert!(result.is_ok(), "league rebalance runtime failed: {}", result.unwrap_err());
+}
+
+#[test]
+fn league_rebalance_rejects_changed_state_spk() {
+    let admin = player_from_seed(13);
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+
+    let league_hash = vec![0x21u8; 32];
+    let base_rating = 1200i64;
+    let covenant_id = Hash::from_bytes([0x67u8; 32]);
+    let league = compile_league_state(
+        league_source(),
+        &league_hash,
+        &[0x44u8; 32],
+        &fix.mux.hash,
+        &routes_commitment,
+        base_rating,
+        &admin.owner_hash,
+    );
+    let mutated = compile_league_state(
+        league_source(),
+        &league_hash,
+        &[0x44u8; 32],
+        &fix.mux.hash,
+        &routes_commitment,
+        base_rating + 1,
+        &admin.owner_hash,
+    );
+
+    let mut tx = Transaction::new(
+        1,
+        vec![tx_input(8, vec![], 1)],
+        vec![covenant_output_with_value(&mutated, 0, covenant_id, 777)],
+        0,
+        Default::default(),
+        0,
+        vec![],
+    );
+    let entries = vec![covenant_utxo(&league, covenant_id)];
+    tx.inputs[0].signature_script =
+        entry_sigscript(&league, "rebalance", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(admin.pubkey_bytes.clone())]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &admin);
+    tx.inputs[0].signature_script = entry_sigscript(&league, "rebalance", vec![Expr::bytes(sig), Expr::bytes(admin.pubkey_bytes)]);
+
+    let err = execute_input_with_covenants(tx, entries, 0).expect_err("league rebalance should fail when lane state changes");
+    assert!(err.to_string().contains("verification failed"), "unexpected rebalance failure: {err}");
+}
+
+#[test]
+fn league_fork_allows_two_identical_lanes() {
+    let admin = player_from_seed(13);
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+
+    let league_hash = vec![0x21u8; 32];
+    let base_rating = 1200i64;
+    let covenant_id = Hash::from_bytes([0x68u8; 32]);
+    let league = compile_league_state(
+        league_source(),
+        &league_hash,
+        &[0x44u8; 32],
+        &fix.mux.hash,
+        &routes_commitment,
+        base_rating,
+        &admin.owner_hash,
+    );
+
+    let mut tx = Transaction::new(
+        1,
+        vec![tx_input(9, vec![], 1)],
+        vec![covenant_output_with_value(&league, 0, covenant_id, 400), covenant_output_with_value(&league, 0, covenant_id, 600)],
+        0,
+        Default::default(),
+        0,
+        vec![],
+    );
+    let entries = vec![covenant_utxo(&league, covenant_id)];
+    tx.inputs[0].signature_script =
+        entry_sigscript(&league, "fork", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(admin.pubkey_bytes.clone())]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &admin);
+    tx.inputs[0].signature_script = entry_sigscript(&league, "fork", vec![Expr::bytes(sig), Expr::bytes(admin.pubkey_bytes)]);
+
+    let result = execute_input_with_covenants(tx, entries, 0);
+    assert!(result.is_ok(), "league fork runtime failed: {}", result.unwrap_err());
+}
+
+#[test]
+fn league_fork_rejects_mutated_lane_output() {
+    let admin = player_from_seed(13);
+    let fix = build_fixture();
+    let route_hashes = packed_route_hashes(&fix);
+    let routes_commitment = routes_commitment(&route_hashes);
+
+    let league_hash = vec![0x21u8; 32];
+    let base_rating = 1200i64;
+    let covenant_id = Hash::from_bytes([0x68u8; 32]);
+    let league = compile_league_state(
+        league_source(),
+        &league_hash,
+        &[0x44u8; 32],
+        &fix.mux.hash,
+        &routes_commitment,
+        base_rating,
+        &admin.owner_hash,
+    );
+    let mutated = compile_league_state(
+        league_source(),
+        &league_hash,
+        &[0x44u8; 32],
+        &fix.mux.hash,
+        &routes_commitment,
+        base_rating + 1,
+        &admin.owner_hash,
+    );
+
+    let mut tx = Transaction::new(
+        1,
+        vec![tx_input(9, vec![], 1)],
+        vec![covenant_output_with_value(&league, 0, covenant_id, 400), covenant_output_with_value(&mutated, 0, covenant_id, 500)],
+        0,
+        Default::default(),
+        0,
+        vec![],
+    );
+    let entries = vec![covenant_utxo(&league, covenant_id)];
+    tx.inputs[0].signature_script =
+        entry_sigscript(&league, "fork", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(admin.pubkey_bytes.clone())]);
+    let sig = sign_tx_input_schnorr(&tx, &entries, 0, &admin);
+    tx.inputs[0].signature_script = entry_sigscript(&league, "fork", vec![Expr::bytes(sig), Expr::bytes(admin.pubkey_bytes)]);
+
+    let err = execute_input_with_covenants(tx, entries, 0).expect_err("league fork should fail when a forked lane mutates");
+    assert!(err.to_string().contains("verification failed"), "unexpected fork failure: {err}");
 }
 
 #[test]

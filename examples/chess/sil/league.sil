@@ -79,7 +79,9 @@ contract League(
 
         // Auth output 0 recreates the immutable registration lane verbatim.
         // Because League state never changes, direct scriptPubKey equality is enough.
-        require(tx.outputs[OpAuthOutputIdx(this.activeInputIndex, 0)].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
+        require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
 
         // Auth output 1 is the freshly minted Player, validated against the
         // foreign Player state layout and template hash.
@@ -92,7 +94,26 @@ contract League(
         );
     }
 
-    // TODO:
-    // - league shutdown / lane retirement path under `admin`
-    // - optional registration policies (fee, allowlist, season gating)
+    // Admin-signed same-SPK continuity path for adjusting lane value without
+    // changing the immutable League state or closing the lane.
+    entrypoint function rebalance(sig admin_sig, pubkey admin_pk) {
+        require(blake2b(admin_pk) == admin);
+        require(checkSig(admin_sig, admin_pk));
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        require(tx.outputs[output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
+    }
+
+    // Admin-signed fan-out path for splitting one immutable registration lane
+    // into two identical lanes.
+    entrypoint function fork(sig admin_sig, pubkey admin_pk) {
+        require(blake2b(admin_pk) == admin);
+        require(checkSig(admin_sig, admin_pk));
+        require(OpAuthOutputCount(this.activeInputIndex) == 2);
+
+        int left_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        int right_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
+        require(tx.outputs[left_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
+        require(tx.outputs[right_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
+    }
 }
