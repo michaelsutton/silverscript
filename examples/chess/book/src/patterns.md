@@ -70,6 +70,20 @@ This is what makes retirement practical:
 - `retire` only needs to check `open_games == 0`
 - it does not need a global proof that no live game still references the player
 
+## Admin Stewards Funding, Not Protocol Liveness
+
+`League` now has admin-signed `rebalance` and `fork` paths, but no admin path
+for shutting down the public registration lineage. Once a game starts, play and
+settlement are fully permissionless.
+
+Pattern:
+
+- let an admin manage funding and lane fan-out for a public entry layer
+- do not let that admin control user-level liveness or terminal game outcomes
+
+This keeps operational stewardship where it is useful without turning it into a
+centralized kill switch.
+
 ## Leader / Delegate Split
 
 `Player.start_game` and `ChessSettle.settle` both use a leader-plus-delegates
@@ -82,9 +96,10 @@ Pattern:
 
 Settlement adds a useful refinement:
 
-- delegates do not all need the same signature policy
-- only the side that is entitled to funds needs to sign
-- losers can remain passive delegates
+- delegates do not need to sign if the terminal payout is validated
+  objectively on chain
+- once funds are checked in `ChessSettle`, player delegates can stay fully
+  passive
 
 ## Shared State Layout Across A Contract Family
 

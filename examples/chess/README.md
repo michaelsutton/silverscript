@@ -62,11 +62,12 @@ here in the same change that updates their status.
 
 - [✓] Define the outer covenant and game-entry/settlement protocol needed to represent and update scores on chain.
 - [✓] Build an outer durable layer with `League` registration, `Player` accounts, `ChessMux` game start, `ChessSettle` settlement, and `Player` retirement guarded by `open_games`.
+- [✓] Keep admin control limited to `League` lane funding and fan-out, while leaving game progression and settlement permissionless once a game is open.
 - [ ] Build full chess server logic with persistent player scoring based on game results.
 
 ### Funds And Settlement
 
-- [✓] Require winner-side settlement consent on chain, and draw-side consent from both players, before any funds-bearing settlement path can complete.
+- [✓] Enforce objective on-chain payout rules at settlement: winner takes all, and draws split with the odd extra unit going to black.
 - [ ] Allow the game to begin from a mutual KAS deposit into the initial contract state.
 - [ ] Allow the winner to claim the KAS and terminate the contract after winning.
 - [ ] On draw, allow a split withdrawal path.
