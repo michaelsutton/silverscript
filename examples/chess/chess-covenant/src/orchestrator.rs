@@ -29,7 +29,7 @@ use crate::{
 pub struct TemplateWitness {
     pub prefix: Vec<u8>,
     pub suffix: Vec<u8>,
-    pub hash: Vec<u8>,
+    pub hash: Hash,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,7 +47,7 @@ pub struct ChessTemplateFamily {
     pub castle: TemplateWitness,
     pub castle_challenge: TemplateWitness,
     pub route_templates: Vec<u8>,
-    pub routes_commitment: Vec<u8>,
+    pub routes_commitment: Hash,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +136,28 @@ pub enum Side {
 
 const DEFAULT_MOVE_TIMEOUT: i64 = 600;
 
+fn hash_expr(value: Hash) -> Expr<'static> {
+    Expr::bytes(hash_bytes(value))
+}
+
+fn player_ref_hash(owner_hash: Hash, player_id: Hash) -> Hash {
+    hash_pair(owner_hash, player_id)
+}
+
+fn repeated_hash(byte: u8) -> Hash {
+    Hash::from_bytes([byte; 32])
+}
+
+fn hash_bytes(value: Hash) -> Vec<u8> {
+    value.as_bytes().to_vec()
+}
+
+fn hash_pair(left: Hash, right: Hash) -> Hash {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    blake2b(&[left.as_slice(), right.as_slice()].concat())
+}
+
 impl Side {
     fn other(self) -> Self {
         match self {
@@ -149,9 +171,9 @@ impl Side {
 pub struct PlayerHandle {
     pub name: String,
     pub pubkey_bytes: Vec<u8>,
-    pub owner_hash: Vec<u8>,
-    pub player_id: Option<Vec<u8>>,
-    pub player_ref: Option<Vec<u8>>,
+    pub owner_hash: Hash,
+    pub player_id: Option<Hash>,
+    pub player_ref: Option<Hash>,
 }
 
 impl PlayerHandle {
@@ -179,9 +201,9 @@ impl SigningPlayer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlayerAccount {
     pub owner_name: String,
-    pub owner_hash: Vec<u8>,
-    pub player_id: Vec<u8>,
-    pub player_ref: Vec<u8>,
+    pub owner_hash: Hash,
+    pub player_id: Hash,
+    pub player_ref: Hash,
     pub value: u64,
     pub open_games: i64,
     pub rating: i64,
@@ -193,8 +215,8 @@ pub struct PlayerAccount {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameSession {
-    pub white_player_ref: Vec<u8>,
-    pub black_player_ref: Vec<u8>,
+    pub white_player_ref: Hash,
+    pub black_player_ref: Hash,
     pub turn: Side,
     pub move_log: Vec<String>,
 }
@@ -204,15 +226,15 @@ pub struct WorkerTransit {
     pub kind: WorkerKind,
     pub actor: Side,
     pub move_label: String,
-    pub white_player_ref: Vec<u8>,
-    pub black_player_ref: Vec<u8>,
+    pub white_player_ref: Hash,
+    pub black_player_ref: Hash,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SettlementTicket {
     pub result: GameResult,
-    pub white_player_ref: Vec<u8>,
-    pub black_player_ref: Vec<u8>,
+    pub white_player_ref: Hash,
+    pub black_player_ref: Hash,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -276,8 +298,8 @@ impl MoveSpec {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActualGameSnapshot {
-    pub white_player_ref: Vec<u8>,
-    pub black_player_ref: Vec<u8>,
+    pub white_player_ref: Hash,
+    pub black_player_ref: Hash,
     pub board: Vec<u8>,
     pub turn: Side,
     pub status: i64,
@@ -289,9 +311,9 @@ pub struct SigningPlayer {
     pub name: String,
     keypair: Keypair,
     pub pubkey_bytes: Vec<u8>,
-    pub owner_hash: Vec<u8>,
-    pub player_id: Option<Vec<u8>>,
-    pub player_ref: Option<Vec<u8>>,
+    pub owner_hash: Hash,
+    pub player_id: Option<Hash>,
+    pub player_ref: Option<Hash>,
 }
 
 #[derive(Clone, Debug)]
@@ -310,7 +332,7 @@ struct TemplateFixture {
     source: &'static str,
     prefix: Vec<u8>,
     suffix: Vec<u8>,
-    hash: Vec<u8>,
+    hash: Hash,
 }
 
 #[derive(Clone)]
@@ -329,8 +351,8 @@ struct ExecutionFixture {
 
 #[derive(Clone)]
 struct PlayerStateData {
-    owner_hash: Vec<u8>,
-    player_id: Vec<u8>,
+    owner_hash: Hash,
+    player_id: Hash,
     value: u64,
     open_games: i64,
     rating: i64,
@@ -341,12 +363,12 @@ struct PlayerStateData {
 }
 
 struct PlayerStateArgs<'a> {
-    league_template: &'a [u8],
-    player_template: &'a [u8],
-    mux_template: &'a [u8],
-    routes_commitment: &'a [u8],
-    owner_hash: &'a [u8],
-    player_id: &'a [u8],
+    league_template: &'a Hash,
+    player_template: &'a Hash,
+    mux_template: &'a Hash,
+    routes_commitment: &'a Hash,
+    owner_hash: &'a Hash,
+    player_id: &'a Hash,
     open_games: i64,
     rating: i64,
     games: i64,
@@ -357,8 +379,8 @@ struct PlayerStateArgs<'a> {
 
 #[derive(Clone)]
 struct GameStateData {
-    white_player: Vec<u8>,
-    black_player: Vec<u8>,
+    white_player: Hash,
+    black_player: Hash,
     board: Vec<u8>,
     turn: i64,
     status: i64,
@@ -375,9 +397,9 @@ struct GameStateData {
 
 pub struct TxArena {
     fix: ExecutionFixture,
-    league_template: Vec<u8>,
+    league_template: Hash,
     base_rating: i64,
-    player_template: Vec<u8>,
+    player_template: Hash,
     player_prefix: Vec<u8>,
     player_suffix: Vec<u8>,
     player_prefix_len: i64,
@@ -525,13 +547,13 @@ impl LocalArena {
 
         let player_id = derive_player_id(self.next_player_nonce, &player.owner_hash);
         self.next_player_nonce += 1;
-        let player_ref = blake2b([player.owner_hash.as_slice(), player_id.as_slice()].concat().as_slice());
+        let player_ref = player_ref_hash(player.owner_hash, player_id);
 
         let account = PlayerAccount {
             owner_name: player.name.clone(),
-            owner_hash: player.owner_hash.clone(),
-            player_id: player_id.clone(),
-            player_ref: player_ref.clone(),
+            owner_hash: player.owner_hash,
+            player_id,
+            player_ref,
             value: 1_000,
             open_games: 0,
             rating: self.base_rating,
@@ -573,13 +595,13 @@ impl LocalArena {
     }
 
     pub fn start_game(&mut self, white: &PlayerHandle, black: &PlayerHandle) -> Result<SubmittedTx, OrchestratorError> {
-        let white_ref = white.player_ref.clone().ok_or_else(|| OrchestratorError("white player is not registered".to_string()))?;
-        let black_ref = black.player_ref.clone().ok_or_else(|| OrchestratorError("black player is not registered".to_string()))?;
+        let white_ref = white.player_ref.ok_or_else(|| OrchestratorError("white player is not registered".to_string()))?;
+        let black_ref = black.player_ref.ok_or_else(|| OrchestratorError("black player is not registered".to_string()))?;
 
-        let white_id = self.find_player_utxo_id(&white_ref)?;
-        let black_id = self.find_player_utxo_id(&black_ref)?;
-        let mut white_account = self.player_account(&white_ref)?;
-        let mut black_account = self.player_account(&black_ref)?;
+        let white_id = self.find_player_utxo_id(white_ref)?;
+        let black_id = self.find_player_utxo_id(black_ref)?;
+        let mut white_account = self.player_account(white_ref)?;
+        let mut black_account = self.player_account(black_ref)?;
 
         white_account.open_games += 1;
         black_account.open_games += 1;
@@ -590,8 +612,8 @@ impl LocalArena {
         let next_white_id = self.alloc_utxo(LocalUtxo::Player(white_account));
         let next_black_id = self.alloc_utxo(LocalUtxo::Player(black_account));
         let mux_id = self.alloc_utxo(LocalUtxo::Mux(GameSession {
-            white_player_ref: white_ref.clone(),
-            black_player_ref: black_ref.clone(),
+            white_player_ref: white_ref,
+            black_player_ref: black_ref,
             turn: Side::White,
             move_log: Vec::new(),
         }));
@@ -612,7 +634,7 @@ impl LocalArena {
         worker: WorkerKind,
         move_label: impl Into<String>,
     ) -> Result<Vec<SubmittedTx>, OrchestratorError> {
-        let actor_ref = actor.player_ref.clone().ok_or_else(|| OrchestratorError(format!("{} is not registered", actor.name)))?;
+        let actor_ref = actor.player_ref.ok_or_else(|| OrchestratorError(format!("{} is not registered", actor.name)))?;
         let move_label = move_label.into();
         let (mux_id, mux) = self.active_mux()?;
 
@@ -633,8 +655,8 @@ impl LocalArena {
             kind: worker,
             actor: actor_side,
             move_label: move_label.clone(),
-            white_player_ref: mux.white_player_ref.clone(),
-            black_player_ref: mux.black_player_ref.clone(),
+            white_player_ref: mux.white_player_ref,
+            black_player_ref: mux.black_player_ref,
         }));
         let route_tx = SubmittedTx {
             recipe_name: self.planner.route_recipe(worker).name,
@@ -653,8 +675,8 @@ impl LocalArena {
         let mut move_log = mux.move_log.clone();
         move_log.push(format!("{}:{:?}:{}", actor.name, worker, move_label));
         let next_mux_id = self.alloc_utxo(LocalUtxo::Mux(GameSession {
-            white_player_ref: worker_state.white_player_ref.clone(),
-            black_player_ref: worker_state.black_player_ref.clone(),
+            white_player_ref: worker_state.white_player_ref,
+            black_player_ref: worker_state.black_player_ref,
             turn: next_turn,
             move_log,
         }));
@@ -667,9 +689,9 @@ impl LocalArena {
         self.history.push(apply_tx.clone());
 
         let recipient = if actor_side == Side::White {
-            self.owner_name(&worker_state.black_player_ref)?
+            self.owner_name(worker_state.black_player_ref)?
         } else {
-            self.owner_name(&worker_state.white_player_ref)?
+            self.owner_name(worker_state.white_player_ref)?
         };
         self.push_message(
             &recipient,
@@ -697,8 +719,8 @@ impl LocalArena {
         self.require_registered(white)?;
         self.require_registered(black)?;
         let (mux_id, mux) = self.active_mux()?;
-        let white_ref = white.player_ref.clone().ok_or_else(|| OrchestratorError("white player is not registered".to_string()))?;
-        let black_ref = black.player_ref.clone().ok_or_else(|| OrchestratorError("black player is not registered".to_string()))?;
+        let white_ref = white.player_ref.ok_or_else(|| OrchestratorError("white player is not registered".to_string()))?;
+        let black_ref = black.player_ref.ok_or_else(|| OrchestratorError("black player is not registered".to_string()))?;
         if mux.white_player_ref != white_ref || mux.black_player_ref != black_ref {
             return Err(OrchestratorError("active mux does not match provided players".to_string()));
         }
@@ -706,8 +728,8 @@ impl LocalArena {
         self.utxos.remove(&mux_id);
         let settle_id = self.alloc_utxo(LocalUtxo::Settle(SettlementTicket {
             result,
-            white_player_ref: mux.white_player_ref.clone(),
-            black_player_ref: mux.black_player_ref.clone(),
+            white_player_ref: mux.white_player_ref,
+            black_player_ref: mux.black_player_ref,
         }));
         let mux_tx = SubmittedTx {
             recipe_name: self.planner.settlement_recipe(result).mux_step.name,
@@ -717,10 +739,10 @@ impl LocalArena {
         };
         self.history.push(mux_tx.clone());
 
-        let white_player_id = self.find_player_utxo_id(&white_ref)?;
-        let black_player_id = self.find_player_utxo_id(&black_ref)?;
-        let mut white_account = self.player_account(&white_ref)?;
-        let mut black_account = self.player_account(&black_ref)?;
+        let white_player_id = self.find_player_utxo_id(white_ref)?;
+        let black_player_id = self.find_player_utxo_id(black_ref)?;
+        let mut white_account = self.player_account(white_ref)?;
+        let mut black_account = self.player_account(black_ref)?;
         if white_account.open_games <= 0 || black_account.open_games <= 0 {
             return Err(OrchestratorError("cannot settle players without open games".to_string()));
         }
@@ -804,9 +826,9 @@ impl LocalArena {
     }
 
     pub fn retire_player(&mut self, player: &PlayerHandle) -> Result<SubmittedTx, OrchestratorError> {
-        let player_ref = player.player_ref.clone().ok_or_else(|| OrchestratorError(format!("{} is not registered", player.name)))?;
-        let player_id = self.find_player_utxo_id(&player_ref)?;
-        let account = self.player_account(&player_ref)?;
+        let player_ref = player.player_ref.ok_or_else(|| OrchestratorError(format!("{} is not registered", player.name)))?;
+        let player_id = self.find_player_utxo_id(player_ref)?;
+        let account = self.player_account(player_ref)?;
         if account.open_games != 0 {
             return Err(OrchestratorError(format!("{} still has open games", player.name)));
         }
@@ -822,8 +844,8 @@ impl LocalArena {
     }
 
     pub fn player_account_snapshot(&self, player: &PlayerHandle) -> Result<PlayerAccount, OrchestratorError> {
-        let player_ref = player.player_ref.clone().ok_or_else(|| OrchestratorError(format!("{} is not registered", player.name)))?;
-        self.player_account(&player_ref)
+        let player_ref = player.player_ref.ok_or_else(|| OrchestratorError(format!("{} is not registered", player.name)))?;
+        self.player_account(player_ref)
     }
 
     pub fn active_game_snapshot(&self) -> Option<GameSession> {
@@ -851,7 +873,7 @@ impl LocalArena {
         Ok(())
     }
 
-    fn find_player_utxo_id(&self, player_ref: &[u8]) -> Result<LocalUtxoId, OrchestratorError> {
+    fn find_player_utxo_id(&self, player_ref: Hash) -> Result<LocalUtxoId, OrchestratorError> {
         self.utxos
             .iter()
             .find_map(|(id, utxo)| match utxo {
@@ -861,7 +883,7 @@ impl LocalArena {
             .ok_or_else(|| OrchestratorError("missing player UTXO".to_string()))
     }
 
-    fn player_account(&self, player_ref: &[u8]) -> Result<PlayerAccount, OrchestratorError> {
+    fn player_account(&self, player_ref: Hash) -> Result<PlayerAccount, OrchestratorError> {
         self.utxos
             .values()
             .find_map(|utxo| match utxo {
@@ -881,7 +903,7 @@ impl LocalArena {
             .ok_or_else(|| OrchestratorError("missing active mux".to_string()))
     }
 
-    fn owner_name(&self, player_ref: &[u8]) -> Result<String, OrchestratorError> {
+    fn owner_name(&self, player_ref: Hash) -> Result<String, OrchestratorError> {
         Ok(self.player_account(player_ref)?.owner_name)
     }
 }
@@ -935,19 +957,19 @@ impl TxOrchestrator {
 impl TxArena {
     pub fn new() -> Result<Self, OrchestratorError> {
         let fix = build_execution_fixture();
-        let league_template = vec![0x11u8; 32];
-        let admin = vec![0x33u8; 32];
+        let league_template = repeated_hash(0x11);
+        let admin = repeated_hash(0x33);
         let base_rating = 1200;
         let routes_commitment = routes_commitment(&packed_execution_route_templates(&fix));
         let player_contract = compile_player_state(
             player_static_source(),
             PlayerStateArgs {
-                league_template: &[0x11u8; 32],
-                player_template: &[0x22u8; 32],
+                league_template: &repeated_hash(0x11),
+                player_template: &repeated_hash(0x22),
                 mux_template: &fix.mux.hash,
                 routes_commitment: &routes_commitment,
-                owner_hash: &[0x44u8; 32],
-                player_id: &[0x55u8; 32],
+                owner_hash: &repeated_hash(0x44),
+                player_id: &repeated_hash(0x55),
                 open_games: 0,
                 rating: base_rating,
                 games: 0,
@@ -1012,14 +1034,14 @@ impl TxArena {
     }
 
     pub fn player_account_snapshot(&self, player: &SigningPlayer) -> Result<PlayerAccount, OrchestratorError> {
-        let player_ref = player.player_ref.clone().ok_or_else(|| OrchestratorError(format!("{} is not registered", player.name)))?;
-        self.player_account(&player_ref)
+        let player_ref = player.player_ref.ok_or_else(|| OrchestratorError(format!("{} is not registered", player.name)))?;
+        self.player_account(player_ref)
     }
 
     pub fn active_game_snapshot(&self) -> Option<ActualGameSnapshot> {
         self.game.as_ref().map(|game| ActualGameSnapshot {
-            white_player_ref: game.white_player.clone(),
-            black_player_ref: game.black_player.clone(),
+            white_player_ref: game.white_player,
+            black_player_ref: game.black_player,
             board: game.board.clone(),
             turn: side_from_turn(game.turn),
             status: game.status,
@@ -1032,7 +1054,7 @@ impl TxArena {
         self.next_registration_index += 1;
         let txid = [0xabu8; 32];
         let player_id = blake2b([b"LeaguePlayerId".as_slice(), &txid, &index.to_le_bytes()].concat().as_slice());
-        let player_ref = blake2b([player.owner_hash.as_slice(), player_id.as_slice()].concat().as_slice());
+        let player_ref = player_ref_hash(player.owner_hash, player_id);
 
         let registered = compile_player_state(
             player_static_source(),
@@ -1087,12 +1109,12 @@ impl TxArena {
         execute_input_with_covenants(tx, entries, 0).map_err(|err| OrchestratorError(format!("register failed: {err}")))?;
         self.transactions.push(executed_tx);
 
-        player.player_id = Some(player_id.clone());
-        player.player_ref = Some(player_ref.clone());
+        player.player_id = Some(player_id);
+        player.player_ref = Some(player_ref);
         self.players.insert(
             player.name.clone(),
             PlayerStateData {
-                owner_hash: player.owner_hash.clone(),
+                owner_hash: player.owner_hash,
                 player_id,
                 value: 1_000,
                 open_games: 0,
@@ -1153,8 +1175,8 @@ impl TxArena {
         let next_white_contract = self.compile_player(&next_white);
         let next_black_contract = self.compile_player(&next_black);
 
-        let white_ref = white.player_ref.clone().ok_or_else(|| OrchestratorError("white missing player ref".to_string()))?;
-        let black_ref = black.player_ref.clone().ok_or_else(|| OrchestratorError("black missing player ref".to_string()))?;
+        let white_ref = white.player_ref.ok_or_else(|| OrchestratorError("white missing player ref".to_string()))?;
+        let black_ref = black.player_ref.ok_or_else(|| OrchestratorError("black missing player ref".to_string()))?;
         let opening = GameStateData {
             white_player: white_ref,
             black_player: black_ref,
@@ -1281,7 +1303,7 @@ impl TxArena {
 
     pub fn submit_move(&mut self, actor: &SigningPlayer, mv: MoveSpec) -> Result<Vec<SubmittedTx>, OrchestratorError> {
         let game = self.game.clone().ok_or_else(|| OrchestratorError("missing game".to_string()))?;
-        let actor_ref = actor.player_ref.clone().ok_or_else(|| OrchestratorError(format!("{} missing player ref", actor.name)))?;
+        let actor_ref = actor.player_ref.ok_or_else(|| OrchestratorError(format!("{} missing player ref", actor.name)))?;
         let actor_side = if actor_ref == game.white_player {
             Side::White
         } else if actor_ref == game.black_player {
@@ -1311,7 +1333,7 @@ impl TxArena {
                 Expr::int(0),
                 Expr::bytes(vec![0u8; 65]),
                 Expr::bytes(actor.pubkey_bytes.clone()),
-                Expr::bytes(actor.player_id.clone().ok_or_else(|| OrchestratorError("missing player id".to_string()))?),
+                hash_expr(actor.player_id.ok_or_else(|| OrchestratorError("missing player id".to_string()))?),
                 Expr::bytes(target.prefix.clone()),
                 Expr::bytes(target.suffix.clone()),
             ],
@@ -1333,7 +1355,7 @@ impl TxArena {
                 Expr::int(0),
                 Expr::bytes(sig),
                 Expr::bytes(actor.pubkey_bytes.clone()),
-                Expr::bytes(actor.player_id.clone().ok_or_else(|| OrchestratorError("missing player id".to_string()))?),
+                hash_expr(actor.player_id.ok_or_else(|| OrchestratorError("missing player id".to_string()))?),
                 Expr::bytes(target.prefix.clone()),
                 Expr::bytes(target.suffix.clone()),
             ],
@@ -1368,16 +1390,14 @@ impl TxArena {
             self.players
                 .iter()
                 .find_map(|(name, state)| {
-                    (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == game.black_player)
-                        .then_some(name.clone())
+                    (player_ref_hash(state.owner_hash, state.player_id) == game.black_player).then_some(name.clone())
                 })
                 .ok_or_else(|| OrchestratorError("missing black owner".to_string()))?
         } else {
             self.players
                 .iter()
                 .find_map(|(name, state)| {
-                    (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == game.white_player)
-                        .then_some(name.clone())
+                    (player_ref_hash(state.owner_hash, state.player_id) == game.white_player).then_some(name.clone())
                 })
                 .ok_or_else(|| OrchestratorError("missing white owner".to_string()))?
         };
@@ -1411,7 +1431,7 @@ impl TxArena {
 
     pub fn surrender(&mut self, actor: &SigningPlayer) -> Result<(), OrchestratorError> {
         let game = self.game.clone().ok_or_else(|| OrchestratorError("missing game".to_string()))?;
-        let actor_ref = actor.player_ref.clone().ok_or_else(|| OrchestratorError(format!("{} missing player ref", actor.name)))?;
+        let actor_ref = actor.player_ref.ok_or_else(|| OrchestratorError(format!("{} missing player ref", actor.name)))?;
         let actor_side = if actor_ref == game.white_player {
             Side::White
         } else if actor_ref == game.black_player {
@@ -1425,8 +1445,8 @@ impl TxArena {
 
         let active = self.compile_mux(&game);
         let next = GameStateData {
-            white_player: game.white_player.clone(),
-            black_player: game.black_player.clone(),
+            white_player: game.white_player,
+            black_player: game.black_player,
             board: game.board.clone(),
             turn: game.turn,
             status: if game.turn == 0 { 2 } else { 1 },
@@ -1454,7 +1474,7 @@ impl TxArena {
                 Expr::int(3),
                 Expr::bytes(vec![0u8; 65]),
                 Expr::bytes(actor.pubkey_bytes.clone()),
-                Expr::bytes(actor.player_id.clone().ok_or_else(|| OrchestratorError("missing player id".to_string()))?),
+                hash_expr(actor.player_id.ok_or_else(|| OrchestratorError("missing player id".to_string()))?),
                 Expr::bytes(self.fix.mux.prefix.clone()),
                 Expr::bytes(self.fix.mux.suffix.clone()),
             ],
@@ -1476,7 +1496,7 @@ impl TxArena {
                 Expr::int(3),
                 Expr::bytes(sig),
                 Expr::bytes(actor.pubkey_bytes.clone()),
-                Expr::bytes(actor.player_id.clone().ok_or_else(|| OrchestratorError("missing player id".to_string()))?),
+                hash_expr(actor.player_id.ok_or_else(|| OrchestratorError("missing player id".to_string()))?),
                 Expr::bytes(self.fix.mux.prefix.clone()),
                 Expr::bytes(self.fix.mux.suffix.clone()),
             ],
@@ -1548,15 +1568,15 @@ impl TxArena {
         let white_contract = self.compile_player(&white_state);
         let black_contract = self.compile_player(&black_state);
 
-        let white_ref = white.player_ref.clone().ok_or_else(|| OrchestratorError("white missing player ref".to_string()))?;
-        let black_ref = black.player_ref.clone().ok_or_else(|| OrchestratorError("black missing player ref".to_string()))?;
+        let white_ref = white.player_ref.ok_or_else(|| OrchestratorError("white missing player ref".to_string()))?;
+        let black_ref = black.player_ref.ok_or_else(|| OrchestratorError("black missing player ref".to_string()))?;
         let routed_settle =
             compile_settle_state(self.fix.settle.source, &self.player_template, &white_ref, &black_ref, expected_status);
         let mux_settle_sigscript = entry_sigscript(
             &terminal,
             "settle",
             vec![
-                Expr::bytes(self.player_template.clone()),
+                hash_expr(self.player_template),
                 Expr::bytes(self.fix.settle.prefix.clone()),
                 Expr::bytes(self.fix.settle.suffix.clone()),
             ],
@@ -1639,7 +1659,7 @@ impl TxArena {
             vec![
                 Expr::int(self.fix.settle.prefix.len() as i64),
                 Expr::int(self.fix.settle.suffix.len() as i64),
-                Expr::bytes(self.fix.settle.hash.clone()),
+                hash_expr(self.fix.settle.hash),
                 Expr::bytes(route_templates.clone()),
             ],
         );
@@ -1649,7 +1669,7 @@ impl TxArena {
             vec![
                 Expr::int(self.fix.settle.prefix.len() as i64),
                 Expr::int(self.fix.settle.suffix.len() as i64),
-                Expr::bytes(self.fix.settle.hash.clone()),
+                hash_expr(self.fix.settle.hash),
                 Expr::bytes(route_templates.clone()),
             ],
         );
@@ -1730,61 +1750,61 @@ impl TxArena {
     fn planner(&self) -> ChessTxPlanner {
         ChessTxPlanner {
             family: ChessTemplateFamily {
-                league: TemplateWitness { prefix: Vec::new(), suffix: Vec::new(), hash: self.league_template.clone() },
+                league: TemplateWitness { prefix: Vec::new(), suffix: Vec::new(), hash: self.league_template },
                 player: TemplateWitness {
                     prefix: self.player_prefix.clone(),
                     suffix: self.player_suffix.clone(),
-                    hash: self.player_template.clone(),
+                    hash: self.player_template,
                 },
                 mux: TemplateWitness {
                     prefix: self.fix.mux.prefix.clone(),
                     suffix: self.fix.mux.suffix.clone(),
-                    hash: self.fix.mux.hash.clone(),
+                    hash: self.fix.mux.hash,
                 },
                 settle: TemplateWitness {
                     prefix: self.fix.settle.prefix.clone(),
                     suffix: self.fix.settle.suffix.clone(),
-                    hash: self.fix.settle.hash.clone(),
+                    hash: self.fix.settle.hash,
                 },
                 pawn: TemplateWitness {
                     prefix: self.fix.pawn.prefix.clone(),
                     suffix: self.fix.pawn.suffix.clone(),
-                    hash: self.fix.pawn.hash.clone(),
+                    hash: self.fix.pawn.hash,
                 },
                 knight: TemplateWitness {
                     prefix: self.fix.knight.prefix.clone(),
                     suffix: self.fix.knight.suffix.clone(),
-                    hash: self.fix.knight.hash.clone(),
+                    hash: self.fix.knight.hash,
                 },
                 vert: TemplateWitness {
                     prefix: self.fix.vert.prefix.clone(),
                     suffix: self.fix.vert.suffix.clone(),
-                    hash: self.fix.vert.hash.clone(),
+                    hash: self.fix.vert.hash,
                 },
                 horiz: TemplateWitness {
                     prefix: self.fix.horiz.prefix.clone(),
                     suffix: self.fix.horiz.suffix.clone(),
-                    hash: self.fix.horiz.hash.clone(),
+                    hash: self.fix.horiz.hash,
                 },
                 diag: TemplateWitness {
                     prefix: self.fix.diag.prefix.clone(),
                     suffix: self.fix.diag.suffix.clone(),
-                    hash: self.fix.diag.hash.clone(),
+                    hash: self.fix.diag.hash,
                 },
                 king: TemplateWitness {
                     prefix: self.fix.king.prefix.clone(),
                     suffix: self.fix.king.suffix.clone(),
-                    hash: self.fix.king.hash.clone(),
+                    hash: self.fix.king.hash,
                 },
                 castle: TemplateWitness {
                     prefix: self.fix.castle.prefix.clone(),
                     suffix: self.fix.castle.suffix.clone(),
-                    hash: self.fix.castle.hash.clone(),
+                    hash: self.fix.castle.hash,
                 },
                 castle_challenge: TemplateWitness {
                     prefix: self.fix.castle_challenge.prefix.clone(),
                     suffix: self.fix.castle_challenge.suffix.clone(),
-                    hash: self.fix.castle_challenge.hash.clone(),
+                    hash: self.fix.castle_challenge.hash,
                 },
                 route_templates: packed_execution_route_templates(&self.fix),
                 routes_commitment: routes_commitment(&packed_execution_route_templates(&self.fix)),
@@ -1803,25 +1823,23 @@ impl TxArena {
         Ok(())
     }
 
-    fn player_account(&self, player_ref: &[u8]) -> Result<PlayerAccount, OrchestratorError> {
+    fn player_account(&self, player_ref: Hash) -> Result<PlayerAccount, OrchestratorError> {
         self.players
             .iter()
             .find_map(|(name, state)| {
-                (blake2b([state.owner_hash.as_slice(), state.player_id.as_slice()].concat().as_slice()) == player_ref).then_some(
-                    PlayerAccount {
-                        owner_name: name.clone(),
-                        owner_hash: state.owner_hash.clone(),
-                        player_id: state.player_id.clone(),
-                        player_ref: player_ref.to_vec(),
-                        value: state.value,
-                        open_games: state.open_games,
-                        rating: state.rating,
-                        games: state.games,
-                        wins: state.wins,
-                        draws: state.draws,
-                        losses: state.losses,
-                    },
-                )
+                (player_ref_hash(state.owner_hash, state.player_id) == player_ref).then_some(PlayerAccount {
+                    owner_name: name.clone(),
+                    owner_hash: state.owner_hash,
+                    player_id: state.player_id,
+                    player_ref,
+                    value: state.value,
+                    open_games: state.open_games,
+                    rating: state.rating,
+                    games: state.games,
+                    wins: state.wins,
+                    draws: state.draws,
+                    losses: state.losses,
+                })
             })
             .ok_or_else(|| OrchestratorError("missing player account".to_string()))
     }
@@ -1938,12 +1956,12 @@ fn packed_execution_route_templates(fix: &ExecutionFixture) -> Vec<u8> {
         let player_template = compile_player_state(
             player_static_source(),
             PlayerStateArgs {
-                league_template: &[0x11u8; 32],
-                player_template: &[0x22u8; 32],
+                league_template: &repeated_hash(0x11),
+                player_template: &repeated_hash(0x22),
                 mux_template: &fix.mux.hash,
                 routes_commitment: &routes_commitment(&vec![0x12u8; 32 * 9]),
-                owner_hash: &[0x44u8; 32],
-                player_id: &[0x55u8; 32],
+                owner_hash: &repeated_hash(0x44),
+                player_id: &repeated_hash(0x55),
                 open_games: 0,
                 rating: 1200,
                 games: 0,
@@ -1960,19 +1978,19 @@ fn packed_execution_route_templates(fix: &ExecutionFixture) -> Vec<u8> {
         )
     };
     let mut out = Vec::with_capacity(32 * 9);
-    out.extend_from_slice(&fix.pawn.hash);
-    out.extend_from_slice(&fix.knight.hash);
-    out.extend_from_slice(&fix.vert.hash);
-    out.extend_from_slice(&fix.horiz.hash);
-    out.extend_from_slice(&fix.diag.hash);
-    out.extend_from_slice(&fix.king.hash);
-    out.extend_from_slice(&fix.castle.hash);
-    out.extend_from_slice(&fix.castle_challenge.hash);
-    out.extend_from_slice(&blake2b([fix.settle.hash.as_slice(), player_template.as_slice()].concat().as_slice()));
+    out.extend_from_slice(&fix.pawn.hash.as_bytes());
+    out.extend_from_slice(&fix.knight.hash.as_bytes());
+    out.extend_from_slice(&fix.vert.hash.as_bytes());
+    out.extend_from_slice(&fix.horiz.hash.as_bytes());
+    out.extend_from_slice(&fix.diag.hash.as_bytes());
+    out.extend_from_slice(&fix.king.hash.as_bytes());
+    out.extend_from_slice(&fix.castle.hash.as_bytes());
+    out.extend_from_slice(&fix.castle_challenge.hash.as_bytes());
+    out.extend_from_slice(&hash_pair(fix.settle.hash, player_template).as_bytes());
     out
 }
 
-fn routes_commitment(route_templates: &[u8]) -> Vec<u8> {
+fn routes_commitment(route_templates: &[u8]) -> Hash {
     blake2b(route_templates)
 }
 
@@ -2065,8 +2083,8 @@ fn determine_worker(board: &[u8], mv: MoveSpec) -> Result<WorkerKind, Orchestrat
 
 fn pending_state_for_move(game: &GameStateData, mv: MoveSpec) -> GameStateData {
     GameStateData {
-        white_player: game.white_player.clone(),
-        black_player: game.black_player.clone(),
+        white_player: game.white_player,
+        black_player: game.black_player,
         board: game.board.clone(),
         turn: game.turn,
         status: game.status,
@@ -2152,8 +2170,8 @@ fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateDa
     let mut move_log = game.move_log.clone();
     move_log.push(mv.label());
     Ok(GameStateData {
-        white_player: game.white_player.clone(),
-        black_player: game.black_player.clone(),
+        white_player: game.white_player,
+        black_player: game.black_player,
         board,
         turn: 1 - game.turn,
         status: game.status,
@@ -2171,10 +2189,10 @@ fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateDa
 
 fn compile_game_state(source: &'static str, fix: &ExecutionFixture, state: &GameStateData) -> CompiledContract<'static> {
     let ctor = vec![
-        Expr::bytes(fix.mux.hash.clone()),
+        hash_expr(fix.mux.hash),
         Expr::bytes(packed_execution_route_templates(fix)),
-        Expr::bytes(state.white_player.clone()),
-        Expr::bytes(state.black_player.clone()),
+        hash_expr(state.white_player),
+        hash_expr(state.black_player),
         Expr::bytes(state.board.clone()),
         Expr::int(state.turn),
         Expr::int(state.status),
@@ -2192,12 +2210,12 @@ fn compile_game_state(source: &'static str, fix: &ExecutionFixture, state: &Game
 
 fn compile_player_state(source: &'static str, args: PlayerStateArgs<'_>) -> CompiledContract<'static> {
     let ctor = vec![
-        Expr::bytes(args.league_template.to_vec()),
-        Expr::bytes(args.player_template.to_vec()),
-        Expr::bytes(args.mux_template.to_vec()),
-        Expr::bytes(args.routes_commitment.to_vec()),
-        Expr::bytes(args.owner_hash.to_vec()),
-        Expr::bytes(args.player_id.to_vec()),
+        hash_expr(*args.league_template),
+        hash_expr(*args.player_template),
+        hash_expr(*args.mux_template),
+        hash_expr(*args.routes_commitment),
+        hash_expr(*args.owner_hash),
+        hash_expr(*args.player_id),
         Expr::int(args.open_games),
         Expr::int(args.rating),
         Expr::int(args.games),
@@ -2210,37 +2228,32 @@ fn compile_player_state(source: &'static str, args: PlayerStateArgs<'_>) -> Comp
 
 fn compile_league_state(
     source: &'static str,
-    league_template: &[u8],
-    player_template: &[u8],
-    mux_template: &[u8],
-    routes_commitment: &[u8],
+    league_template: &Hash,
+    player_template: &Hash,
+    mux_template: &Hash,
+    routes_commitment: &Hash,
     base_rating: i64,
-    admin: &[u8],
+    admin: &Hash,
 ) -> CompiledContract<'static> {
     let ctor = vec![
-        Expr::bytes(league_template.to_vec()),
-        Expr::bytes(player_template.to_vec()),
-        Expr::bytes(mux_template.to_vec()),
-        Expr::bytes(routes_commitment.to_vec()),
+        hash_expr(*league_template),
+        hash_expr(*player_template),
+        hash_expr(*mux_template),
+        hash_expr(*routes_commitment),
         Expr::int(base_rating),
-        Expr::bytes(admin.to_vec()),
+        hash_expr(*admin),
     ];
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile league state")
 }
 
 fn compile_settle_state(
     source: &'static str,
-    player_template: &[u8],
-    white_hash: &[u8],
-    black_hash: &[u8],
+    player_template: &Hash,
+    white_hash: &Hash,
+    black_hash: &Hash,
     status: i64,
 ) -> CompiledContract<'static> {
-    let ctor = vec![
-        Expr::bytes(player_template.to_vec()),
-        Expr::bytes(white_hash.to_vec()),
-        Expr::bytes(black_hash.to_vec()),
-        Expr::int(status),
-    ];
+    let ctor = vec![hash_expr(*player_template), hash_expr(*white_hash), hash_expr(*black_hash), Expr::int(status)];
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile settle state")
 }
 
@@ -2385,12 +2398,12 @@ fn compile_template(path: &str, args: &[Expr<'static>]) -> Result<TemplateWitnes
     Ok(TemplateWitness { prefix, suffix, hash })
 }
 
-fn blake2b(data: &[u8]) -> Vec<u8> {
-    Blake2bParams::new().hash_length(32).to_state().update(data).finalize().as_bytes().to_vec()
+fn blake2b(data: &[u8]) -> Hash {
+    Hash::from_slice(Blake2bParams::new().hash_length(32).to_state().update(data).finalize().as_bytes())
 }
 
-fn derive_player_id(nonce: u32, owner_hash: &[u8]) -> Vec<u8> {
-    blake2b([b"LeaguePlayerId".as_slice(), &nonce.to_le_bytes(), owner_hash].concat().as_slice())
+fn derive_player_id(nonce: u32, owner_hash: &Hash) -> Hash {
+    blake2b([b"LeaguePlayerId".as_slice(), owner_hash.as_bytes().as_slice(), &nonce.to_le_bytes()].concat().as_slice())
 }
 
 fn file_char(x: i64) -> char {
@@ -2418,13 +2431,13 @@ fn sample_route_templates() -> Vec<u8> {
     route_templates
 }
 
-fn sample_routes_commitment() -> Vec<u8> {
+fn sample_routes_commitment() -> Hash {
     blake2b(&sample_route_templates())
 }
 
-fn worker_constructor_args(mux_template: &[u8]) -> Vec<Expr<'static>> {
+fn worker_constructor_args(mux_template: &Hash) -> Vec<Expr<'static>> {
     vec![
-        Expr::bytes(mux_template.to_vec()),
+        hash_expr(*mux_template),
         Expr::bytes(sample_route_templates()),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
@@ -2462,12 +2475,12 @@ fn mux_constructor_args() -> Vec<Expr<'static>> {
     ]
 }
 
-fn player_constructor_args(mux_template: &[u8], routes_commitment: &[u8]) -> Vec<Expr<'static>> {
+fn player_constructor_args(mux_template: &Hash, routes_commitment: &Hash) -> Vec<Expr<'static>> {
     vec![
         Expr::bytes(vec![0x11u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
-        Expr::bytes(mux_template.to_vec()),
-        Expr::bytes(routes_commitment.to_vec()),
+        hash_expr(*mux_template),
+        hash_expr(*routes_commitment),
         Expr::bytes(vec![0x44u8; 32]),
         Expr::bytes(vec![0x55u8; 32]),
         Expr::int(0),
@@ -2479,28 +2492,28 @@ fn player_constructor_args(mux_template: &[u8], routes_commitment: &[u8]) -> Vec
     ]
 }
 
-fn league_constructor_args(player_template: &[u8], mux_template: &[u8], routes_commitment: &[u8]) -> Vec<Expr<'static>> {
+fn league_constructor_args(player_template: &Hash, mux_template: &Hash, routes_commitment: &Hash) -> Vec<Expr<'static>> {
     vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(player_template.to_vec()),
-        Expr::bytes(mux_template.to_vec()),
-        Expr::bytes(routes_commitment.to_vec()),
+        hash_expr(*player_template),
+        hash_expr(*mux_template),
+        hash_expr(*routes_commitment),
         Expr::int(1200),
         Expr::bytes(vec![0x44u8; 32]),
     ]
 }
 
-fn settle_constructor_args(player_template: &[u8]) -> Vec<Expr<'static>> {
-    vec![Expr::bytes(player_template.to_vec()), Expr::bytes(vec![0x21u8; 32]), Expr::bytes(vec![0x22u8; 32]), Expr::int(1)]
+fn settle_constructor_args(player_template: &Hash) -> Vec<Expr<'static>> {
+    vec![hash_expr(*player_template), Expr::bytes(vec![0x21u8; 32]), Expr::bytes(vec![0x22u8; 32]), Expr::int(1)]
 }
 
-fn packed_route_templates(player_template: &[u8], settle_template: &[u8], workers: [&TemplateWitness; 8]) -> Vec<u8> {
+fn packed_route_templates(player_template: &Hash, settle_template: &Hash, workers: [&TemplateWitness; 8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(32 * 9);
     for worker in workers {
-        out.extend_from_slice(&worker.hash);
+        out.extend_from_slice(&worker.hash.as_bytes());
     }
-    let settle_commitment = blake2b([settle_template, player_template].concat().as_slice());
-    out.extend_from_slice(&settle_commitment);
+    let settle_commitment = hash_pair(*settle_template, *player_template);
+    out.extend_from_slice(&settle_commitment.as_bytes());
     out
 }
 
@@ -2544,7 +2557,6 @@ mod tests {
     fn loads_template_family_with_real_route_commitment() {
         let planner = ChessTxPlanner::load().expect("template family loads");
         assert_eq!(planner.family.route_templates.len(), 32 * 9);
-        assert_eq!(planner.family.routes_commitment.len(), 32);
     }
 
     #[test]

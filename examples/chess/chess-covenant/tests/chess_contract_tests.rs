@@ -1,5 +1,6 @@
 use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
 use kaspa_consensus_core::tx::PopulatedTransaction;
+use kaspa_consensus_core::Hash;
 use kaspa_txscript::parse_script;
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions};
@@ -190,7 +191,7 @@ fn sample_route_templates() -> Vec<u8> {
     route_templates
 }
 
-fn sample_routes_commitment() -> Vec<u8> {
+fn sample_routes_commitment() -> Hash {
     blake2b(sample_route_templates())
 }
 
@@ -248,7 +249,7 @@ fn player_constructor_args() -> Vec<Expr<'static>> {
         Expr::bytes(vec![0x11u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(vec![0x33u8; 32]),
-        Expr::bytes(sample_routes_commitment()),
+        Expr::bytes(sample_routes_commitment().as_bytes().to_vec()),
         Expr::bytes(vec![0x44u8; 32]),
         Expr::bytes(vec![0x55u8; 32]),
         Expr::int(0),
@@ -265,7 +266,7 @@ fn league_constructor_args() -> Vec<Expr<'static>> {
         Expr::bytes(vec![0x11u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(vec![0x33u8; 32]),
-        Expr::bytes(sample_routes_commitment()),
+        Expr::bytes(sample_routes_commitment().as_bytes().to_vec()),
         Expr::int(1200),
         Expr::bytes(vec![0x44u8; 32]),
     ]
@@ -295,7 +296,7 @@ fn script_op_counts(script: &[u8]) -> (usize, usize) {
     (instruction_count, charged_op_count)
 }
 
-fn blake2b(data: Vec<u8>) -> Vec<u8> {
+fn blake2b(data: Vec<u8>) -> Hash {
     use blake2b_simd::Params as Blake2bParams;
-    Blake2bParams::new().hash_length(32).to_state().update(&data).finalize().as_bytes().to_vec()
+    Hash::from_slice(Blake2bParams::new().hash_length(32).to_state().update(&data).finalize().as_bytes())
 }
