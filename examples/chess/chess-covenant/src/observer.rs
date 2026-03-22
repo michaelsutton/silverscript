@@ -1,0 +1,1325 @@
+use std::collections::BTreeMap;
+
+use blake2b_simd::Params as Blake2bParams;
+use kaspa_consensus_core::tx::Transaction;
+use kaspa_consensus_core::Hash;
+use silverscript_lang::ast::Expr;
+use silverscript_lang::compiler::{compile_contract, CompileOptions};
+
+use crate::orchestrator::WorkerKind;
+use crate::txdecode::{decode_p2sh_call, ContractTemplate, DecodeError, DecodeValue, DecodedCall, DecodedObject};
+use crate::{
+    castle_challenge_contract_path, castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path,
+    knight_contract_path, league_contract_path, load_contract_source, mux_contract_path, pawn_contract_path, player_contract_path,
+    settle_contract_path, vert_contract_path,
+};
+
+const WHITE: i64 = 0;
+const BLACK: i64 = 1;
+const LIVE: i64 = 0;
+const WWIN: i64 = 1;
+const BWIN: i64 = 2;
+const DRAW: i64 = 3;
+const CLEAR: i64 = 0;
+const OFFER: i64 = 1;
+const CLAIM: i64 = 2;
+const SURRENDER: i64 = 3;
+const PREP: i64 = 7;
+const MUX: i64 = 8;
+const CLAIMED: i64 = 1;
+const DEFENSE: i64 = 2;
+const NORMAL: i64 = 3;
+const WOFFER: i64 = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeagueState {
+    pub admin: Vec<u8>,
+    pub league_hash: Vec<u8>,
+    pub player_hash: Vec<u8>,
+    pub mux_hash: Vec<u8>,
+    pub routes_commitment: Vec<u8>,
+    pub base_rating: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerState {
+    pub league_hash: Vec<u8>,
+    pub player_hash: Vec<u8>,
+    pub mux_hash: Vec<u8>,
+    pub routes_commitment: Vec<u8>,
+    pub owner: Vec<u8>,
+    pub player_id: Vec<u8>,
+    pub open_games: i64,
+    pub rating: i64,
+    pub games: i64,
+    pub wins: i64,
+    pub draws: i64,
+    pub losses: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameState {
+    pub mux_hash: Vec<u8>,
+    pub route_hashes: Vec<u8>,
+    pub white_player: Vec<u8>,
+    pub black_player: Vec<u8>,
+    pub board: Vec<u8>,
+    pub turn: i64,
+    pub status: i64,
+    pub move_timeout: i64,
+    pub castle_rights: Vec<u8>,
+    pub en_passant_idx: i64,
+    pub pending_src_idx: i64,
+    pub pending_dst_idx: i64,
+    pub pending_promo: i64,
+    pub recent_castle: i64,
+    pub draw_state: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettleState {
+    pub player_hash: Vec<u8>,
+    pub white_player: Vec<u8>,
+    pub black_player: Vec<u8>,
+    pub status: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChessState {
+    League(LeagueState),
+    Player(PlayerState),
+    Game(GameState),
+    Settle(SettleState),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChessInputKind {
+    League,
+    Player,
+    Mux,
+    Settle,
+    Worker(WorkerKind),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedOutput {
+    pub output_index: usize,
+    pub state: ChessState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedInput {
+    pub input_index: usize,
+    pub kind: ChessInputKind,
+    pub function: String,
+    pub input_state: ChessState,
+    pub outputs: Vec<ObservedOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ObservedTx {
+    pub inputs: Vec<ObservedInput>,
+    pub events: Vec<ChessEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChessEvent {
+    PlayerRegistered { lane_output_index: usize, player_output_index: usize, player_ref: Vec<u8>, player_id: Vec<u8>, rating: i64 },
+    LeagueRebalanced { output_index: usize },
+    LeagueForked { left_output_index: usize, right_output_index: usize },
+    GameStarted { white_player: Vec<u8>, black_player: Vec<u8>, move_timeout: i64, game_output_index: usize },
+    PlayerRebalanced { output_index: usize, player_ref: Vec<u8> },
+    PlayerRetired { player_ref: Vec<u8> },
+    MoveRouted { selector: i64, termination_action: i64, output_index: usize },
+    WorkerApplied { worker: WorkerKind, status: i64, next_turn: i64, output_index: usize },
+    TimeoutRoutedToSettle { source: ChessInputKind, status: i64, output_index: usize },
+    SettleCreated { status: i64, output_index: usize },
+    SettlementApplied { status: i64, white_output_index: usize, black_output_index: usize },
+}
+
+#[derive(Debug, Clone)]
+struct ObserverTemplates {
+    league: ContractTemplate,
+    player: ContractTemplate,
+    mux: ContractTemplate,
+    settle: ContractTemplate,
+    pawn: ContractTemplate,
+    knight: ContractTemplate,
+    vert: ContractTemplate,
+    horiz: ContractTemplate,
+    diag: ContractTemplate,
+    king: ContractTemplate,
+    castle: ContractTemplate,
+    castle_challenge: ContractTemplate,
+}
+
+#[derive(Debug, Clone)]
+struct DecodedInput {
+    index: usize,
+    kind: ChessInputKind,
+    state: ChessState,
+    call: DecodedCall,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChessEventEmitter {
+    templates: ObserverTemplates,
+}
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+#[error("{0}")]
+pub struct ObserverError(pub String);
+
+impl From<DecodeError> for ObserverError {
+    fn from(value: DecodeError) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl ChessEventEmitter {
+    pub fn load() -> Result<Self, ObserverError> {
+        Ok(Self { templates: load_templates()? })
+    }
+
+    pub fn observe_tx(&self, tx: &Transaction, covenant_id: Hash) -> Result<ObservedTx, ObserverError> {
+        let decoded_inputs = self.decode_inputs(tx)?;
+        let outputs_by_input = authored_outputs_by_input(tx, covenant_id);
+
+        let mut observed = Vec::new();
+        let mut events = Vec::new();
+        for decoded in &decoded_inputs {
+            let outputs = match (&decoded.kind, decoded.call.function.as_str()) {
+                (ChessInputKind::League, "register_player") => {
+                    let state = expect_league(&decoded.state)?;
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 2 {
+                        return Err(ObserverError(format!(
+                            "league register expected 2 authored outputs for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+                    let owner_pk = bytes_arg(&decoded.call, "owner_pk")?;
+                    let owner = blake2b(&owner_pk);
+                    let player = PlayerState {
+                        league_hash: state.league_hash.clone(),
+                        player_hash: state.player_hash.clone(),
+                        mux_hash: state.mux_hash.clone(),
+                        routes_commitment: state.routes_commitment.clone(),
+                        owner,
+                        player_id: owner_pk.clone(),
+                        open_games: 0,
+                        rating: state.base_rating,
+                        games: 0,
+                        wins: 0,
+                        draws: 0,
+                        losses: 0,
+                    };
+                    let player_ref = blake2b(&[player.owner.clone(), player.player_id.clone()].concat());
+                    let outputs = vec![
+                        ObservedOutput { output_index: output_indexes[0], state: ChessState::League(state.clone()) },
+                        ObservedOutput { output_index: output_indexes[1], state: ChessState::Player(player) },
+                    ];
+                    events.push(ChessEvent::PlayerRegistered {
+                        lane_output_index: output_indexes[0],
+                        player_output_index: output_indexes[1],
+                        player_ref,
+                        player_id: owner_pk,
+                        rating: state.base_rating,
+                    });
+                    outputs
+                }
+                (ChessInputKind::League, "rebalance") => {
+                    let outputs =
+                        same_output_state(decoded, &outputs_by_input, ChessState::League(expect_league(&decoded.state)?.clone()))?;
+                    events.push(ChessEvent::LeagueRebalanced { output_index: outputs[0].output_index });
+                    outputs
+                }
+                (ChessInputKind::League, "fork") => {
+                    let state = ChessState::League(expect_league(&decoded.state)?.clone());
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 2 {
+                        return Err(ObserverError(format!(
+                            "league fork expected 2 authored outputs for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+                    let outputs = vec![
+                        ObservedOutput { output_index: output_indexes[0], state: state.clone() },
+                        ObservedOutput { output_index: output_indexes[1], state },
+                    ];
+                    events.push(ChessEvent::LeagueForked {
+                        left_output_index: output_indexes[0],
+                        right_output_index: output_indexes[1],
+                    });
+                    outputs
+                }
+                (ChessInputKind::Player, "start_game") => {
+                    let self_state = expect_player(&decoded.state)?;
+                    let other = decoded_inputs
+                        .iter()
+                        .find(|candidate| {
+                            candidate.index != decoded.index
+                                && candidate.kind == ChessInputKind::Player
+                                && candidate.call.function == "delegate_start_game"
+                        })
+                        .ok_or_else(|| ObserverError("start_game could not find delegate_start_game peer".to_string()))?;
+                    let other_state = expect_player(&other.state)?;
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 3 {
+                        return Err(ObserverError(format!(
+                            "player start_game expected 3 authored outputs for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+
+                    let self_side = int_arg(&decoded.call, "self_side")?;
+                    let route_hashes = bytes_arg(&decoded.call, "route_hashes")?;
+                    let move_timeout = int_arg(&decoded.call, "move_timeout")?;
+
+                    let self_ref = blake2b(&[self_state.owner.clone(), self_state.player_id.clone()].concat());
+                    let other_ref = blake2b(&[other_state.owner.clone(), other_state.player_id.clone()].concat());
+                    let (white_player, black_player) = if self_side == BLACK { (other_ref, self_ref) } else { (self_ref, other_ref) };
+
+                    let next_self = PlayerState { open_games: self_state.open_games + 1, ..self_state.clone() };
+                    let next_other = PlayerState { open_games: other_state.open_games + 1, ..other_state.clone() };
+                    let opening_game = GameState {
+                        mux_hash: self_state.mux_hash.clone(),
+                        route_hashes,
+                        white_player: white_player.clone(),
+                        black_player: black_player.clone(),
+                        board: opening_board(),
+                        turn: WHITE,
+                        status: LIVE,
+                        move_timeout,
+                        castle_rights: vec![1, 1, 1, 1],
+                        en_passant_idx: -1,
+                        pending_src_idx: -1,
+                        pending_dst_idx: -1,
+                        pending_promo: CLEAR,
+                        recent_castle: CLEAR,
+                        draw_state: NORMAL,
+                    };
+                    let outputs = vec![
+                        ObservedOutput { output_index: output_indexes[0], state: ChessState::Player(next_self) },
+                        ObservedOutput { output_index: output_indexes[1], state: ChessState::Player(next_other) },
+                        ObservedOutput { output_index: output_indexes[2], state: ChessState::Game(opening_game) },
+                    ];
+                    events.push(ChessEvent::GameStarted {
+                        white_player,
+                        black_player,
+                        move_timeout,
+                        game_output_index: output_indexes[2],
+                    });
+                    outputs
+                }
+                (ChessInputKind::Player, "delegate_start_game") => Vec::new(),
+                (ChessInputKind::Player, "delegate_settle") => Vec::new(),
+                (ChessInputKind::Player, "rebalance") => {
+                    let player = expect_player(&decoded.state)?;
+                    let outputs = same_output_state(decoded, &outputs_by_input, ChessState::Player(player.clone()))?;
+                    events.push(ChessEvent::PlayerRebalanced {
+                        output_index: outputs[0].output_index,
+                        player_ref: blake2b(&[player.owner.clone(), player.player_id.clone()].concat()),
+                    });
+                    outputs
+                }
+                (ChessInputKind::Player, "retire") => {
+                    let player = expect_player(&decoded.state)?;
+                    events.push(ChessEvent::PlayerRetired {
+                        player_ref: blake2b(&[player.owner.clone(), player.player_id.clone()].concat()),
+                    });
+                    Vec::new()
+                }
+                (ChessInputKind::Mux, "route") => {
+                    let state = expect_game(&decoded.state)?;
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 1 {
+                        return Err(ObserverError(format!(
+                            "mux route expected 1 authored output for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+                    let selector = int_arg(&decoded.call, "selector")?;
+                    let from_x = int_arg(&decoded.call, "from_x")?;
+                    let from_y = int_arg(&decoded.call, "from_y")?;
+                    let to_x = int_arg(&decoded.call, "to_x")?;
+                    let to_y = int_arg(&decoded.call, "to_y")?;
+                    let promo_piece = int_arg(&decoded.call, "promo_piece")?;
+                    let termination_action = int_arg(&decoded.call, "termination_action")?;
+                    let next = route_game_state(state, selector, from_x, from_y, to_x, to_y, promo_piece, termination_action)?;
+                    let next_state = ChessState::Game(next);
+                    let outputs = vec![ObservedOutput { output_index: output_indexes[0], state: next_state }];
+                    events.push(ChessEvent::MoveRouted { selector, termination_action, output_index: output_indexes[0] });
+                    outputs
+                }
+                (ChessInputKind::Mux, "timeout") => {
+                    let state = expect_game(&decoded.state)?;
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 1 {
+                        return Err(ObserverError(format!(
+                            "mux timeout expected 1 authored output for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+                    let player_hash = bytes_arg(&decoded.call, "player_hash")?;
+                    let next = SettleState {
+                        player_hash,
+                        white_player: state.white_player.clone(),
+                        black_player: state.black_player.clone(),
+                        status: timeout_status(state.turn, state.draw_state),
+                    };
+                    let outputs = vec![ObservedOutput { output_index: output_indexes[0], state: ChessState::Settle(next.clone()) }];
+                    events.push(ChessEvent::TimeoutRoutedToSettle {
+                        source: ChessInputKind::Mux,
+                        status: next.status,
+                        output_index: output_indexes[0],
+                    });
+                    outputs
+                }
+                (ChessInputKind::Mux, "settle") => {
+                    let state = expect_game(&decoded.state)?;
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 1 {
+                        return Err(ObserverError(format!(
+                            "mux settle expected 1 authored output for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+                    let player_hash = bytes_arg(&decoded.call, "player_hash")?;
+                    let next = SettleState {
+                        player_hash,
+                        white_player: state.white_player.clone(),
+                        black_player: state.black_player.clone(),
+                        status: state.status,
+                    };
+                    let outputs = vec![ObservedOutput { output_index: output_indexes[0], state: ChessState::Settle(next.clone()) }];
+                    events.push(ChessEvent::SettleCreated { status: next.status, output_index: output_indexes[0] });
+                    outputs
+                }
+                (ChessInputKind::Worker(worker), "apply") => {
+                    let state = expect_game(&decoded.state)?;
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 1 {
+                        return Err(ObserverError(format!(
+                            "worker apply expected 1 authored output for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+                    let next = apply_worker_state(*worker, state)?;
+                    let outputs = vec![ObservedOutput { output_index: output_indexes[0], state: ChessState::Game(next.clone()) }];
+                    events.push(ChessEvent::WorkerApplied {
+                        worker: *worker,
+                        status: next.status,
+                        next_turn: next.turn,
+                        output_index: output_indexes[0],
+                    });
+                    outputs
+                }
+                (ChessInputKind::Worker(worker), "timeout") => {
+                    let state = expect_game(&decoded.state)?;
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 1 {
+                        return Err(ObserverError(format!(
+                            "worker timeout expected 1 authored output for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+                    let player_hash = bytes_arg(&decoded.call, "player_hash")?;
+                    let next = SettleState {
+                        player_hash,
+                        white_player: state.white_player.clone(),
+                        black_player: state.black_player.clone(),
+                        status: timeout_status(state.turn, state.draw_state),
+                    };
+                    let outputs = vec![ObservedOutput { output_index: output_indexes[0], state: ChessState::Settle(next.clone()) }];
+                    events.push(ChessEvent::TimeoutRoutedToSettle {
+                        source: ChessInputKind::Worker(*worker),
+                        status: next.status,
+                        output_index: output_indexes[0],
+                    });
+                    outputs
+                }
+                (ChessInputKind::Settle, "settle") => {
+                    let state = expect_settle(&decoded.state)?;
+                    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+                    if output_indexes.len() != 2 {
+                        return Err(ObserverError(format!(
+                            "settle expected 2 authored outputs for input {}, got {}",
+                            decoded.index,
+                            output_indexes.len()
+                        )));
+                    }
+                    let white_in = decoded_inputs
+                        .iter()
+                        .filter_map(|input| match &input.state {
+                            ChessState::Player(player)
+                                if blake2b(&[player.owner.clone(), player.player_id.clone()].concat()) == state.white_player =>
+                            {
+                                Some(player.clone())
+                            }
+                            _ => None,
+                        })
+                        .next()
+                        .ok_or_else(|| ObserverError("settle could not locate white player input".to_string()))?;
+                    let black_in = decoded_inputs
+                        .iter()
+                        .filter_map(|input| match &input.state {
+                            ChessState::Player(player)
+                                if blake2b(&[player.owner.clone(), player.player_id.clone()].concat()) == state.black_player =>
+                            {
+                                Some(player.clone())
+                            }
+                            _ => None,
+                        })
+                        .next()
+                        .ok_or_else(|| ObserverError("settle could not locate black player input".to_string()))?;
+
+                    let (next_white, next_black) = settle_players(tx, decoded.index, state, &white_in, &black_in)?;
+                    let outputs = vec![
+                        ObservedOutput { output_index: output_indexes[0], state: ChessState::Player(next_white) },
+                        ObservedOutput { output_index: output_indexes[1], state: ChessState::Player(next_black) },
+                    ];
+                    events.push(ChessEvent::SettlementApplied {
+                        status: state.status,
+                        white_output_index: output_indexes[0],
+                        black_output_index: output_indexes[1],
+                    });
+                    outputs
+                }
+                _ => {
+                    return Err(ObserverError(format!("unsupported observer path for {:?}.{}", decoded.kind, decoded.call.function)));
+                }
+            };
+
+            observed.push(ObservedInput {
+                input_index: decoded.index,
+                kind: decoded.kind,
+                function: decoded.call.function.clone(),
+                input_state: decoded.state.clone(),
+                outputs,
+            });
+        }
+
+        Ok(ObservedTx { inputs: observed, events })
+    }
+
+    fn decode_inputs(&self, tx: &Transaction) -> Result<Vec<DecodedInput>, ObserverError> {
+        let mut decoded = Vec::new();
+        for (index, input) in tx.inputs.iter().enumerate() {
+            let p2sh = match decode_p2sh_call(&input.signature_script) {
+                Ok(call) => call,
+                Err(_) => continue,
+            };
+            let (kind, template) = self
+                .match_template(&p2sh.redeem_script)
+                .ok_or_else(|| ObserverError(format!("no chess template matched redeem script for input {index}")))?;
+            let state = template.decode_state(&p2sh.redeem_script)?;
+            let call = template.decode_call(&p2sh.stack_items)?;
+            let typed_state = match kind {
+                ChessInputKind::League => ChessState::League(league_from_decoded(&state)?),
+                ChessInputKind::Player => ChessState::Player(player_from_decoded(&state)?),
+                ChessInputKind::Mux | ChessInputKind::Worker(_) => ChessState::Game(game_from_decoded(&state)?),
+                ChessInputKind::Settle => ChessState::Settle(settle_from_decoded(&state)?),
+            };
+            decoded.push(DecodedInput { index, kind, state: typed_state, call });
+        }
+        Ok(decoded)
+    }
+
+    fn match_template(&self, redeem_script: &[u8]) -> Option<(ChessInputKind, &ContractTemplate)> {
+        let candidates = [
+            (ChessInputKind::League, &self.templates.league),
+            (ChessInputKind::Player, &self.templates.player),
+            (ChessInputKind::Mux, &self.templates.mux),
+            (ChessInputKind::Settle, &self.templates.settle),
+            (ChessInputKind::Worker(WorkerKind::Pawn), &self.templates.pawn),
+            (ChessInputKind::Worker(WorkerKind::Knight), &self.templates.knight),
+            (ChessInputKind::Worker(WorkerKind::Vert), &self.templates.vert),
+            (ChessInputKind::Worker(WorkerKind::Horiz), &self.templates.horiz),
+            (ChessInputKind::Worker(WorkerKind::Diag), &self.templates.diag),
+            (ChessInputKind::Worker(WorkerKind::King), &self.templates.king),
+            (ChessInputKind::Worker(WorkerKind::Castle), &self.templates.castle),
+            (ChessInputKind::Worker(WorkerKind::CastleChallenge), &self.templates.castle_challenge),
+        ];
+        candidates.into_iter().find(|(_, template)| template.matches_redeem_script(redeem_script))
+    }
+}
+
+fn authored_outputs_by_input(tx: &Transaction, covenant_id: Hash) -> BTreeMap<usize, Vec<usize>> {
+    let mut out = BTreeMap::<usize, Vec<usize>>::new();
+    for (index, output) in tx.outputs.iter().enumerate() {
+        let Some(binding) = &output.covenant else {
+            continue;
+        };
+        if binding.covenant_id == covenant_id {
+            out.entry(binding.authorizing_input as usize).or_default().push(index);
+        }
+    }
+    out
+}
+
+fn same_output_state(
+    decoded: &DecodedInput,
+    outputs_by_input: &BTreeMap<usize, Vec<usize>>,
+    state: ChessState,
+) -> Result<Vec<ObservedOutput>, ObserverError> {
+    let output_indexes = outputs_by_input.get(&decoded.index).cloned().unwrap_or_default();
+    if output_indexes.len() != 1 {
+        return Err(ObserverError(format!(
+            "{} expected 1 authored output for input {}, got {}",
+            decoded.call.function,
+            decoded.index,
+            output_indexes.len()
+        )));
+    }
+    Ok(vec![ObservedOutput { output_index: output_indexes[0], state }])
+}
+
+fn expect_league(state: &ChessState) -> Result<&LeagueState, ObserverError> {
+    match state {
+        ChessState::League(value) => Ok(value),
+        _ => Err(ObserverError("expected league state".to_string())),
+    }
+}
+
+fn expect_player(state: &ChessState) -> Result<&PlayerState, ObserverError> {
+    match state {
+        ChessState::Player(value) => Ok(value),
+        _ => Err(ObserverError("expected player state".to_string())),
+    }
+}
+
+fn expect_game(state: &ChessState) -> Result<&GameState, ObserverError> {
+    match state {
+        ChessState::Game(value) => Ok(value),
+        _ => Err(ObserverError("expected game state".to_string())),
+    }
+}
+
+fn expect_settle(state: &ChessState) -> Result<&SettleState, ObserverError> {
+    match state {
+        ChessState::Settle(value) => Ok(value),
+        _ => Err(ObserverError("expected settle state".to_string())),
+    }
+}
+
+fn int_arg(call: &DecodedCall, name: &str) -> Result<i64, ObserverError> {
+    match call.args.iter().find(|arg| arg.name == name).map(|arg| &arg.value) {
+        Some(DecodeValue::Int(value)) => Ok(*value),
+        _ => Err(ObserverError(format!("missing int argument {name}"))),
+    }
+}
+
+fn bytes_arg(call: &DecodedCall, name: &str) -> Result<Vec<u8>, ObserverError> {
+    match call.args.iter().find(|arg| arg.name == name).map(|arg| &arg.value) {
+        Some(DecodeValue::Bytes(value)) => Ok(value.clone()),
+        _ => Err(ObserverError(format!("missing byte argument {name}"))),
+    }
+}
+
+fn bytes_field(object: &DecodedObject, name: &str) -> Result<Vec<u8>, ObserverError> {
+    match object.get(name) {
+        Some(DecodeValue::Bytes(value)) => Ok(value.clone()),
+        _ => Err(ObserverError(format!("missing bytes field {name}"))),
+    }
+}
+
+fn int_field(object: &DecodedObject, name: &str) -> Result<i64, ObserverError> {
+    match object.get(name) {
+        Some(DecodeValue::Int(value)) => Ok(*value),
+        _ => Err(ObserverError(format!("missing int field {name}"))),
+    }
+}
+
+fn league_from_decoded(object: &DecodedObject) -> Result<LeagueState, ObserverError> {
+    Ok(LeagueState {
+        admin: bytes_field(object, "admin")?,
+        league_hash: bytes_field(object, "league_hash")?,
+        player_hash: bytes_field(object, "player_hash")?,
+        mux_hash: bytes_field(object, "mux_hash")?,
+        routes_commitment: bytes_field(object, "routes_commitment")?,
+        base_rating: int_field(object, "base_rating")?,
+    })
+}
+
+fn player_from_decoded(object: &DecodedObject) -> Result<PlayerState, ObserverError> {
+    Ok(PlayerState {
+        league_hash: bytes_field(object, "league_hash")?,
+        player_hash: bytes_field(object, "player_hash")?,
+        mux_hash: bytes_field(object, "mux_hash")?,
+        routes_commitment: bytes_field(object, "routes_commitment")?,
+        owner: bytes_field(object, "owner")?,
+        player_id: bytes_field(object, "player_id")?,
+        open_games: int_field(object, "open_games")?,
+        rating: int_field(object, "rating")?,
+        games: int_field(object, "games")?,
+        wins: int_field(object, "wins")?,
+        draws: int_field(object, "draws")?,
+        losses: int_field(object, "losses")?,
+    })
+}
+
+fn game_from_decoded(object: &DecodedObject) -> Result<GameState, ObserverError> {
+    Ok(GameState {
+        mux_hash: bytes_field(object, "mux_hash")?,
+        route_hashes: bytes_field(object, "route_hashes")?,
+        white_player: bytes_field(object, "white_player")?,
+        black_player: bytes_field(object, "black_player")?,
+        board: bytes_field(object, "board")?,
+        turn: int_field(object, "turn")?,
+        status: int_field(object, "status")?,
+        move_timeout: int_field(object, "move_timeout")?,
+        castle_rights: bytes_field(object, "castle_rights")?,
+        en_passant_idx: int_field(object, "en_passant_idx")?,
+        pending_src_idx: int_field(object, "pending_src_idx")?,
+        pending_dst_idx: int_field(object, "pending_dst_idx")?,
+        pending_promo: int_field(object, "pending_promo")?,
+        recent_castle: int_field(object, "recent_castle")?,
+        draw_state: int_field(object, "draw_state")?,
+    })
+}
+
+fn settle_from_decoded(object: &DecodedObject) -> Result<SettleState, ObserverError> {
+    Ok(SettleState {
+        player_hash: bytes_field(object, "player_hash")?,
+        white_player: bytes_field(object, "white_player")?,
+        black_player: bytes_field(object, "black_player")?,
+        status: int_field(object, "status")?,
+    })
+}
+
+fn route_game_state(
+    state: &GameState,
+    selector: i64,
+    from_x: i64,
+    from_y: i64,
+    to_x: i64,
+    to_y: i64,
+    promo_piece: i64,
+    termination_action: i64,
+) -> Result<GameState, ObserverError> {
+    let mut next = state.clone();
+    if selector == MUX {
+        next.en_passant_idx = -1;
+        next.recent_castle = CLEAR;
+        if termination_action == CLAIM {
+            next.turn = 1 - state.turn;
+            next.draw_state = CLAIMED;
+        } else if termination_action == SURRENDER {
+            next.status = BWIN - state.turn;
+            next.draw_state = NORMAL;
+        } else {
+            next.status = DRAW;
+            next.draw_state = NORMAL;
+        }
+        return Ok(next);
+    }
+
+    if state.draw_state > NORMAL {
+        next.draw_state = NORMAL;
+    }
+    if termination_action == OFFER {
+        next.draw_state = WOFFER + state.turn;
+    }
+    next.pending_src_idx = square_idx(from_x, from_y);
+    next.pending_dst_idx = square_idx(to_x, to_y);
+    next.pending_promo = promo_piece;
+    next.en_passant_idx = state.en_passant_idx;
+    next.recent_castle = if selector == PREP { state.recent_castle } else { CLEAR };
+    Ok(next)
+}
+
+fn apply_worker_state(worker: WorkerKind, state: &GameState) -> Result<GameState, ObserverError> {
+    if worker == WorkerKind::CastleChallenge {
+        return apply_castle_challenge_state(state);
+    }
+
+    let pending = MoveSpec {
+        from_x: state.pending_src_idx % 8,
+        from_y: state.pending_src_idx / 8,
+        to_x: state.pending_dst_idx % 8,
+        to_y: state.pending_dst_idx / 8,
+        promo_piece: state.pending_promo,
+    };
+    let mut next = apply_move_to_state(state, pending)?;
+    if worker == WorkerKind::Castle {
+        next.status = state.status;
+        next.draw_state = state.draw_state;
+        return Ok(next);
+    }
+
+    let target_piece = state.board[state.pending_dst_idx as usize];
+    let target_num = i64::from(target_piece);
+    let is_draw_claim_mode = state.draw_state < NORMAL;
+    let effective_turn = if is_draw_claim_mode { 1 - state.turn } else { state.turn };
+
+    let mut next_status = state.status;
+    if state.recent_castle != CLEAR {
+        next_status = if state.turn == WHITE { WWIN } else { BWIN };
+    } else if is_draw_claim_mode {
+        if effective_turn == WHITE && target_num == 14 {
+            next_status = if state.turn == WHITE { WWIN } else { BWIN };
+        }
+        if effective_turn == BLACK && target_num == 6 {
+            next_status = if state.turn == WHITE { WWIN } else { BWIN };
+        }
+    } else {
+        let moving_piece = state.board[state.pending_src_idx as usize];
+        let moving_is_black = moving_piece > 8;
+        if !moving_is_black && target_num == 14 {
+            next_status = WWIN;
+        }
+        if moving_is_black && target_num == 6 {
+            next_status = BWIN;
+        }
+    }
+
+    let mut next_draw_state = state.draw_state;
+    if state.draw_state == CLAIMED {
+        next_draw_state = DEFENSE;
+    } else if state.draw_state == DEFENSE && next_status == LIVE {
+        next_status = if state.turn == WHITE { BWIN } else { WWIN };
+    }
+
+    next.status = next_status;
+    next.draw_state = next_draw_state;
+    Ok(next)
+}
+
+fn apply_castle_challenge_state(state: &GameState) -> Result<GameState, ObserverError> {
+    let to_idx = state.pending_dst_idx;
+    let board = &state.board;
+    let recent_castle = state.recent_castle;
+
+    let is_white_castle = recent_castle == 1 || recent_castle == 2;
+    let is_king_side = recent_castle == 1 || recent_castle == 3;
+    let row_base = if is_white_castle { 0 } else { 56 };
+    let king_piece = if is_white_castle { 0x06 } else { 0x0e };
+    let rook_piece = if is_white_castle { 0x04 } else { 0x0c };
+
+    let start_idx = row_base + 4;
+    let transit_idx = if is_king_side { row_base + 5 } else { row_base + 3 };
+    let dest_idx = if is_king_side { row_base + 6 } else { row_base + 2 };
+
+    let phase = if to_idx == start_idx {
+        1
+    } else if to_idx == transit_idx {
+        2
+    } else if to_idx == dest_idx {
+        3
+    } else {
+        return Err(ObserverError("castle challenge destination is not on the castle lane".to_string()));
+    };
+
+    let mut proof_board = board.clone();
+    if is_king_side {
+        let (a, b, c, d) = if phase == 1 {
+            (king_piece, 0u8, 0u8, rook_piece)
+        } else if phase == 2 {
+            (0u8, king_piece, 0u8, rook_piece)
+        } else {
+            (0u8, rook_piece, king_piece, 0u8)
+        };
+        proof_board[(row_base + 4) as usize] = a;
+        proof_board[(row_base + 5) as usize] = b;
+        proof_board[(row_base + 6) as usize] = c;
+        proof_board[(row_base + 7) as usize] = d;
+    } else {
+        let (a, b, c, d) = if phase == 1 {
+            (rook_piece, 0u8, 0u8, king_piece)
+        } else if phase == 2 {
+            (rook_piece, 0u8, king_piece, 0u8)
+        } else {
+            (0u8, king_piece, rook_piece, 0u8)
+        };
+        proof_board[row_base as usize] = a;
+        proof_board[(row_base + 2) as usize] = b;
+        proof_board[(row_base + 3) as usize] = c;
+        proof_board[(row_base + 4) as usize] = d;
+    }
+
+    Ok(GameState { board: proof_board, en_passant_idx: -1, pending_promo: CLEAR, ..state.clone() })
+}
+
+fn timeout_status(turn: i64, draw_state: i64) -> i64 {
+    if draw_state == CLAIMED {
+        DRAW
+    } else if turn == WHITE {
+        BWIN
+    } else {
+        WWIN
+    }
+}
+
+fn settle_players(
+    tx: &Transaction,
+    settle_input_index: usize,
+    settle: &SettleState,
+    white_in: &PlayerState,
+    black_in: &PlayerState,
+) -> Result<(PlayerState, PlayerState), ObserverError> {
+    let _ = tx;
+    let _ = settle_input_index;
+    let (mut white_wins, mut white_draws, mut white_losses) = (white_in.wins, white_in.draws, white_in.losses);
+    let (mut black_wins, mut black_draws, mut black_losses) = (black_in.wins, black_in.draws, black_in.losses);
+    let (mut white_actual, mut black_actual) = (0, 0);
+    if settle.status == WWIN {
+        white_wins += 1;
+        black_losses += 1;
+        white_actual = 1000;
+    } else if settle.status == BWIN {
+        black_wins += 1;
+        white_losses += 1;
+        black_actual = 1000;
+    } else {
+        white_draws += 1;
+        black_draws += 1;
+        white_actual = 500;
+        black_actual = 500;
+    }
+
+    let diff = black_in.rating - white_in.rating;
+    let abs_diff = diff.abs();
+    let mut favored_expected = 990;
+    if abs_diff < 800 {
+        favored_expected = 970;
+        if abs_diff < 600 {
+            favored_expected = 910;
+            if abs_diff < 400 {
+                favored_expected = 820;
+                if abs_diff < 250 {
+                    favored_expected = 700;
+                    if abs_diff < 150 {
+                        favored_expected = 600;
+                        if abs_diff < 75 {
+                            favored_expected = 500;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let (mut white_expected, mut black_expected) = (500, 500);
+    if diff < 0 {
+        white_expected = favored_expected;
+        black_expected = 1000 - favored_expected;
+    } else if diff > 0 {
+        white_expected = 1000 - favored_expected;
+        black_expected = favored_expected;
+    }
+
+    let white_rating = white_in.rating + ((32 * (white_actual - white_expected)) / 1000);
+    let black_rating = black_in.rating + ((32 * (black_actual - black_expected)) / 1000);
+
+    Ok((
+        PlayerState {
+            open_games: white_in.open_games - 1,
+            rating: white_rating,
+            games: white_in.games + 1,
+            wins: white_wins,
+            draws: white_draws,
+            losses: white_losses,
+            ..white_in.clone()
+        },
+        PlayerState {
+            open_games: black_in.open_games - 1,
+            rating: black_rating,
+            games: black_in.games + 1,
+            wins: black_wins,
+            draws: black_draws,
+            losses: black_losses,
+            ..black_in.clone()
+        },
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct MoveSpec {
+    from_x: i64,
+    from_y: i64,
+    to_x: i64,
+    to_y: i64,
+    promo_piece: i64,
+}
+
+fn apply_move_to_state(game: &GameState, mv: MoveSpec) -> Result<GameState, ObserverError> {
+    let mut board = game.board.clone();
+    let from_idx = square_idx(mv.from_x, mv.from_y) as usize;
+    let to_idx = square_idx(mv.to_x, mv.to_y) as usize;
+    let piece = board[from_idx];
+    if piece == 0 {
+        return Err(ObserverError("no piece on source square".to_string()));
+    }
+    let base = if piece > 8 { piece - 8 } else { piece };
+    let is_black = piece > 8;
+    let mut castle_rights = [game.castle_rights[0], game.castle_rights[1], game.castle_rights[2], game.castle_rights[3]];
+    let mut en_passant_idx = -1;
+    let mut recent_castle = 0;
+
+    clear_castle_rights_for_square(&mut castle_rights, mv.to_x, mv.to_y);
+    if base == 6 {
+        if is_black {
+            castle_rights[2] = 0;
+            castle_rights[3] = 0;
+        } else {
+            castle_rights[0] = 0;
+            castle_rights[1] = 0;
+        }
+    }
+    if base == 4 {
+        clear_castle_rights_for_square(&mut castle_rights, mv.from_x, mv.from_y);
+    }
+
+    if base == 1 {
+        let direction = if is_black { -1 } else { 1 };
+        if mv.from_x != mv.to_x && board[to_idx] == 0 && game.en_passant_idx == square_idx(mv.to_x, mv.to_y) {
+            let captured_y = mv.to_y - direction;
+            board[square_idx(mv.to_x, captured_y) as usize] = 0;
+        }
+        board[from_idx] = 0;
+        let mut placed_piece = piece;
+        if mv.promo_piece != 0 {
+            placed_piece = if is_black { (mv.promo_piece as u8) + 8 } else { mv.promo_piece as u8 };
+        }
+        board[to_idx] = placed_piece;
+        if mv.from_x == mv.to_x && (mv.to_y - mv.from_y).abs() == 2 {
+            en_passant_idx = square_idx(mv.from_x, mv.from_y + direction);
+        }
+    } else if base == 6 && (mv.to_x - mv.from_x).abs() == 2 && mv.from_y == mv.to_y {
+        board[from_idx] = 0;
+        board[to_idx] = piece;
+        if mv.to_x > mv.from_x {
+            move_piece(&mut board, 7, mv.from_y as usize, 5, mv.from_y as usize);
+            recent_castle = if is_black { 3 } else { 1 };
+        } else {
+            move_piece(&mut board, 0, mv.from_y as usize, 3, mv.from_y as usize);
+            recent_castle = if is_black { 4 } else { 2 };
+        }
+    } else {
+        move_piece(&mut board, mv.from_x as usize, mv.from_y as usize, mv.to_x as usize, mv.to_y as usize);
+    }
+
+    Ok(GameState {
+        board,
+        turn: 1 - game.turn,
+        castle_rights: castle_rights.to_vec(),
+        en_passant_idx,
+        pending_src_idx: -1,
+        pending_dst_idx: -1,
+        pending_promo: 0,
+        recent_castle,
+        ..game.clone()
+    })
+}
+
+fn square_idx(x: i64, y: i64) -> i64 {
+    y * 8 + x
+}
+
+fn move_piece(board: &mut [u8], from_x: usize, from_y: usize, to_x: usize, to_y: usize) {
+    let from_idx = from_y * 8 + from_x;
+    let to_idx = to_y * 8 + to_x;
+    board[to_idx] = board[from_idx];
+    board[from_idx] = 0;
+}
+
+fn clear_castle_rights_for_square(castle_rights: &mut [u8; 4], x: i64, y: i64) {
+    match (x, y) {
+        (7, 0) => castle_rights[0] = 0,
+        (0, 0) => castle_rights[1] = 0,
+        (7, 7) => castle_rights[2] = 0,
+        (0, 7) => castle_rights[3] = 0,
+        _ => {}
+    }
+}
+
+fn blake2b(bytes: &[u8]) -> Vec<u8> {
+    Blake2bParams::new().hash_length(32).to_state().update(bytes).finalize().as_bytes().to_vec()
+}
+
+fn load_templates() -> Result<ObserverTemplates, ObserverError> {
+    let dummy = vec![0x11; 32];
+    let game = GameState {
+        mux_hash: dummy.clone(),
+        route_hashes: vec![0x22; 288],
+        white_player: vec![0x33; 32],
+        black_player: vec![0x44; 32],
+        board: opening_board(),
+        turn: WHITE,
+        status: LIVE,
+        move_timeout: 600,
+        castle_rights: vec![1, 1, 1, 1],
+        en_passant_idx: -1,
+        pending_src_idx: -1,
+        pending_dst_idx: -1,
+        pending_promo: 0,
+        recent_castle: 0,
+        draw_state: NORMAL,
+    };
+    let player = PlayerState {
+        league_hash: vec![0x55; 32],
+        player_hash: vec![0x66; 32],
+        mux_hash: dummy.clone(),
+        routes_commitment: vec![0x77; 32],
+        owner: vec![0x88; 32],
+        player_id: vec![0x99; 32],
+        open_games: 0,
+        rating: 1200,
+        games: 0,
+        wins: 0,
+        draws: 0,
+        losses: 0,
+    };
+    let league = LeagueState {
+        admin: vec![0xaa; 32],
+        league_hash: vec![0xbb; 32],
+        player_hash: player.player_hash.clone(),
+        mux_hash: dummy.clone(),
+        routes_commitment: player.routes_commitment.clone(),
+        base_rating: 1200,
+    };
+    let settle = SettleState {
+        player_hash: player.player_hash.clone(),
+        white_player: vec![0xcc; 32],
+        black_player: vec![0xdd; 32],
+        status: LIVE,
+    };
+
+    let league_compiled = compile_league_template(&league)?;
+    let player_compiled = compile_player_template(&player)?;
+    let mux_compiled = compile_game_template(mux_contract_path(), &game)?;
+    let settle_compiled = compile_settle_template(&settle)?;
+    let pawn = compile_game_template(pawn_contract_path(), &game)?;
+    let knight = compile_game_template(knight_contract_path(), &game)?;
+    let vert = compile_game_template(vert_contract_path(), &game)?;
+    let horiz = compile_game_template(horiz_contract_path(), &game)?;
+    let diag = compile_game_template(diag_contract_path(), &game)?;
+    let king = compile_game_template(king_contract_path(), &game)?;
+    let castle = compile_game_template(castle_contract_path(), &game)?;
+    let castle_challenge = compile_game_template(castle_challenge_contract_path(), &game)?;
+
+    Ok(ObserverTemplates {
+        league: ContractTemplate::from_compiled(&league_compiled),
+        player: ContractTemplate::from_compiled(&player_compiled),
+        mux: ContractTemplate::from_compiled(&mux_compiled),
+        settle: ContractTemplate::from_compiled(&settle_compiled),
+        pawn: ContractTemplate::from_compiled(&pawn),
+        knight: ContractTemplate::from_compiled(&knight),
+        vert: ContractTemplate::from_compiled(&vert),
+        horiz: ContractTemplate::from_compiled(&horiz),
+        diag: ContractTemplate::from_compiled(&diag),
+        king: ContractTemplate::from_compiled(&king),
+        castle: ContractTemplate::from_compiled(&castle),
+        castle_challenge: ContractTemplate::from_compiled(&castle_challenge),
+    })
+}
+
+fn compile_template(
+    source: &'static str,
+    args: &[Expr<'static>],
+) -> Result<silverscript_lang::compiler::CompiledContract<'static>, ObserverError> {
+    compile_contract(source, args, CompileOptions::default()).map_err(|err| ObserverError(err.to_string()))
+}
+
+fn leak_source(path: &str) -> &'static str {
+    Box::leak(load_contract_source(path).into_boxed_str())
+}
+
+fn compile_league_template(state: &LeagueState) -> Result<silverscript_lang::compiler::CompiledContract<'static>, ObserverError> {
+    compile_template(
+        leak_source(league_contract_path()),
+        &[
+            Expr::bytes(state.league_hash.clone()),
+            Expr::bytes(state.player_hash.clone()),
+            Expr::bytes(state.mux_hash.clone()),
+            Expr::bytes(state.routes_commitment.clone()),
+            Expr::int(state.base_rating),
+            Expr::bytes(state.admin.clone()),
+        ],
+    )
+}
+
+fn compile_player_template(state: &PlayerState) -> Result<silverscript_lang::compiler::CompiledContract<'static>, ObserverError> {
+    compile_template(
+        leak_source(player_contract_path()),
+        &[
+            Expr::bytes(state.league_hash.clone()),
+            Expr::bytes(state.player_hash.clone()),
+            Expr::bytes(state.mux_hash.clone()),
+            Expr::bytes(state.routes_commitment.clone()),
+            Expr::bytes(state.owner.clone()),
+            Expr::bytes(state.player_id.clone()),
+            Expr::int(state.open_games),
+            Expr::int(state.rating),
+            Expr::int(state.games),
+            Expr::int(state.wins),
+            Expr::int(state.draws),
+            Expr::int(state.losses),
+        ],
+    )
+}
+
+fn compile_game_template(
+    path: &str,
+    state: &GameState,
+) -> Result<silverscript_lang::compiler::CompiledContract<'static>, ObserverError> {
+    compile_template(
+        leak_source(path),
+        &[
+            Expr::bytes(state.mux_hash.clone()),
+            Expr::bytes(state.route_hashes.clone()),
+            Expr::bytes(state.white_player.clone()),
+            Expr::bytes(state.black_player.clone()),
+            Expr::bytes(state.board.clone()),
+            Expr::int(state.turn),
+            Expr::int(state.status),
+            Expr::int(state.move_timeout),
+            Expr::bytes(state.castle_rights.clone()),
+            Expr::int(state.en_passant_idx),
+            Expr::int(state.pending_src_idx),
+            Expr::int(state.pending_dst_idx),
+            Expr::int(state.pending_promo),
+            Expr::int(state.recent_castle),
+            Expr::int(state.draw_state),
+        ],
+    )
+}
+
+fn compile_settle_template(state: &SettleState) -> Result<silverscript_lang::compiler::CompiledContract<'static>, ObserverError> {
+    compile_template(
+        leak_source(settle_contract_path()),
+        &[
+            Expr::bytes(state.player_hash.clone()),
+            Expr::bytes(state.white_player.clone()),
+            Expr::bytes(state.black_player.clone()),
+            Expr::int(state.status),
+        ],
+    )
+}
+
+fn opening_board() -> Vec<u8> {
+    vec![
+        0x04, 0x02, 0x03, 0x05, 0x06, 0x03, 0x02, 0x04, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x0c, 0x0a, 0x0b, 0x0d, 0x0e, 0x0b, 0x0a,
+        0x0c,
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::orchestrator::{GameResult, MoveSpec, SigningPlayer, TxArena, WorkerKind};
+
+    #[test]
+    fn observer_decodes_real_arena_transactions_end_to_end() {
+        let mut arena = TxArena::new().expect("tx arena");
+        let mut white = SigningPlayer::from_seed("white", 1);
+        let mut black = SigningPlayer::from_seed("black", 2);
+
+        arena.register_player(&mut white).expect("register white");
+        arena.register_player(&mut black).expect("register black");
+        arena.start_game(&white, &black).expect("start game");
+        arena.submit_move(&white, MoveSpec::new(4, 1, 4, 3)).expect("submit e2e4");
+        arena.surrender(&black).expect("black surrender");
+        arena.settle_game(&white, &black, GameResult::WhiteWin).expect("settle");
+        arena.retire_player(&white).expect("retire");
+
+        let emitter = ChessEventEmitter::load().expect("observer");
+        let covenant_id = arena.covenant_id();
+        let txs = arena.transactions().to_vec();
+        assert_eq!(txs.len(), 9, "expected register/register/start/route/apply/surrender/mux_settle/settle/retire");
+
+        let register_white = emitter.observe_tx(&txs[0], covenant_id).expect("observe white register");
+        assert_eq!(register_white.inputs.len(), 1);
+        assert_eq!(register_white.inputs[0].function, "register_player");
+        assert_eq!(register_white.inputs[0].outputs.len(), 2);
+        assert!(matches!(register_white.events.as_slice(), [ChessEvent::PlayerRegistered { rating: 1200, .. }]));
+        match &register_white.inputs[0].outputs[1].state {
+            ChessState::Player(player) => {
+                assert_eq!(player.open_games, 0);
+                assert_eq!(player.rating, 1200);
+            }
+            other => panic!("expected player output, got {other:?}"),
+        }
+
+        let start = emitter.observe_tx(&txs[2], covenant_id).expect("observe start");
+        assert_eq!(start.inputs.len(), 2);
+        let leader = start.inputs.iter().find(|input| input.function == "start_game").expect("start leader");
+        assert_eq!(leader.outputs.len(), 3);
+        assert!(matches!(start.events.as_slice(), [ChessEvent::GameStarted { move_timeout: 600, .. }]));
+        match &leader.outputs[2].state {
+            ChessState::Game(game) => {
+                assert_eq!(game.turn, WHITE);
+                assert_eq!(game.move_timeout, 600);
+                assert_eq!(game.status, LIVE);
+            }
+            other => panic!("expected opening game, got {other:?}"),
+        }
+
+        let route = emitter.observe_tx(&txs[3], covenant_id).expect("observe route");
+        assert_eq!(route.inputs.len(), 1);
+        assert_eq!(route.inputs[0].function, "route");
+        assert_eq!(route.inputs[0].outputs.len(), 1);
+
+        let apply = emitter.observe_tx(&txs[4], covenant_id).expect("observe apply");
+        assert_eq!(apply.inputs.len(), 1);
+        assert_eq!(apply.inputs[0].kind, ChessInputKind::Worker(WorkerKind::Pawn));
+        assert!(matches!(apply.events.as_slice(), [ChessEvent::WorkerApplied { worker: WorkerKind::Pawn, .. }]));
+        match &apply.inputs[0].outputs[0].state {
+            ChessState::Game(game) => {
+                assert_eq!(game.turn, BLACK);
+                assert_eq!(game.pending_src_idx, -1);
+                assert_eq!(game.pending_dst_idx, -1);
+            }
+            other => panic!("expected mux game after apply, got {other:?}"),
+        }
+
+        let surrender = emitter.observe_tx(&txs[5], covenant_id).expect("observe surrender");
+        assert_eq!(surrender.inputs[0].function, "route");
+        match &surrender.inputs[0].outputs[0].state {
+            ChessState::Game(game) => assert_eq!(game.status, WWIN),
+            other => panic!("expected terminal mux, got {other:?}"),
+        }
+
+        let mux_settle = emitter.observe_tx(&txs[6], covenant_id).expect("observe mux settle");
+        assert!(matches!(mux_settle.events.as_slice(), [ChessEvent::SettleCreated { status: WWIN, .. }]));
+        match &mux_settle.inputs[0].outputs[0].state {
+            ChessState::Settle(settle) => assert_eq!(settle.status, WWIN),
+            other => panic!("expected settle state, got {other:?}"),
+        }
+
+        let settle = emitter.observe_tx(&txs[7], covenant_id).expect("observe settle");
+        assert_eq!(settle.inputs.len(), 3);
+        assert!(matches!(settle.events.as_slice(), [ChessEvent::SettlementApplied { status: WWIN, .. }]));
+        let settle_leader = settle
+            .inputs
+            .iter()
+            .find(|input| input.function == "settle" && input.kind == ChessInputKind::Settle)
+            .expect("settle leader");
+        assert_eq!(settle_leader.outputs.len(), 2);
+        match &settle_leader.outputs[0].state {
+            ChessState::Player(player) => {
+                assert_eq!(player.open_games, 0);
+                assert_eq!(player.games, 1);
+                assert_eq!(player.wins, 1);
+            }
+            other => panic!("expected settled white player, got {other:?}"),
+        }
+
+        let retire = emitter.observe_tx(&txs[8], covenant_id).expect("observe retire");
+        assert_eq!(retire.inputs.len(), 1);
+        assert_eq!(retire.inputs[0].function, "retire");
+        assert!(retire.inputs[0].outputs.is_empty());
+        assert!(matches!(retire.events.as_slice(), [ChessEvent::PlayerRetired { .. }]));
+    }
+}

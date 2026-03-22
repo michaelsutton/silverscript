@@ -388,6 +388,7 @@ pub struct TxArena {
     game: Option<GameStateData>,
     messages: BTreeMap<String, Vec<OffchainMessage>>,
     history: Vec<SubmittedTx>,
+    transactions: Vec<Transaction>,
     next_registration_index: u32,
 }
 
@@ -985,6 +986,7 @@ impl TxArena {
             game: None,
             messages: BTreeMap::new(),
             history: Vec::new(),
+            transactions: Vec::new(),
             next_registration_index: 7,
         })
     }
@@ -999,6 +1001,14 @@ impl TxArena {
 
     pub fn history(&self) -> &[SubmittedTx] {
         &self.history
+    }
+
+    pub fn transactions(&self) -> &[Transaction] {
+        &self.transactions
+    }
+
+    pub fn covenant_id(&self) -> Hash {
+        self.covenant_id
     }
 
     pub fn player_account_snapshot(&self, player: &SigningPlayer) -> Result<PlayerAccount, OrchestratorError> {
@@ -1073,7 +1083,9 @@ impl TxArena {
                 Expr::bytes(self.player_suffix.clone()),
             ],
         );
+        let executed_tx = tx.clone();
         execute_input_with_covenants(tx, entries, 0).map_err(|err| OrchestratorError(format!("register failed: {err}")))?;
+        self.transactions.push(executed_tx);
 
         player.player_id = Some(player_id.clone());
         player.player_ref = Some(player_ref.clone());
@@ -1233,9 +1245,11 @@ impl TxArena {
                 Expr::int(self.player_suffix_len),
             ],
         );
+        let executed_tx = tx.clone();
         execute_input_with_covenants(tx.clone(), entries.clone(), 0)
             .map_err(|err| OrchestratorError(format!("start leader failed: {err}")))?;
         execute_input_with_covenants(tx, entries, 1).map_err(|err| OrchestratorError(format!("start delegate failed: {err}")))?;
+        self.transactions.push(executed_tx);
 
         self.players.insert(white.name.clone(), next_white);
         self.players.insert(black.name.clone(), next_black);
@@ -1324,7 +1338,9 @@ impl TxArena {
                 Expr::bytes(target.suffix.clone()),
             ],
         );
+        let executed_route_tx = route_tx.clone();
         execute_input_with_covenants(route_tx, entries, 0).map_err(|err| OrchestratorError(format!("route failed: {err}")))?;
+        self.transactions.push(executed_route_tx);
 
         let next = apply_move_to_state(&game, mv)?;
         let next_mux = self.compile_mux(&next);
@@ -1343,7 +1359,9 @@ impl TxArena {
             vec![],
         );
         let apply_entries = vec![covenant_utxo(&worker_contract, self.covenant_id)];
+        let executed_apply_tx = apply_tx.clone();
         execute_input_with_covenants(apply_tx, apply_entries, 0).map_err(|err| OrchestratorError(format!("apply failed: {err}")))?;
+        self.transactions.push(executed_apply_tx);
 
         let move_label = mv.label();
         let recipient = if actor_side == Side::White {
@@ -1463,7 +1481,9 @@ impl TxArena {
                 Expr::bytes(self.fix.mux.suffix.clone()),
             ],
         );
+        let executed_tx = tx.clone();
         execute_input_with_covenants(tx, entries, 0).map_err(|err| OrchestratorError(format!("surrender failed: {err}")))?;
+        self.transactions.push(executed_tx);
         self.game = Some(next);
         self.history.push(SubmittedTx {
             recipe_name: "route",
@@ -1549,8 +1569,10 @@ impl TxArena {
             0,
             vec![],
         );
+        let executed_mux_tx = mux_tx.clone();
         execute_input_with_covenants(mux_tx, vec![covenant_utxo(&terminal, self.covenant_id)], 0)
             .map_err(|err| OrchestratorError(format!("mux settle failed: {err}")))?;
+        self.transactions.push(executed_mux_tx);
 
         let mut next_white = white_state.clone();
         let mut next_black = black_state.clone();
@@ -1648,12 +1670,14 @@ impl TxArena {
             0,
             vec![],
         );
+        let executed_tx = tx.clone();
         execute_input_with_covenants(tx.clone(), entries.clone(), 0)
             .map_err(|err| OrchestratorError(format!("settle leader failed: {err}")))?;
         execute_input_with_covenants(tx.clone(), entries.clone(), 1)
             .map_err(|err| OrchestratorError(format!("settle white delegate failed: {err}")))?;
         execute_input_with_covenants(tx, entries, 2)
             .map_err(|err| OrchestratorError(format!("settle black delegate failed: {err}")))?;
+        self.transactions.push(executed_tx);
 
         self.players.insert(white.name.clone(), next_white);
         self.players.insert(black.name.clone(), next_black);
@@ -1689,7 +1713,9 @@ impl TxArena {
         let sig = sign_tx_input_schnorr(&tx, &entries, 0, player);
         tx.inputs[0].signature_script =
             entry_sigscript(&contract, "retire", vec![Expr::bytes(sig), Expr::bytes(player.pubkey_bytes.clone())]);
+        let executed_tx = tx.clone();
         execute_input_with_covenants(tx, entries, 0).map_err(|err| OrchestratorError(format!("retire failed: {err}")))?;
+        self.transactions.push(executed_tx);
         self.players.remove(&player.name);
         self.history.push(SubmittedTx {
             recipe_name: "retire",
