@@ -1,4 +1,6 @@
+pub mod observer;
 pub mod orchestrator;
+pub mod txdecode;
 
 use std::fs;
 use std::path::Path;
