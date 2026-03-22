@@ -254,6 +254,7 @@ pub enum OffchainMessageKind {
     InviteAccepted { white: String, black: String },
     GameStarted { white: String, black: String },
     MoveNotice { actor: String, worker: WorkerKind, move_label: String, mv: MoveSpec },
+    TimeoutClaimAvailable { result: GameResult, worker: WorkerKind, move_label: String },
     SettlementRequest { result: GameResult },
     SettlementNotice { result: GameResult },
 }
@@ -300,6 +301,7 @@ impl MoveSpec {
 pub struct ActualGameSnapshot {
     pub white_player_ref: Hash,
     pub black_player_ref: Hash,
+    pub phase: String,
     pub board: Vec<u8>,
     pub turn: Side,
     pub status: i64,
@@ -353,6 +355,7 @@ struct ExecutionFixture {
 struct PlayerStateData {
     owner_hash: Hash,
     player_id: Hash,
+    outpoint: TransactionOutpoint,
     value: u64,
     open_games: i64,
     rating: i64,
@@ -395,6 +398,21 @@ struct GameStateData {
     move_log: Vec<String>,
 }
 
+#[derive(Clone)]
+struct ActiveWorkerState {
+    kind: WorkerKind,
+    state: GameStateData,
+    outpoint: TransactionOutpoint,
+}
+
+#[derive(Clone)]
+struct ActiveSettleState {
+    white_player: Hash,
+    black_player: Hash,
+    status: i64,
+    outpoint: TransactionOutpoint,
+}
+
 pub struct TxArena {
     fix: ExecutionFixture,
     league_template: Hash,
@@ -408,6 +426,9 @@ pub struct TxArena {
     covenant_id: Hash,
     players: BTreeMap<String, PlayerStateData>,
     game: Option<GameStateData>,
+    game_outpoint: Option<TransactionOutpoint>,
+    active_worker: Option<ActiveWorkerState>,
+    active_settle: Option<ActiveSettleState>,
     messages: BTreeMap<String, Vec<OffchainMessage>>,
     history: Vec<SubmittedTx>,
     transactions: Vec<Transaction>,
@@ -937,8 +958,16 @@ impl TxOrchestrator {
         self.arena.borrow_mut().submit_move(&self.player, mv)
     }
 
+    pub fn force_move(&self, mv: MoveSpec) -> Result<Vec<SubmittedTx>, OrchestratorError> {
+        self.arena.borrow_mut().force_move(&self.player, mv)
+    }
+
     pub fn surrender(&self) -> Result<(), OrchestratorError> {
         self.arena.borrow_mut().surrender(&self.player)
+    }
+
+    pub fn claim_timeout(&self) -> Result<(), OrchestratorError> {
+        self.arena.borrow_mut().claim_timeout(&self.player)
     }
 
     pub fn request_settlement(&self, other: &TxOrchestrator, result: GameResult) -> Result<(), OrchestratorError> {
@@ -1006,6 +1035,9 @@ impl TxArena {
             covenant_id,
             players: BTreeMap::new(),
             game: None,
+            game_outpoint: None,
+            active_worker: None,
+            active_settle: None,
             messages: BTreeMap::new(),
             history: Vec::new(),
             transactions: Vec::new(),
@@ -1038,15 +1070,36 @@ impl TxArena {
         self.player_account(player_ref)
     }
 
+    fn owner_name(&self, player_ref: Hash) -> Result<String, OrchestratorError> {
+        self.players
+            .iter()
+            .find_map(|(name, state)| (player_ref_hash(state.owner_hash, state.player_id) == player_ref).then_some(name.clone()))
+            .ok_or_else(|| OrchestratorError("missing player owner".to_string()))
+    }
+
     pub fn active_game_snapshot(&self) -> Option<ActualGameSnapshot> {
-        self.game.as_ref().map(|game| ActualGameSnapshot {
-            white_player_ref: game.white_player,
-            black_player_ref: game.black_player,
-            board: game.board.clone(),
-            turn: side_from_turn(game.turn),
-            status: game.status,
-            move_log: game.move_log.clone(),
-        })
+        self.game
+            .as_ref()
+            .map(|game| ActualGameSnapshot {
+                white_player_ref: game.white_player,
+                black_player_ref: game.black_player,
+                phase: "mux".to_string(),
+                board: game.board.clone(),
+                turn: side_from_turn(game.turn),
+                status: game.status,
+                move_log: game.move_log.clone(),
+            })
+            .or_else(|| {
+                self.active_worker.as_ref().map(|worker| ActualGameSnapshot {
+                    white_player_ref: worker.state.white_player,
+                    black_player_ref: worker.state.black_player,
+                    phase: format!("worker:{:?}", worker.kind),
+                    board: worker.state.board.clone(),
+                    turn: side_from_turn(worker.state.turn),
+                    status: worker.state.status,
+                    move_log: worker.state.move_log.clone(),
+                })
+            })
     }
 
     pub fn register_player(&mut self, player: &mut SigningPlayer) -> Result<(), OrchestratorError> {
@@ -1106,6 +1159,7 @@ impl TxArena {
             ],
         );
         let executed_tx = tx.clone();
+        let executed_txid = executed_tx.id();
         execute_input_with_covenants(tx, entries, 0).map_err(|err| OrchestratorError(format!("register failed: {err}")))?;
         self.transactions.push(executed_tx);
 
@@ -1116,6 +1170,7 @@ impl TxArena {
             PlayerStateData {
                 owner_hash: player.owner_hash,
                 player_id,
+                outpoint: TransactionOutpoint { transaction_id: executed_txid, index: 1 },
                 value: 1_000,
                 open_games: 0,
                 rating: self.base_rating,
@@ -1232,7 +1287,7 @@ impl TxArena {
         ];
         let mut tx = Transaction::new(
             1,
-            vec![tx_input(0, white_placeholder, 1), tx_input(1, black_placeholder, 1)],
+            vec![tx_input(white_state.outpoint, white_placeholder, 1), tx_input(black_state.outpoint, black_placeholder, 1)],
             outputs,
             0,
             Default::default(),
@@ -1268,6 +1323,7 @@ impl TxArena {
             ],
         );
         let executed_tx = tx.clone();
+        let executed_txid = executed_tx.id();
         execute_input_with_covenants(tx.clone(), entries.clone(), 0)
             .map_err(|err| OrchestratorError(format!("start leader failed: {err}")))?;
         execute_input_with_covenants(tx, entries, 1).map_err(|err| OrchestratorError(format!("start delegate failed: {err}")))?;
@@ -1275,7 +1331,12 @@ impl TxArena {
 
         self.players.insert(white.name.clone(), next_white);
         self.players.insert(black.name.clone(), next_black);
+        self.players.get_mut(&white.name).expect("white tracked").outpoint =
+            TransactionOutpoint { transaction_id: executed_txid, index: 0 };
+        self.players.get_mut(&black.name).expect("black tracked").outpoint =
+            TransactionOutpoint { transaction_id: executed_txid, index: 1 };
         self.game = Some(opening);
+        self.game_outpoint = Some(TransactionOutpoint { transaction_id: executed_txid, index: 2 });
         self.push_message(
             &white.name,
             OffchainMessage {
@@ -1302,6 +1363,19 @@ impl TxArena {
     }
 
     pub fn submit_move(&mut self, actor: &SigningPlayer, mv: MoveSpec) -> Result<Vec<SubmittedTx>, OrchestratorError> {
+        self.submit_move_internal(actor, mv, false)
+    }
+
+    pub fn force_move(&mut self, actor: &SigningPlayer, mv: MoveSpec) -> Result<Vec<SubmittedTx>, OrchestratorError> {
+        self.submit_move_internal(actor, mv, true)
+    }
+
+    fn submit_move_internal(
+        &mut self,
+        actor: &SigningPlayer,
+        mv: MoveSpec,
+        allow_partial_commit: bool,
+    ) -> Result<Vec<SubmittedTx>, OrchestratorError> {
         let game = self.game.clone().ok_or_else(|| OrchestratorError("missing game".to_string()))?;
         let actor_ref = actor.player_ref.ok_or_else(|| OrchestratorError(format!("{} missing player ref", actor.name)))?;
         let actor_side = if actor_ref == game.white_player {
@@ -1340,7 +1414,15 @@ impl TxArena {
         );
         let outputs = vec![covenant_output(&worker_contract, 0, self.covenant_id)];
         let entries = vec![covenant_utxo(&active, self.covenant_id)];
-        let mut route_tx = Transaction::new(1, vec![tx_input(0, placeholder, 1)], outputs, 0, Default::default(), 0, vec![]);
+        let mut route_tx = Transaction::new(
+            1,
+            vec![tx_input(self.game_outpoint.ok_or_else(|| OrchestratorError("missing game outpoint".to_string()))?, placeholder, 1)],
+            outputs,
+            0,
+            Default::default(),
+            0,
+            vec![],
+        );
         let sig = sign_tx_input_schnorr(&route_tx, &entries, 0, actor);
         route_tx.inputs[0].signature_script = entry_sigscript(
             &active,
@@ -1361,8 +1443,7 @@ impl TxArena {
             ],
         );
         let executed_route_tx = route_tx.clone();
-        execute_input_with_covenants(route_tx, entries, 0).map_err(|err| OrchestratorError(format!("route failed: {err}")))?;
-        self.transactions.push(executed_route_tx);
+        let worker_outpoint = TransactionOutpoint { transaction_id: executed_route_tx.id(), index: 0 };
 
         let next = apply_move_to_state(&game, mv)?;
         let next_mux = self.compile_mux(&next);
@@ -1373,7 +1454,7 @@ impl TxArena {
         );
         let apply_tx = Transaction::new(
             1,
-            vec![tx_input(0, apply_sigscript, 0)],
+            vec![tx_input(worker_outpoint, apply_sigscript, 0)],
             vec![covenant_output(&next_mux, 0, self.covenant_id)],
             0,
             Default::default(),
@@ -1382,7 +1463,57 @@ impl TxArena {
         );
         let apply_entries = vec![covenant_utxo(&worker_contract, self.covenant_id)];
         let executed_apply_tx = apply_tx.clone();
-        execute_input_with_covenants(apply_tx, apply_entries, 0).map_err(|err| OrchestratorError(format!("apply failed: {err}")))?;
+        execute_input_with_covenants(route_tx, entries, 0).map_err(|err| OrchestratorError(format!("route failed: {err}")))?;
+        let apply_result = execute_input_with_covenants(apply_tx, apply_entries, 0);
+        if let Err(err) = apply_result {
+            if !allow_partial_commit {
+                return Err(OrchestratorError(format!("apply failed: {err}")));
+            }
+            self.transactions.push(executed_route_tx);
+            self.game = None;
+            self.game_outpoint = None;
+            self.active_worker = Some(ActiveWorkerState {
+                kind: worker,
+                state: pending,
+                outpoint: worker_outpoint,
+            });
+
+            let winner = actor_side.other();
+            let result = if winner == Side::White { GameResult::WhiteWin } else { GameResult::BlackWin };
+            let recipient = if winner == Side::White {
+                self.players
+                    .iter()
+                    .find_map(|(name, state)| {
+                        (player_ref_hash(state.owner_hash, state.player_id) == game.white_player).then_some(name.clone())
+                    })
+                    .ok_or_else(|| OrchestratorError("missing white owner".to_string()))?
+            } else {
+                self.players
+                    .iter()
+                    .find_map(|(name, state)| {
+                        (player_ref_hash(state.owner_hash, state.player_id) == game.black_player).then_some(name.clone())
+                    })
+                    .ok_or_else(|| OrchestratorError("missing black owner".to_string()))?
+            };
+            self.push_message(
+                &recipient,
+                OffchainMessage {
+                    from: actor.name.clone(),
+                    to: recipient.clone(),
+                    kind: OffchainMessageKind::TimeoutClaimAvailable { result, worker, move_label: mv.label() },
+                },
+            );
+            let route_submission = SubmittedTx {
+                recipe_name: self.planner().route_recipe(worker).name,
+                consumed: vec![],
+                produced: vec![],
+                signer_names: vec![actor.name.clone()],
+            };
+            self.history.push(route_submission.clone());
+            return Ok(vec![route_submission]);
+        }
+
+        self.transactions.push(executed_route_tx);
         self.transactions.push(executed_apply_tx);
 
         let move_label = mv.label();
@@ -1410,6 +1541,8 @@ impl TxArena {
             },
         );
         self.game = Some(next);
+        self.game_outpoint =
+            Some(TransactionOutpoint { transaction_id: self.transactions.last().expect("apply tx exists").id(), index: 0 });
 
         let submissions = vec![
             SubmittedTx {
@@ -1427,6 +1560,79 @@ impl TxArena {
         ];
         self.history.extend(submissions.clone());
         Ok(submissions)
+    }
+
+    pub fn claim_timeout(&mut self, claimer: &SigningPlayer) -> Result<(), OrchestratorError> {
+        let active_worker = self.active_worker.clone().ok_or_else(|| OrchestratorError("missing active worker".to_string()))?;
+        let claimer_ref = claimer.player_ref.ok_or_else(|| OrchestratorError(format!("{} missing player ref", claimer.name)))?;
+        let timed_out_side = side_from_turn(active_worker.state.turn);
+        let winner = timed_out_side.other();
+        let (winner_ref, loser_ref, result, status) = if winner == Side::White {
+            (active_worker.state.white_player, active_worker.state.black_player, GameResult::WhiteWin, 1)
+        } else {
+            (active_worker.state.black_player, active_worker.state.white_player, GameResult::BlackWin, 2)
+        };
+        if claimer_ref != winner_ref {
+            return Err(OrchestratorError(format!("{} is not entitled to claim this timeout", claimer.name)));
+        }
+
+        let worker_fixture = self.worker_fixture(active_worker.kind);
+        let worker_contract = self.compile_worker(worker_fixture.source, &active_worker.state);
+        let routed_settle =
+            compile_settle_state(self.fix.settle.source, &self.player_template, &active_worker.state.white_player, &active_worker.state.black_player, status);
+        let timeout_sigscript = entry_sigscript(
+            &worker_contract,
+            "timeout",
+            vec![
+                hash_expr(self.player_template),
+                Expr::bytes(self.fix.settle.prefix.clone()),
+                Expr::bytes(self.fix.settle.suffix.clone()),
+            ],
+        );
+        let tx = Transaction::new(
+            1,
+            vec![TransactionInput {
+                previous_outpoint: active_worker.outpoint,
+                signature_script: timeout_sigscript,
+                sequence: DEFAULT_MOVE_TIMEOUT as u64,
+                sig_op_count: 0,
+            }],
+            vec![covenant_output(&routed_settle, 0, self.covenant_id)],
+            0,
+            Default::default(),
+            0,
+            vec![],
+        );
+        let executed_tx = tx.clone();
+        execute_input_with_covenants(tx, vec![covenant_utxo(&worker_contract, self.covenant_id)], 0)
+            .map_err(|err| OrchestratorError(format!("worker timeout failed: {err}")))?;
+        self.transactions.push(executed_tx.clone());
+        self.active_worker = None;
+        self.active_settle = Some(ActiveSettleState {
+            white_player: active_worker.state.white_player,
+            black_player: active_worker.state.black_player,
+            status,
+            outpoint: TransactionOutpoint { transaction_id: executed_tx.id(), index: 0 },
+        });
+        self.push_message(
+            &claimer.name,
+            OffchainMessage {
+                from: "arena".to_string(),
+                to: claimer.name.clone(),
+                kind: OffchainMessageKind::SettlementRequest { result },
+            },
+        );
+        let loser_name = self.owner_name(loser_ref)?;
+        self.push_message(
+            &loser_name,
+            OffchainMessage {
+                from: "arena".to_string(),
+                to: loser_name.clone(),
+                kind: OffchainMessageKind::SettlementRequest { result },
+            },
+        );
+        self.history.push(SubmittedTx { recipe_name: self.planner().worker_timeout_recipe(active_worker.kind).name, consumed: vec![], produced: vec![], signer_names: vec![] });
+        Ok(())
     }
 
     pub fn surrender(&mut self, actor: &SigningPlayer) -> Result<(), OrchestratorError> {
@@ -1481,7 +1687,15 @@ impl TxArena {
         );
         let outputs = vec![covenant_output(&terminal, 0, self.covenant_id)];
         let entries = vec![covenant_utxo(&active, self.covenant_id)];
-        let mut tx = Transaction::new(1, vec![tx_input(0, placeholder, 1)], outputs, 0, Default::default(), 0, vec![]);
+        let mut tx = Transaction::new(
+            1,
+            vec![tx_input(self.game_outpoint.ok_or_else(|| OrchestratorError("missing game outpoint".to_string()))?, placeholder, 1)],
+            outputs,
+            0,
+            Default::default(),
+            0,
+            vec![],
+        );
         let sig = sign_tx_input_schnorr(&tx, &entries, 0, actor);
         tx.inputs[0].signature_script = entry_sigscript(
             &active,
@@ -1505,6 +1719,8 @@ impl TxArena {
         execute_input_with_covenants(tx, entries, 0).map_err(|err| OrchestratorError(format!("surrender failed: {err}")))?;
         self.transactions.push(executed_tx);
         self.game = Some(next);
+        self.game_outpoint =
+            Some(TransactionOutpoint { transaction_id: self.transactions.last().expect("surrender tx exists").id(), index: 0 });
         self.history.push(SubmittedTx {
             recipe_name: "route",
             consumed: vec![],
@@ -1554,15 +1770,7 @@ impl TxArena {
     }
 
     pub fn settle_game(&mut self, white: &SigningPlayer, black: &SigningPlayer, result: GameResult) -> Result<(), OrchestratorError> {
-        let game = self.game.clone().ok_or_else(|| OrchestratorError("missing game".to_string()))?;
         let expected_status = status_from_result(result);
-        if game.status != expected_status {
-            return Err(OrchestratorError(format!(
-                "terminal game status {} does not match requested result {}",
-                game.status, expected_status
-            )));
-        }
-        let terminal = self.compile_mux(&game);
         let white_state = self.players.get(&white.name).cloned().ok_or_else(|| OrchestratorError("missing white".to_string()))?;
         let black_state = self.players.get(&black.name).cloned().ok_or_else(|| OrchestratorError("missing black".to_string()))?;
         let white_contract = self.compile_player(&white_state);
@@ -1570,30 +1778,64 @@ impl TxArena {
 
         let white_ref = white.player_ref.ok_or_else(|| OrchestratorError("white missing player ref".to_string()))?;
         let black_ref = black.player_ref.ok_or_else(|| OrchestratorError("black missing player ref".to_string()))?;
-        let routed_settle =
-            compile_settle_state(self.fix.settle.source, &self.player_template, &white_ref, &black_ref, expected_status);
-        let mux_settle_sigscript = entry_sigscript(
-            &terminal,
-            "settle",
-            vec![
-                hash_expr(self.player_template),
-                Expr::bytes(self.fix.settle.prefix.clone()),
-                Expr::bytes(self.fix.settle.suffix.clone()),
-            ],
-        );
-        let mux_tx = Transaction::new(
-            1,
-            vec![tx_input(0, mux_settle_sigscript, 0)],
-            vec![covenant_output(&routed_settle, 0, self.covenant_id)],
-            0,
-            Default::default(),
-            0,
-            vec![],
-        );
-        let executed_mux_tx = mux_tx.clone();
-        execute_input_with_covenants(mux_tx, vec![covenant_utxo(&terminal, self.covenant_id)], 0)
-            .map_err(|err| OrchestratorError(format!("mux settle failed: {err}")))?;
-        self.transactions.push(executed_mux_tx);
+        let (routed_settle, settle_outpoint, include_mux_settle_history) = if let Some(active_settle) = self.active_settle.clone() {
+            if active_settle.status != expected_status {
+                return Err(OrchestratorError(format!(
+                    "active settle status {} does not match requested result {}",
+                    active_settle.status, expected_status
+                )));
+            }
+            if active_settle.white_player != white_ref || active_settle.black_player != black_ref {
+                return Err(OrchestratorError("active settle does not match provided players".to_string()));
+            }
+            (
+                compile_settle_state(self.fix.settle.source, &self.player_template, &white_ref, &black_ref, expected_status),
+                active_settle.outpoint,
+                false,
+            )
+        } else {
+            let game = self.game.clone().ok_or_else(|| OrchestratorError("missing game".to_string()))?;
+            if game.status != expected_status {
+                return Err(OrchestratorError(format!(
+                    "terminal game status {} does not match requested result {}",
+                    game.status, expected_status
+                )));
+            }
+            let terminal = self.compile_mux(&game);
+            let routed_settle =
+                compile_settle_state(self.fix.settle.source, &self.player_template, &white_ref, &black_ref, expected_status);
+            let mux_settle_sigscript = entry_sigscript(
+                &terminal,
+                "settle",
+                vec![
+                    hash_expr(self.player_template),
+                    Expr::bytes(self.fix.settle.prefix.clone()),
+                    Expr::bytes(self.fix.settle.suffix.clone()),
+                ],
+            );
+            let mux_tx = Transaction::new(
+                1,
+                vec![tx_input(
+                    self.game_outpoint.ok_or_else(|| OrchestratorError("missing game outpoint".to_string()))?,
+                    mux_settle_sigscript,
+                    0,
+                )],
+                vec![covenant_output(&routed_settle, 0, self.covenant_id)],
+                0,
+                Default::default(),
+                0,
+                vec![],
+            );
+            let executed_mux_tx = mux_tx.clone();
+            execute_input_with_covenants(mux_tx, vec![covenant_utxo(&terminal, self.covenant_id)], 0)
+                .map_err(|err| OrchestratorError(format!("mux settle failed: {err}")))?;
+            self.transactions.push(executed_mux_tx.clone());
+            (
+                routed_settle,
+                TransactionOutpoint { transaction_id: executed_mux_tx.id(), index: 0 },
+                true,
+            )
+        };
 
         let mut next_white = white_state.clone();
         let mut next_black = black_state.clone();
@@ -1684,7 +1926,11 @@ impl TxArena {
         ];
         let tx = Transaction::new(
             1,
-            vec![tx_input(0, settle_sigscript, 0), tx_input(1, white_placeholder, 0), tx_input(2, black_placeholder, 0)],
+            vec![
+                tx_input(settle_outpoint, settle_sigscript, 0),
+                tx_input(white_state.outpoint, white_placeholder, 0),
+                tx_input(black_state.outpoint, black_placeholder, 0),
+            ],
             outputs,
             0,
             Default::default(),
@@ -1692,6 +1938,7 @@ impl TxArena {
             vec![],
         );
         let executed_tx = tx.clone();
+        let executed_txid = executed_tx.id();
         execute_input_with_covenants(tx.clone(), entries.clone(), 0)
             .map_err(|err| OrchestratorError(format!("settle leader failed: {err}")))?;
         execute_input_with_covenants(tx.clone(), entries.clone(), 1)
@@ -1702,7 +1949,14 @@ impl TxArena {
 
         self.players.insert(white.name.clone(), next_white);
         self.players.insert(black.name.clone(), next_black);
+        self.players.get_mut(&white.name).expect("white tracked").outpoint =
+            TransactionOutpoint { transaction_id: executed_txid, index: 0 };
+        self.players.get_mut(&black.name).expect("black tracked").outpoint =
+            TransactionOutpoint { transaction_id: executed_txid, index: 1 };
         self.game = None;
+        self.game_outpoint = None;
+        self.active_worker = None;
+        self.active_settle = None;
         self.push_message(
             &white.name,
             OffchainMessage {
@@ -1719,7 +1973,9 @@ impl TxArena {
                 kind: OffchainMessageKind::SettlementNotice { result },
             },
         );
-        self.history.push(SubmittedTx { recipe_name: "mux_settle", consumed: vec![], produced: vec![], signer_names: vec![] });
+        if include_mux_settle_history {
+            self.history.push(SubmittedTx { recipe_name: "mux_settle", consumed: vec![], produced: vec![], signer_names: vec![] });
+        }
         self.history.push(SubmittedTx { recipe_name: "settle", consumed: vec![], produced: vec![], signer_names: vec![] });
         Ok(())
     }
@@ -1730,7 +1986,7 @@ impl TxArena {
         let placeholder =
             entry_sigscript(&contract, "retire", vec![Expr::bytes(vec![0u8; 65]), Expr::bytes(player.pubkey_bytes.clone())]);
         let entries = vec![covenant_utxo_with_value(&contract, self.covenant_id, state.value)];
-        let mut tx = Transaction::new(1, vec![tx_input(0, placeholder, 1)], vec![], 0, Default::default(), 0, vec![]);
+        let mut tx = Transaction::new(1, vec![tx_input(state.outpoint, placeholder, 1)], vec![], 0, Default::default(), 0, vec![]);
         let sig = sign_tx_input_schnorr(&tx, &entries, 0, player);
         tx.inputs[0].signature_script =
             entry_sigscript(&contract, "retire", vec![Expr::bytes(sig), Expr::bytes(player.pubkey_bytes.clone())]);
@@ -2262,13 +2518,8 @@ fn entry_sigscript(compiled: &CompiledContract<'_>, function: &str, args: Vec<Ex
     pay_to_script_hash_signature_script(compiled.script.clone(), sigscript).expect("wrap p2sh sigscript")
 }
 
-fn tx_input(index: u32, signature_script: Vec<u8>, sig_op_count: u8) -> TransactionInput {
-    TransactionInput {
-        previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([index as u8 + 1; 32]), index },
-        signature_script,
-        sequence: 0,
-        sig_op_count,
-    }
+fn tx_input(previous_outpoint: TransactionOutpoint, signature_script: Vec<u8>, sig_op_count: u8) -> TransactionInput {
+    TransactionInput { previous_outpoint, signature_script, sequence: 0, sig_op_count }
 }
 
 fn covenant_output_with_value(
@@ -2695,5 +2946,91 @@ mod tests {
         assert_eq!(black_state.open_games, 0);
         assert_eq!(black_state.losses, 1);
         assert_eq!(arena.history().len(), 13);
+    }
+
+    #[test]
+    fn illegal_move_does_not_leave_the_game_stuck() {
+        let shared = TxArena::shared().expect("actual arena builds");
+        let mut white = TxOrchestrator::new("white", 0x51, shared.clone());
+        let mut black = TxOrchestrator::new("black", 0x52, shared.clone());
+
+        white.register().expect("white register tx passes");
+        black.register().expect("black register tx passes");
+        white.start_game(&black).expect("start game tx passes");
+
+        let (history_before, txs_before, game_before) = {
+            let arena = shared.borrow();
+            (
+                arena.history().len(),
+                arena.transactions().len(),
+                arena.active_game_snapshot().expect("active game exists"),
+            )
+        };
+
+        let err = white.submit_move(MoveSpec::new(4, 1, 4, 4)).expect_err("illegal e2e5 should fail");
+        assert!(err.to_string().contains("apply failed"), "unexpected error: {err}");
+
+        {
+            let arena = shared.borrow();
+            let game_after = arena.active_game_snapshot().expect("active game still exists");
+            assert_eq!(arena.history().len(), history_before);
+            assert_eq!(arena.transactions().len(), txs_before);
+            assert_eq!(game_after.turn, game_before.turn);
+            assert_eq!(game_after.status, game_before.status);
+            assert_eq!(game_after.board, game_before.board);
+        }
+
+        white.submit_move(MoveSpec::new(4, 1, 4, 3)).expect("legal e2e4 should still pass");
+        {
+            let arena = shared.borrow();
+            let game_after = arena.active_game_snapshot().expect("active game exists");
+            assert_eq!(game_after.turn, Side::Black);
+            assert_eq!(arena.history().len(), history_before + 2);
+            assert_eq!(arena.transactions().len(), txs_before + 2);
+        }
+    }
+
+    #[test]
+    fn forced_illegal_move_can_be_timed_out_and_settled() {
+        let shared = TxArena::shared().expect("actual arena builds");
+        let mut white = TxOrchestrator::new("white", 0x61, shared.clone());
+        let mut black = TxOrchestrator::new("black", 0x62, shared.clone());
+
+        white.register().expect("white register tx passes");
+        black.register().expect("black register tx passes");
+        white.start_game(&black).expect("start game tx passes");
+
+        let forced = white.force_move(MoveSpec::new(4, 1, 4, 4)).expect("forced illegal move should route");
+        assert_eq!(forced.len(), 1);
+        assert_eq!(forced[0].recipe_name, "route");
+
+        let notice = black.inbox();
+        assert!(notice.iter().any(|message| {
+            matches!(message.kind, OffchainMessageKind::TimeoutClaimAvailable { result: GameResult::BlackWin, .. })
+        }));
+
+        {
+            let arena = shared.borrow();
+            let game = arena.active_game_snapshot().expect("worker transit should be visible");
+            assert!(game.phase.starts_with("worker:"));
+        }
+
+        black.claim_timeout().expect("black claims timeout");
+        let settlement_request = white.inbox();
+        assert!(settlement_request.iter().any(|message| {
+            matches!(message.kind, OffchainMessageKind::SettlementRequest { result: GameResult::BlackWin, .. })
+        }));
+
+        white.settle(&black, GameResult::BlackWin).expect("timeout win settles");
+        {
+            let arena = shared.borrow();
+            let white_state = arena.player_account_snapshot(&white.player).expect("white remains");
+            let black_state = arena.player_account_snapshot(&black.player).expect("black remains");
+            assert_eq!(white_state.losses, 1);
+            assert_eq!(black_state.wins, 1);
+            assert_eq!(white_state.open_games, 0);
+            assert_eq!(black_state.open_games, 0);
+            assert_eq!(arena.active_game_snapshot(), None);
+        }
     }
 }

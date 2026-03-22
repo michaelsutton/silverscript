@@ -4199,13 +4199,8 @@ fn invalid_castle_destination_challenge_loses_by_worker_timeout() {
             draw_state: 3,
         },
     );
-    let _err = run_worker_apply_err(
-        "invalid_castle_destination_challenge_should_not_apply",
-        &vert0,
-        &impossible_mux,
-        covenant_id,
-        &fix.mux,
-    );
+    let _err =
+        run_worker_apply_err("invalid_castle_destination_challenge_should_not_apply", &vert0, &impossible_mux, covenant_id, &fix.mux);
 
     let settle_terminal = compile_settle_state(fix.settle.source, &player_template, &white.player_ref, &black.player_ref, 1);
     run_worker_timeout(

@@ -1,3 +1,4 @@
+pub mod indexer;
 pub mod observer;
 pub mod orchestrator;
 pub mod txdecode;
