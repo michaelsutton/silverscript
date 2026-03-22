@@ -21,14 +21,14 @@ sequenceDiagram
     participant G as Game output
 
     PL->>PL: verify owner signature
-    PL->>PL: verify routes commitment against witnessed route_hashes
-    PL->>PD: verify input template == player_hash
+    PL->>PL: verify routes commitment against witnessed route_templates
+    PL->>PD: verify input template == player_template
     PL->>G: choose white/black refs from owner + player_id
     PL->>OP1: recreate self with open_games + 1
     PL->>OP2: recreate peer with open_games + 1
     PL->>G: emit opening mux state
 
-    PD->>PL: delegate only if leader template == player_hash
+    PD->>PL: delegate only if leader template == player_template
     PD->>PL: verify leader is another Player
 ```
 
@@ -37,7 +37,7 @@ sequenceDiagram
 The leader does the expensive work:
 
 - reading the peer player state
-- checking the witnessed `route_hashes`
+- checking the witnessed `route_templates`
 - constructing the opening game state
 - validating all three outputs
 

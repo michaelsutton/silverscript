@@ -46,7 +46,7 @@ pub struct ChessTemplateFamily {
     pub king: TemplateWitness,
     pub castle: TemplateWitness,
     pub castle_challenge: TemplateWitness,
-    pub route_hashes: Vec<u8>,
+    pub route_templates: Vec<u8>,
     pub routes_commitment: Vec<u8>,
 }
 
@@ -341,9 +341,9 @@ struct PlayerStateData {
 }
 
 struct PlayerStateArgs<'a> {
-    league_hash: &'a [u8],
-    player_hash: &'a [u8],
-    mux_hash: &'a [u8],
+    league_template: &'a [u8],
+    player_template: &'a [u8],
+    mux_template: &'a [u8],
     routes_commitment: &'a [u8],
     owner_hash: &'a [u8],
     player_id: &'a [u8],
@@ -375,9 +375,9 @@ struct GameStateData {
 
 pub struct TxArena {
     fix: ExecutionFixture,
-    league_hash: Vec<u8>,
+    league_template: Vec<u8>,
     base_rating: i64,
-    player_hash: Vec<u8>,
+    player_template: Vec<u8>,
     player_prefix: Vec<u8>,
     player_suffix: Vec<u8>,
     player_prefix_len: i64,
@@ -935,16 +935,16 @@ impl TxOrchestrator {
 impl TxArena {
     pub fn new() -> Result<Self, OrchestratorError> {
         let fix = build_execution_fixture();
-        let league_hash = vec![0x11u8; 32];
+        let league_template = vec![0x11u8; 32];
         let admin = vec![0x33u8; 32];
         let base_rating = 1200;
-        let routes_commitment = routes_commitment(&packed_execution_route_hashes(&fix));
-        let player_template = compile_player_state(
+        let routes_commitment = routes_commitment(&packed_execution_route_templates(&fix));
+        let player_contract = compile_player_state(
             player_static_source(),
             PlayerStateArgs {
-                league_hash: &[0x11u8; 32],
-                player_hash: &[0x22u8; 32],
-                mux_hash: &fix.mux.hash,
+                league_template: &[0x11u8; 32],
+                player_template: &[0x22u8; 32],
+                mux_template: &fix.mux.hash,
                 routes_commitment: &routes_commitment,
                 owner_hash: &[0x44u8; 32],
                 player_id: &[0x55u8; 32],
@@ -956,14 +956,14 @@ impl TxArena {
                 losses: 0,
             },
         );
-        let layout = player_template.state_layout;
-        let player_prefix = player_template.script[..layout.start].to_vec();
-        let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
-        let player_hash = blake2b([player_prefix.as_slice(), player_suffix.as_slice()].concat().as_slice());
+        let layout = player_contract.state_layout;
+        let player_prefix = player_contract.script[..layout.start].to_vec();
+        let player_suffix = player_contract.script[layout.start + layout.len..].to_vec();
+        let player_template = blake2b([player_prefix.as_slice(), player_suffix.as_slice()].concat().as_slice());
         let league = compile_league_state(
             league_static_source(),
-            &league_hash,
-            &player_hash,
+            &league_template,
+            &player_template,
             &fix.mux.hash,
             &routes_commitment,
             base_rating,
@@ -973,13 +973,13 @@ impl TxArena {
 
         Ok(Self {
             fix,
-            league_hash,
+            league_template,
             base_rating,
-            player_hash,
+            player_template,
             player_prefix,
             player_suffix,
             player_prefix_len: layout.start as i64,
-            player_suffix_len: (player_template.script.len() - (layout.start + layout.len)) as i64,
+            player_suffix_len: (player_contract.script.len() - (layout.start + layout.len)) as i64,
             league,
             covenant_id,
             players: BTreeMap::new(),
@@ -1037,10 +1037,10 @@ impl TxArena {
         let registered = compile_player_state(
             player_static_source(),
             PlayerStateArgs {
-                league_hash: &self.league_hash,
-                player_hash: &self.player_hash,
-                mux_hash: &self.fix.mux.hash,
-                routes_commitment: &routes_commitment(&packed_execution_route_hashes(&self.fix)),
+                league_template: &self.league_template,
+                player_template: &self.player_template,
+                mux_template: &self.fix.mux.hash,
+                routes_commitment: &routes_commitment(&packed_execution_route_templates(&self.fix)),
                 owner_hash: &player.owner_hash,
                 player_id: &player_id,
                 open_games: 0,
@@ -1182,7 +1182,7 @@ impl TxArena {
                 Expr::int(0),
                 Expr::int(self.player_prefix_len),
                 Expr::int(self.player_suffix_len),
-                Expr::bytes(packed_execution_route_hashes(&self.fix)),
+                Expr::bytes(packed_execution_route_templates(&self.fix)),
                 Expr::int(DEFAULT_MOVE_TIMEOUT),
                 Expr::bytes(self.fix.mux.prefix.clone()),
                 Expr::bytes(self.fix.mux.suffix.clone()),
@@ -1228,7 +1228,7 @@ impl TxArena {
                 Expr::int(0),
                 Expr::int(self.player_prefix_len),
                 Expr::int(self.player_suffix_len),
-                Expr::bytes(packed_execution_route_hashes(&self.fix)),
+                Expr::bytes(packed_execution_route_templates(&self.fix)),
                 Expr::int(DEFAULT_MOVE_TIMEOUT),
                 Expr::bytes(self.fix.mux.prefix.clone()),
                 Expr::bytes(self.fix.mux.suffix.clone()),
@@ -1550,12 +1550,13 @@ impl TxArena {
 
         let white_ref = white.player_ref.clone().ok_or_else(|| OrchestratorError("white missing player ref".to_string()))?;
         let black_ref = black.player_ref.clone().ok_or_else(|| OrchestratorError("black missing player ref".to_string()))?;
-        let routed_settle = compile_settle_state(self.fix.settle.source, &self.player_hash, &white_ref, &black_ref, expected_status);
+        let routed_settle =
+            compile_settle_state(self.fix.settle.source, &self.player_template, &white_ref, &black_ref, expected_status);
         let mux_settle_sigscript = entry_sigscript(
             &terminal,
             "settle",
             vec![
-                Expr::bytes(self.player_hash.clone()),
+                Expr::bytes(self.player_template.clone()),
                 Expr::bytes(self.fix.settle.prefix.clone()),
                 Expr::bytes(self.fix.settle.suffix.clone()),
             ],
@@ -1625,7 +1626,7 @@ impl TxArena {
 
         let settled_white = self.compile_player(&next_white);
         let settled_black = self.compile_player(&next_black);
-        let route_hashes = packed_execution_route_hashes(&self.fix);
+        let route_templates = packed_execution_route_templates(&self.fix);
         let settle_sigscript = entry_sigscript(
             &routed_settle,
             "settle",
@@ -1639,7 +1640,7 @@ impl TxArena {
                 Expr::int(self.fix.settle.prefix.len() as i64),
                 Expr::int(self.fix.settle.suffix.len() as i64),
                 Expr::bytes(self.fix.settle.hash.clone()),
-                Expr::bytes(route_hashes.clone()),
+                Expr::bytes(route_templates.clone()),
             ],
         );
         let black_placeholder = entry_sigscript(
@@ -1649,7 +1650,7 @@ impl TxArena {
                 Expr::int(self.fix.settle.prefix.len() as i64),
                 Expr::int(self.fix.settle.suffix.len() as i64),
                 Expr::bytes(self.fix.settle.hash.clone()),
-                Expr::bytes(route_hashes.clone()),
+                Expr::bytes(route_templates.clone()),
             ],
         );
         let outputs = vec![
@@ -1729,11 +1730,11 @@ impl TxArena {
     fn planner(&self) -> ChessTxPlanner {
         ChessTxPlanner {
             family: ChessTemplateFamily {
-                league: TemplateWitness { prefix: Vec::new(), suffix: Vec::new(), hash: self.league_hash.clone() },
+                league: TemplateWitness { prefix: Vec::new(), suffix: Vec::new(), hash: self.league_template.clone() },
                 player: TemplateWitness {
                     prefix: self.player_prefix.clone(),
                     suffix: self.player_suffix.clone(),
-                    hash: self.player_hash.clone(),
+                    hash: self.player_template.clone(),
                 },
                 mux: TemplateWitness {
                     prefix: self.fix.mux.prefix.clone(),
@@ -1785,8 +1786,8 @@ impl TxArena {
                     suffix: self.fix.castle_challenge.suffix.clone(),
                     hash: self.fix.castle_challenge.hash.clone(),
                 },
-                route_hashes: packed_execution_route_hashes(&self.fix),
-                routes_commitment: routes_commitment(&packed_execution_route_hashes(&self.fix)),
+                route_templates: packed_execution_route_templates(&self.fix),
+                routes_commitment: routes_commitment(&packed_execution_route_templates(&self.fix)),
             },
         }
     }
@@ -1829,10 +1830,10 @@ impl TxArena {
         compile_player_state(
             player_static_source(),
             PlayerStateArgs {
-                league_hash: &self.league_hash,
-                player_hash: &self.player_hash,
-                mux_hash: &self.fix.mux.hash,
-                routes_commitment: &routes_commitment(&packed_execution_route_hashes(&self.fix)),
+                league_template: &self.league_template,
+                player_template: &self.player_template,
+                mux_template: &self.fix.mux.hash,
+                routes_commitment: &routes_commitment(&packed_execution_route_templates(&self.fix)),
                 owner_hash: &state.owner_hash,
                 player_id: &state.player_id,
                 open_games: state.open_games,
@@ -1932,14 +1933,14 @@ fn template_fixture(source: &'static str, ctor: &[Expr<'_>]) -> TemplateFixture 
     TemplateFixture { source, prefix, suffix, hash }
 }
 
-fn packed_execution_route_hashes(fix: &ExecutionFixture) -> Vec<u8> {
-    let player_hash = {
+fn packed_execution_route_templates(fix: &ExecutionFixture) -> Vec<u8> {
+    let player_template = {
         let player_template = compile_player_state(
             player_static_source(),
             PlayerStateArgs {
-                league_hash: &[0x11u8; 32],
-                player_hash: &[0x22u8; 32],
-                mux_hash: &fix.mux.hash,
+                league_template: &[0x11u8; 32],
+                player_template: &[0x22u8; 32],
+                mux_template: &fix.mux.hash,
                 routes_commitment: &routes_commitment(&vec![0x12u8; 32 * 9]),
                 owner_hash: &[0x44u8; 32],
                 player_id: &[0x55u8; 32],
@@ -1967,12 +1968,12 @@ fn packed_execution_route_hashes(fix: &ExecutionFixture) -> Vec<u8> {
     out.extend_from_slice(&fix.king.hash);
     out.extend_from_slice(&fix.castle.hash);
     out.extend_from_slice(&fix.castle_challenge.hash);
-    out.extend_from_slice(&blake2b([fix.settle.hash.as_slice(), player_hash.as_slice()].concat().as_slice()));
+    out.extend_from_slice(&blake2b([fix.settle.hash.as_slice(), player_template.as_slice()].concat().as_slice()));
     out
 }
 
-fn routes_commitment(route_hashes: &[u8]) -> Vec<u8> {
-    blake2b(route_hashes)
+fn routes_commitment(route_templates: &[u8]) -> Vec<u8> {
+    blake2b(route_templates)
 }
 
 fn square_idx(x: i64, y: i64) -> i64 {
@@ -2171,7 +2172,7 @@ fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateDa
 fn compile_game_state(source: &'static str, fix: &ExecutionFixture, state: &GameStateData) -> CompiledContract<'static> {
     let ctor = vec![
         Expr::bytes(fix.mux.hash.clone()),
-        Expr::bytes(packed_execution_route_hashes(fix)),
+        Expr::bytes(packed_execution_route_templates(fix)),
         Expr::bytes(state.white_player.clone()),
         Expr::bytes(state.black_player.clone()),
         Expr::bytes(state.board.clone()),
@@ -2191,9 +2192,9 @@ fn compile_game_state(source: &'static str, fix: &ExecutionFixture, state: &Game
 
 fn compile_player_state(source: &'static str, args: PlayerStateArgs<'_>) -> CompiledContract<'static> {
     let ctor = vec![
-        Expr::bytes(args.league_hash.to_vec()),
-        Expr::bytes(args.player_hash.to_vec()),
-        Expr::bytes(args.mux_hash.to_vec()),
+        Expr::bytes(args.league_template.to_vec()),
+        Expr::bytes(args.player_template.to_vec()),
+        Expr::bytes(args.mux_template.to_vec()),
         Expr::bytes(args.routes_commitment.to_vec()),
         Expr::bytes(args.owner_hash.to_vec()),
         Expr::bytes(args.player_id.to_vec()),
@@ -2209,17 +2210,17 @@ fn compile_player_state(source: &'static str, args: PlayerStateArgs<'_>) -> Comp
 
 fn compile_league_state(
     source: &'static str,
-    league_hash: &[u8],
-    player_hash: &[u8],
-    mux_hash: &[u8],
+    league_template: &[u8],
+    player_template: &[u8],
+    mux_template: &[u8],
     routes_commitment: &[u8],
     base_rating: i64,
     admin: &[u8],
 ) -> CompiledContract<'static> {
     let ctor = vec![
-        Expr::bytes(league_hash.to_vec()),
-        Expr::bytes(player_hash.to_vec()),
-        Expr::bytes(mux_hash.to_vec()),
+        Expr::bytes(league_template.to_vec()),
+        Expr::bytes(player_template.to_vec()),
+        Expr::bytes(mux_template.to_vec()),
         Expr::bytes(routes_commitment.to_vec()),
         Expr::int(base_rating),
         Expr::bytes(admin.to_vec()),
@@ -2229,13 +2230,17 @@ fn compile_league_state(
 
 fn compile_settle_state(
     source: &'static str,
-    player_hash: &[u8],
+    player_template: &[u8],
     white_hash: &[u8],
     black_hash: &[u8],
     status: i64,
 ) -> CompiledContract<'static> {
-    let ctor =
-        vec![Expr::bytes(player_hash.to_vec()), Expr::bytes(white_hash.to_vec()), Expr::bytes(black_hash.to_vec()), Expr::int(status)];
+    let ctor = vec![
+        Expr::bytes(player_template.to_vec()),
+        Expr::bytes(white_hash.to_vec()),
+        Expr::bytes(black_hash.to_vec()),
+        Expr::int(status),
+    ];
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile settle state")
 }
 
@@ -2346,9 +2351,9 @@ fn load_template_family() -> Result<ChessTemplateFamily, OrchestratorError> {
     let castle = compile_template(castle_contract_path(), &worker_constructor_args(&mux.hash))?;
     let castle_challenge = compile_template(castle_challenge_contract_path(), &worker_constructor_args(&mux.hash))?;
 
-    let route_hashes =
-        packed_route_hashes(&player.hash, &settle.hash, [&pawn, &knight, &vert, &horiz, &diag, &king, &castle, &castle_challenge]);
-    let routes_commitment = blake2b(&route_hashes);
+    let route_templates =
+        packed_route_templates(&player.hash, &settle.hash, [&pawn, &knight, &vert, &horiz, &diag, &king, &castle, &castle_challenge]);
+    let routes_commitment = blake2b(&route_templates);
     let league = compile_template(league_contract_path(), &league_constructor_args(&player.hash, &mux.hash, &routes_commitment))?;
 
     Ok(ChessTemplateFamily {
@@ -2364,7 +2369,7 @@ fn load_template_family() -> Result<ChessTemplateFamily, OrchestratorError> {
         king,
         castle,
         castle_challenge,
-        route_hashes,
+        route_templates,
         routes_commitment,
     })
 }
@@ -2405,22 +2410,22 @@ fn standard_board() -> Vec<u8> {
     ]
 }
 
-fn sample_route_hashes() -> Vec<u8> {
-    let mut route_hashes = Vec::with_capacity(32 * 9);
+fn sample_route_templates() -> Vec<u8> {
+    let mut route_templates = Vec::with_capacity(32 * 9);
     for byte in 0x12u8..=0x1au8 {
-        route_hashes.extend_from_slice(&[byte; 32]);
+        route_templates.extend_from_slice(&[byte; 32]);
     }
-    route_hashes
+    route_templates
 }
 
 fn sample_routes_commitment() -> Vec<u8> {
-    blake2b(&sample_route_hashes())
+    blake2b(&sample_route_templates())
 }
 
-fn worker_constructor_args(mux_hash: &[u8]) -> Vec<Expr<'static>> {
+fn worker_constructor_args(mux_template: &[u8]) -> Vec<Expr<'static>> {
     vec![
-        Expr::bytes(mux_hash.to_vec()),
-        Expr::bytes(sample_route_hashes()),
+        Expr::bytes(mux_template.to_vec()),
+        Expr::bytes(sample_route_templates()),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(standard_board()),
@@ -2440,7 +2445,7 @@ fn worker_constructor_args(mux_hash: &[u8]) -> Vec<Expr<'static>> {
 fn mux_constructor_args() -> Vec<Expr<'static>> {
     vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(sample_route_hashes()),
+        Expr::bytes(sample_route_templates()),
         Expr::bytes(vec![0x21u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
         Expr::bytes(vec![0u8; 64]),
@@ -2457,11 +2462,11 @@ fn mux_constructor_args() -> Vec<Expr<'static>> {
     ]
 }
 
-fn player_constructor_args(mux_hash: &[u8], routes_commitment: &[u8]) -> Vec<Expr<'static>> {
+fn player_constructor_args(mux_template: &[u8], routes_commitment: &[u8]) -> Vec<Expr<'static>> {
     vec![
         Expr::bytes(vec![0x11u8; 32]),
         Expr::bytes(vec![0x22u8; 32]),
-        Expr::bytes(mux_hash.to_vec()),
+        Expr::bytes(mux_template.to_vec()),
         Expr::bytes(routes_commitment.to_vec()),
         Expr::bytes(vec![0x44u8; 32]),
         Expr::bytes(vec![0x55u8; 32]),
@@ -2474,27 +2479,27 @@ fn player_constructor_args(mux_hash: &[u8], routes_commitment: &[u8]) -> Vec<Exp
     ]
 }
 
-fn league_constructor_args(player_hash: &[u8], mux_hash: &[u8], routes_commitment: &[u8]) -> Vec<Expr<'static>> {
+fn league_constructor_args(player_template: &[u8], mux_template: &[u8], routes_commitment: &[u8]) -> Vec<Expr<'static>> {
     vec![
         Expr::bytes(vec![0x11u8; 32]),
-        Expr::bytes(player_hash.to_vec()),
-        Expr::bytes(mux_hash.to_vec()),
+        Expr::bytes(player_template.to_vec()),
+        Expr::bytes(mux_template.to_vec()),
         Expr::bytes(routes_commitment.to_vec()),
         Expr::int(1200),
         Expr::bytes(vec![0x44u8; 32]),
     ]
 }
 
-fn settle_constructor_args(player_hash: &[u8]) -> Vec<Expr<'static>> {
-    vec![Expr::bytes(player_hash.to_vec()), Expr::bytes(vec![0x21u8; 32]), Expr::bytes(vec![0x22u8; 32]), Expr::int(1)]
+fn settle_constructor_args(player_template: &[u8]) -> Vec<Expr<'static>> {
+    vec![Expr::bytes(player_template.to_vec()), Expr::bytes(vec![0x21u8; 32]), Expr::bytes(vec![0x22u8; 32]), Expr::int(1)]
 }
 
-fn packed_route_hashes(player_hash: &[u8], settle_hash: &[u8], workers: [&TemplateWitness; 8]) -> Vec<u8> {
+fn packed_route_templates(player_template: &[u8], settle_template: &[u8], workers: [&TemplateWitness; 8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(32 * 9);
     for worker in workers {
         out.extend_from_slice(&worker.hash);
     }
-    let settle_commitment = blake2b([settle_hash, player_hash].concat().as_slice());
+    let settle_commitment = blake2b([settle_template, player_template].concat().as_slice());
     out.extend_from_slice(&settle_commitment);
     out
 }
@@ -2538,7 +2543,7 @@ mod tests {
     #[test]
     fn loads_template_family_with_real_route_commitment() {
         let planner = ChessTxPlanner::load().expect("template family loads");
-        assert_eq!(planner.family.route_hashes.len(), 32 * 9);
+        assert_eq!(planner.family.route_templates.len(), 32 * 9);
         assert_eq!(planner.family.routes_commitment.len(), 32);
     }
 

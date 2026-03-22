@@ -22,7 +22,7 @@ Another way to say it:
 ## Commit Large Future Data Early, Expand Late
 
 `League` and `Player` keep `routes_commitment`, while `Player.start_game`
-expands the full `route_hashes` blob only when materializing a `Game`.
+expands the full `route_templates` blob only when materializing a `Game`.
 
 Pattern:
 
@@ -31,7 +31,7 @@ Pattern:
 
 The same idea shows up again at the tail:
 
-- the game keeps a commitment to `blake2b(settle_hash || player_hash)`
+- the game keeps a commitment to `blake2b(settle_template || player_template)`
 - `ChessMux.settle` expands that commitment only when the terminal route is
   actually taken
 

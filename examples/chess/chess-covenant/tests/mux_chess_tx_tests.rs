@@ -63,9 +63,9 @@ struct GameStateArgs<'a> {
 }
 
 struct PlayerStateArgs<'a> {
-    league_hash: &'a [u8],
-    player_hash: &'a [u8],
-    mux_hash: &'a [u8],
+    league_template: &'a [u8],
+    player_template: &'a [u8],
+    mux_template: &'a [u8],
     routes_commitment: &'a [u8],
     owner_hash: &'a [u8],
     player_id: &'a [u8],
@@ -125,8 +125,8 @@ fn approx_updated_rating(self_rating: i64, opp_rating: i64, actual_score: i64) -
     self_rating + delta
 }
 
-fn packed_route_hashes(fix: &MuxChessFixture) -> Vec<u8> {
-    let player_hash = player_template_hash(fix);
+fn packed_route_templates(fix: &MuxChessFixture) -> Vec<u8> {
+    let player_template = player_template_hash(fix);
     let mut out = Vec::with_capacity(32 * 9);
     out.extend_from_slice(&fix.pawn.hash);
     out.extend_from_slice(&fix.knight.hash);
@@ -136,14 +136,20 @@ fn packed_route_hashes(fix: &MuxChessFixture) -> Vec<u8> {
     out.extend_from_slice(&fix.king.hash);
     out.extend_from_slice(&fix.castle.hash);
     out.extend_from_slice(&fix.castle_challenge.hash);
-    let settle_commitment =
-        Blake2bParams::new().hash_length(32).to_state().update(&fix.settle.hash).update(&player_hash).finalize().as_bytes().to_vec();
+    let settle_commitment = Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(&fix.settle.hash)
+        .update(&player_template)
+        .finalize()
+        .as_bytes()
+        .to_vec();
     out.extend_from_slice(&settle_commitment);
     out
 }
 
-fn routes_commitment(route_hashes: &[u8]) -> Vec<u8> {
-    Blake2bParams::new().hash_length(32).to_state().update(route_hashes).finalize().as_bytes().to_vec()
+fn routes_commitment(route_templates: &[u8]) -> Vec<u8> {
+    Blake2bParams::new().hash_length(32).to_state().update(route_templates).finalize().as_bytes().to_vec()
 }
 
 fn player_from_seed(seed: u8) -> Player {
@@ -164,9 +170,9 @@ fn player_template_hash(fix: &MuxChessFixture) -> Vec<u8> {
     let compiled = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &[0x11u8; 32],
-            player_hash: &[0x22u8; 32],
-            mux_hash: &fix.mux.hash,
+            league_template: &[0x11u8; 32],
+            player_template: &[0x22u8; 32],
+            mux_template: &fix.mux.hash,
             routes_commitment: &[0x33u8; 32],
             owner_hash: &[0x44u8; 32],
             player_id: &[0x55u8; 32],
@@ -325,7 +331,7 @@ fn compile_state(
 ) -> CompiledContract<'static> {
     let ctor = vec![
         Expr::bytes(fix.mux.hash.clone()),
-        Expr::bytes(packed_route_hashes(fix)),
+        Expr::bytes(packed_route_templates(fix)),
         Expr::bytes(white_hash.to_vec()),
         Expr::bytes(black_hash.to_vec()),
         Expr::bytes(state.board.to_vec()),
@@ -345,21 +351,25 @@ fn compile_state(
 
 fn compile_settle_state(
     source: &'static str,
-    player_hash: &[u8],
+    player_template: &[u8],
     white_hash: &[u8],
     black_hash: &[u8],
     status: i64,
 ) -> CompiledContract<'static> {
-    let ctor =
-        vec![Expr::bytes(player_hash.to_vec()), Expr::bytes(white_hash.to_vec()), Expr::bytes(black_hash.to_vec()), Expr::int(status)];
+    let ctor = vec![
+        Expr::bytes(player_template.to_vec()),
+        Expr::bytes(white_hash.to_vec()),
+        Expr::bytes(black_hash.to_vec()),
+        Expr::int(status),
+    ];
     compile_contract(source, &ctor, CompileOptions::default()).expect("compile settle chess state")
 }
 
 fn compile_player_state(source: &'static str, state: PlayerStateArgs<'_>) -> CompiledContract<'static> {
     let ctor = vec![
-        Expr::bytes(state.league_hash.to_vec()),
-        Expr::bytes(state.player_hash.to_vec()),
-        Expr::bytes(state.mux_hash.to_vec()),
+        Expr::bytes(state.league_template.to_vec()),
+        Expr::bytes(state.player_template.to_vec()),
+        Expr::bytes(state.mux_template.to_vec()),
         Expr::bytes(state.routes_commitment.to_vec()),
         Expr::bytes(state.owner_hash.to_vec()),
         Expr::bytes(state.player_id.to_vec()),
@@ -375,17 +385,17 @@ fn compile_player_state(source: &'static str, state: PlayerStateArgs<'_>) -> Com
 
 fn compile_league_state(
     source: &'static str,
-    league_hash: &[u8],
-    player_hash: &[u8],
-    mux_hash: &[u8],
+    league_template: &[u8],
+    player_template: &[u8],
+    mux_template: &[u8],
     routes_commitment: &[u8],
     base_rating: i64,
     admin_hash: &[u8],
 ) -> CompiledContract<'static> {
     let ctor = vec![
-        Expr::bytes(league_hash.to_vec()),
-        Expr::bytes(player_hash.to_vec()),
-        Expr::bytes(mux_hash.to_vec()),
+        Expr::bytes(league_template.to_vec()),
+        Expr::bytes(player_template.to_vec()),
+        Expr::bytes(mux_template.to_vec()),
         Expr::bytes(routes_commitment.to_vec()),
         Expr::int(base_rating),
         Expr::bytes(admin_hash.to_vec()),
@@ -489,21 +499,21 @@ fn sign_tx_input_schnorr(tx: &Transaction, entries: &[UtxoEntry], input_idx: usi
 
 fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i64), expected_black: (i64, i64, i64, i64)) {
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
     let base_rating = 1200;
-    let league_hash = vec![0x33u8; 32];
+    let league_template = vec![0x33u8; 32];
     let covenant_id = Hash::from_bytes([0x72u8; 32]);
 
     let white = player_from_seed(0x21);
     let black = player_from_seed(0x22);
 
-    let player_template = compile_player_state(
+    let player_contract = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &[0x44u8; 32],
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &[0x44u8; 32],
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &[0x55u8; 32],
             player_id: &[0x56u8; 32],
@@ -515,21 +525,21 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             losses: 0,
         },
     );
-    let player_layout = player_template.state_layout;
-    let player_hash = Blake2bParams::new()
+    let player_layout = player_contract.state_layout;
+    let player_template = Blake2bParams::new()
         .hash_length(32)
         .to_state()
-        .update(&player_template.script[..player_layout.start])
-        .update(&player_template.script[player_layout.start + player_layout.len..])
+        .update(&player_contract.script[..player_layout.start])
+        .update(&player_contract.script[player_layout.start + player_layout.len..])
         .finalize()
         .as_bytes()
         .to_vec();
     let white_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
@@ -544,9 +554,9 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
     let black_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
@@ -595,9 +605,9 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
     let settled_white = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
@@ -612,9 +622,9 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
     let settled_black = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
@@ -627,7 +637,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
         },
     );
 
-    let routed_settle = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, status);
+    let routed_settle = compile_settle_state(fix.settle.source, &player_template, &white.player_ref, &black.player_ref, status);
     let white_output_value = if status == 1 {
         2_000
     } else if status == 3 {
@@ -646,7 +656,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
     let mux_settle_sigscript = entry_sigscript(
         &terminal_mux,
         "settle",
-        vec![Expr::bytes(player_hash.clone()), Expr::bytes(fix.settle.prefix.clone()), Expr::bytes(fix.settle.suffix.clone())],
+        vec![Expr::bytes(player_template.clone()), Expr::bytes(fix.settle.prefix.clone()), Expr::bytes(fix.settle.suffix.clone())],
     );
     let mux_outputs = vec![covenant_output(&routed_settle, 0, covenant_id)];
     let mux_entries = vec![covenant_utxo(&terminal_mux, covenant_id)];
@@ -660,8 +670,8 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
         &routed_settle,
         "settle",
         vec![
-            Expr::bytes(player_template.script[..player_layout.start].to_vec()),
-            Expr::bytes(player_template.script[player_layout.start + player_layout.len..].to_vec()),
+            Expr::bytes(player_contract.script[..player_layout.start].to_vec()),
+            Expr::bytes(player_contract.script[player_layout.start + player_layout.len..].to_vec()),
         ],
     );
     let white_delegate_sigscript = entry_sigscript(
@@ -671,7 +681,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             Expr::int(settle_prefix_len),
             Expr::int(settle_suffix_len),
             Expr::bytes(fix.settle.hash.clone()),
-            Expr::bytes(route_hashes.clone()),
+            Expr::bytes(route_templates.clone()),
         ],
     );
     let black_delegate_sigscript = entry_sigscript(
@@ -681,7 +691,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
             Expr::int(settle_prefix_len),
             Expr::int(settle_suffix_len),
             Expr::bytes(fix.settle.hash.clone()),
-            Expr::bytes(route_hashes.clone()),
+            Expr::bytes(route_templates.clone()),
         ],
     );
 
@@ -720,21 +730,21 @@ fn build_draw_settlement_tx_with_values(
     black_output_value: u64,
 ) -> (Transaction, Vec<UtxoEntry>) {
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
     let base_rating = 1200;
-    let league_hash = vec![0x37u8; 32];
+    let league_template = vec![0x37u8; 32];
     let covenant_id = Hash::from_bytes([0x77u8; 32]);
 
     let white = player_from_seed(0x45);
     let black = player_from_seed(0x46);
 
-    let player_template = compile_player_state(
+    let player_contract = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &[0x44u8; 32],
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &[0x44u8; 32],
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &[0x55u8; 32],
             player_id: &[0x56u8; 32],
@@ -746,21 +756,21 @@ fn build_draw_settlement_tx_with_values(
             losses: 0,
         },
     );
-    let player_layout = player_template.state_layout;
-    let player_hash = Blake2bParams::new()
+    let player_layout = player_contract.state_layout;
+    let player_template = Blake2bParams::new()
         .hash_length(32)
         .to_state()
-        .update(&player_template.script[..player_layout.start])
-        .update(&player_template.script[player_layout.start + player_layout.len..])
+        .update(&player_contract.script[..player_layout.start])
+        .update(&player_contract.script[player_layout.start + player_layout.len..])
         .finalize()
         .as_bytes()
         .to_vec();
     let white_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
@@ -775,9 +785,9 @@ fn build_draw_settlement_tx_with_values(
     let black_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
@@ -791,13 +801,13 @@ fn build_draw_settlement_tx_with_values(
     );
     let white_rating = approx_updated_rating(base_rating, base_rating, 500);
     let black_rating = approx_updated_rating(base_rating, base_rating, 500);
-    let routed_settle = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 3);
+    let routed_settle = compile_settle_state(fix.settle.source, &player_template, &white.player_ref, &black.player_ref, 3);
     let settled_white = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
@@ -812,9 +822,9 @@ fn build_draw_settlement_tx_with_values(
     let settled_black = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
@@ -831,8 +841,8 @@ fn build_draw_settlement_tx_with_values(
         &routed_settle,
         "settle",
         vec![
-            Expr::bytes(player_template.script[..player_layout.start].to_vec()),
-            Expr::bytes(player_template.script[player_layout.start + player_layout.len..].to_vec()),
+            Expr::bytes(player_contract.script[..player_layout.start].to_vec()),
+            Expr::bytes(player_contract.script[player_layout.start + player_layout.len..].to_vec()),
         ],
     );
     let white_delegate_sigscript = entry_sigscript(
@@ -842,7 +852,7 @@ fn build_draw_settlement_tx_with_values(
             Expr::int(fix.settle.prefix.len() as i64),
             Expr::int(fix.settle.suffix.len() as i64),
             Expr::bytes(fix.settle.hash.clone()),
-            Expr::bytes(route_hashes.clone()),
+            Expr::bytes(route_templates.clone()),
         ],
     );
     let black_delegate_sigscript = entry_sigscript(
@@ -852,7 +862,7 @@ fn build_draw_settlement_tx_with_values(
             Expr::int(fix.settle.prefix.len() as i64),
             Expr::int(fix.settle.suffix.len() as i64),
             Expr::bytes(fix.settle.hash.clone()),
-            Expr::bytes(route_hashes.clone()),
+            Expr::bytes(route_templates.clone()),
         ],
     );
 
@@ -1097,14 +1107,14 @@ fn run_worker_timeout(
     next: &CompiledContract<'_>,
     covenant_id: Hash,
     settle: &TemplateFixture,
-    player_hash: &[u8],
+    player_template: &[u8],
     lock_time: u64,
     sequence: u64,
 ) {
     let sigscript = entry_sigscript(
         active,
         "timeout",
-        vec![Expr::bytes(player_hash.to_vec()), Expr::bytes(settle.prefix.clone()), Expr::bytes(settle.suffix.clone())],
+        vec![Expr::bytes(player_template.to_vec()), Expr::bytes(settle.prefix.clone()), Expr::bytes(settle.suffix.clone())],
     );
     let outputs = vec![covenant_output(next, 0, covenant_id)];
     let entries = vec![covenant_utxo(active, covenant_id)];
@@ -1126,7 +1136,7 @@ fn run_mux_timeout(
     covenant_id: Hash,
     player: &Player,
     settle: &TemplateFixture,
-    player_hash: &[u8],
+    player_template: &[u8],
     lock_time: u64,
     sequence: u64,
 ) {
@@ -1138,7 +1148,7 @@ fn run_mux_timeout(
             Expr::bytes(placeholder_sig),
             Expr::bytes(player.pubkey_bytes.clone()),
             Expr::bytes(player.player_id.clone()),
-            Expr::bytes(player_hash.to_vec()),
+            Expr::bytes(player_template.to_vec()),
             Expr::bytes(settle.prefix.clone()),
             Expr::bytes(settle.suffix.clone()),
         ],
@@ -1160,7 +1170,7 @@ fn run_mux_timeout(
             Expr::bytes(sig),
             Expr::bytes(player.pubkey_bytes.clone()),
             Expr::bytes(player.player_id.clone()),
-            Expr::bytes(player_hash.to_vec()),
+            Expr::bytes(player_template.to_vec()),
             Expr::bytes(settle.prefix.clone()),
             Expr::bytes(settle.suffix.clone()),
         ],
@@ -5125,7 +5135,7 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
     let fix = build_fixture();
     let white = player_from_seed(1);
     let black = player_from_seed(2);
-    let player_hash = player_template_hash(&fix);
+    let player_template = player_template_hash(&fix);
 
     let board0 = standard_board();
     let knight1 = compile_state(
@@ -5147,9 +5157,9 @@ fn knight_worker_timeout_rescues_invalid_committed_state() {
         },
     );
     let covenant_id = populate_single_output_genesis_covenant(&knight1);
-    let settle_terminal = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 2);
+    let settle_terminal = compile_settle_state(fix.settle.source, &player_template, &white.player_ref, &black.player_ref, 2);
 
-    run_worker_timeout("knight_timeout", &knight1, &settle_terminal, covenant_id, &fix.settle, &player_hash, 0, 600);
+    run_worker_timeout("knight_timeout", &knight1, &settle_terminal, covenant_id, &fix.settle, &player_template, 0, 600);
 }
 
 #[test]
@@ -5157,7 +5167,7 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
     let fix = build_fixture();
     let white = player_from_seed(1);
     let black = player_from_seed(2);
-    let player_hash = player_template_hash(&fix);
+    let player_template = player_template_hash(&fix);
 
     let board0 = standard_board();
     let mux0 = compile_state(
@@ -5180,19 +5190,19 @@ fn mux_timeout_awards_win_to_the_waiting_opponent() {
     );
     let covenant_id = populate_single_output_genesis_covenant(&mux0);
 
-    let settle_terminal = compile_settle_state(fix.settle.source, &player_hash, &white.player_ref, &black.player_ref, 2);
+    let settle_terminal = compile_settle_state(fix.settle.source, &player_template, &white.player_ref, &black.player_ref, 2);
 
-    run_mux_timeout("mux_timeout", &mux0, &settle_terminal, covenant_id, &black, &fix.settle, &player_hash, 0, 600);
+    run_mux_timeout("mux_timeout", &mux0, &settle_terminal, covenant_id, &black, &fix.settle, &player_template, 0, 600);
 }
 
 #[test]
 fn league_registers_a_real_player_contract() {
     let owner = player_from_seed(7);
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
 
-    let league_hash = vec![0x11u8; 32];
+    let league_template = vec![0x11u8; 32];
     let admin = vec![0x33u8; 32];
     let base_rating = 1200i64;
     let covenant_id = Hash::from_bytes([0x66u8; 32]);
@@ -5201,7 +5211,7 @@ fn league_registers_a_real_player_contract() {
     let player_template = compile_contract(
         player_source(),
         &[
-            Expr::bytes(league_hash.clone()),
+            Expr::bytes(league_template.clone()),
             Expr::bytes(vec![0x44u8; 32]),
             Expr::bytes(fix.mux.hash.clone()),
             Expr::bytes(routes_commitment.clone()),
@@ -5220,14 +5230,14 @@ fn league_registers_a_real_player_contract() {
     let layout = player_template.state_layout;
     let player_prefix = player_template.script[..layout.start].to_vec();
     let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
-    let player_hash =
+    let player_template =
         Blake2bParams::new().hash_length(32).to_state().update(&player_prefix).update(&player_suffix).finalize().as_bytes().to_vec();
 
     let league = compile_contract(
         league_source(),
         &[
-            Expr::bytes(league_hash.clone()),
-            Expr::bytes(player_hash.clone()),
+            Expr::bytes(league_template.clone()),
+            Expr::bytes(player_template.clone()),
             Expr::bytes(fix.mux.hash.clone()),
             Expr::bytes(routes_commitment.clone()),
             Expr::int(base_rating),
@@ -5257,9 +5267,9 @@ fn league_registers_a_real_player_contract() {
     let registered_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &player_id,
@@ -5302,10 +5312,10 @@ fn league_registers_a_real_player_contract() {
 fn league_register_rejects_mutated_lane_output() {
     let owner = player_from_seed(7);
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
 
-    let league_hash = vec![0x11u8; 32];
+    let league_template = vec![0x11u8; 32];
     let admin = vec![0x33u8; 32];
     let base_rating = 1200i64;
     let covenant_id = Hash::from_bytes([0x66u8; 32]);
@@ -5314,7 +5324,7 @@ fn league_register_rejects_mutated_lane_output() {
     let player_template = compile_contract(
         player_source(),
         &[
-            Expr::bytes(league_hash.clone()),
+            Expr::bytes(league_template.clone()),
             Expr::bytes(vec![0x44u8; 32]),
             Expr::bytes(fix.mux.hash.clone()),
             Expr::bytes(routes_commitment.clone()),
@@ -5333,14 +5343,14 @@ fn league_register_rejects_mutated_lane_output() {
     let layout = player_template.state_layout;
     let player_prefix = player_template.script[..layout.start].to_vec();
     let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
-    let player_hash =
+    let player_template =
         Blake2bParams::new().hash_length(32).to_state().update(&player_prefix).update(&player_suffix).finalize().as_bytes().to_vec();
 
     let league = compile_contract(
         league_source(),
         &[
-            Expr::bytes(league_hash.clone()),
-            Expr::bytes(player_hash.clone()),
+            Expr::bytes(league_template.clone()),
+            Expr::bytes(player_template.clone()),
             Expr::bytes(fix.mux.hash.clone()),
             Expr::bytes(routes_commitment.clone()),
             Expr::int(base_rating),
@@ -5353,8 +5363,8 @@ fn league_register_rejects_mutated_lane_output() {
     let bad_league = compile_contract(
         league_source(),
         &[
-            Expr::bytes(league_hash.clone()),
-            Expr::bytes(player_hash.clone()),
+            Expr::bytes(league_template.clone()),
+            Expr::bytes(player_template.clone()),
             Expr::bytes(fix.mux.hash.clone()),
             Expr::bytes(routes_commitment.clone()),
             Expr::int(base_rating + 1),
@@ -5384,9 +5394,9 @@ fn league_register_rejects_mutated_lane_output() {
     let registered_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &player_id,
@@ -5429,10 +5439,10 @@ fn league_register_rejects_mutated_lane_output() {
 fn league_register_rejects_changed_lane_value() {
     let owner = player_from_seed(7);
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
 
-    let league_hash = vec![0x11u8; 32];
+    let league_template = vec![0x11u8; 32];
     let admin_hash = vec![0x33u8; 32];
     let base_rating = 1200i64;
     let covenant_id = Hash::from_bytes([0x66u8; 32]);
@@ -5441,7 +5451,7 @@ fn league_register_rejects_changed_lane_value() {
     let player_template = compile_contract(
         player_source(),
         &[
-            Expr::bytes(league_hash.clone()),
+            Expr::bytes(league_template.clone()),
             Expr::bytes(vec![0x44u8; 32]),
             Expr::bytes(fix.mux.hash.clone()),
             Expr::bytes(routes_commitment.clone()),
@@ -5460,11 +5470,18 @@ fn league_register_rejects_changed_lane_value() {
     let layout = player_template.state_layout;
     let player_prefix = player_template.script[..layout.start].to_vec();
     let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
-    let player_hash =
+    let player_template =
         Blake2bParams::new().hash_length(32).to_state().update(&player_prefix).update(&player_suffix).finalize().as_bytes().to_vec();
 
-    let league =
-        compile_league_state(league_source(), &league_hash, &player_hash, &fix.mux.hash, &routes_commitment, base_rating, &admin_hash);
+    let league = compile_league_state(
+        league_source(),
+        &league_template,
+        &player_template,
+        &fix.mux.hash,
+        &routes_commitment,
+        base_rating,
+        &admin_hash,
+    );
 
     let player_id = Blake2bParams::new()
         .hash_length(32)
@@ -5479,9 +5496,9 @@ fn league_register_rejects_changed_lane_value() {
     let registered_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &player_id,
@@ -5529,15 +5546,15 @@ fn league_register_rejects_changed_lane_value() {
 fn league_rebalance_allows_same_spk_with_new_value() {
     let admin = player_from_seed(13);
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
 
-    let league_hash = vec![0x21u8; 32];
+    let league_template = vec![0x21u8; 32];
     let base_rating = 1200i64;
     let covenant_id = Hash::from_bytes([0x67u8; 32]);
     let league = compile_league_state(
         league_source(),
-        &league_hash,
+        &league_template,
         &[0x44u8; 32],
         &fix.mux.hash,
         &routes_commitment,
@@ -5568,15 +5585,15 @@ fn league_rebalance_allows_same_spk_with_new_value() {
 fn league_rebalance_rejects_changed_state_spk() {
     let admin = player_from_seed(13);
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
 
-    let league_hash = vec![0x21u8; 32];
+    let league_template = vec![0x21u8; 32];
     let base_rating = 1200i64;
     let covenant_id = Hash::from_bytes([0x67u8; 32]);
     let league = compile_league_state(
         league_source(),
-        &league_hash,
+        &league_template,
         &[0x44u8; 32],
         &fix.mux.hash,
         &routes_commitment,
@@ -5585,7 +5602,7 @@ fn league_rebalance_rejects_changed_state_spk() {
     );
     let mutated = compile_league_state(
         league_source(),
-        &league_hash,
+        &league_template,
         &[0x44u8; 32],
         &fix.mux.hash,
         &routes_commitment,
@@ -5616,15 +5633,15 @@ fn league_rebalance_rejects_changed_state_spk() {
 fn league_fork_allows_two_identical_lanes() {
     let admin = player_from_seed(13);
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
 
-    let league_hash = vec![0x21u8; 32];
+    let league_template = vec![0x21u8; 32];
     let base_rating = 1200i64;
     let covenant_id = Hash::from_bytes([0x68u8; 32]);
     let league = compile_league_state(
         league_source(),
-        &league_hash,
+        &league_template,
         &[0x44u8; 32],
         &fix.mux.hash,
         &routes_commitment,
@@ -5655,15 +5672,15 @@ fn league_fork_allows_two_identical_lanes() {
 fn league_fork_rejects_mutated_lane_output() {
     let admin = player_from_seed(13);
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
 
-    let league_hash = vec![0x21u8; 32];
+    let league_template = vec![0x21u8; 32];
     let base_rating = 1200i64;
     let covenant_id = Hash::from_bytes([0x68u8; 32]);
     let league = compile_league_state(
         league_source(),
-        &league_hash,
+        &league_template,
         &[0x44u8; 32],
         &fix.mux.hash,
         &routes_commitment,
@@ -5672,7 +5689,7 @@ fn league_fork_rejects_mutated_lane_output() {
     );
     let mutated = compile_league_state(
         league_source(),
-        &league_hash,
+        &league_template,
         &[0x44u8; 32],
         &fix.mux.hash,
         &routes_commitment,
@@ -5702,21 +5719,21 @@ fn league_fork_rejects_mutated_lane_output() {
 #[test]
 fn players_can_start_a_real_mux_game() {
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
     let white = player_from_seed(7);
     let black = player_from_seed(9);
 
-    let league_hash = vec![0x19u8; 32];
+    let league_template = vec![0x19u8; 32];
     let base_rating = 1200i64;
     let covenant_id = Hash::from_bytes([0x71u8; 32]);
 
-    let player_template = compile_player_state(
+    let player_contract = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &[0x44u8; 32],
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &[0x44u8; 32],
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &[0x55u8; 32],
             player_id: &[0x56u8; 32],
@@ -5728,24 +5745,24 @@ fn players_can_start_a_real_mux_game() {
             losses: 0,
         },
     );
-    let player_layout = player_template.state_layout;
-    let player_hash = Blake2bParams::new()
+    let player_layout = player_contract.state_layout;
+    let player_template = Blake2bParams::new()
         .hash_length(32)
         .to_state()
-        .update(&player_template.script[..player_layout.start])
-        .update(&player_template.script[player_layout.start + player_layout.len..])
+        .update(&player_contract.script[..player_layout.start])
+        .update(&player_contract.script[player_layout.start + player_layout.len..])
         .finalize()
         .as_bytes()
         .to_vec();
     let player_prefix_len = player_layout.start as i64;
-    let player_suffix_len = (player_template.script.len() - (player_layout.start + player_layout.len)) as i64;
+    let player_suffix_len = (player_contract.script.len() - (player_layout.start + player_layout.len)) as i64;
 
     let white_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
@@ -5760,9 +5777,9 @@ fn players_can_start_a_real_mux_game() {
     let black_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
@@ -5777,9 +5794,9 @@ fn players_can_start_a_real_mux_game() {
     let next_white_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &white.owner_hash,
             player_id: &white.player_id,
@@ -5794,9 +5811,9 @@ fn players_can_start_a_real_mux_game() {
     let next_black_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &league_hash,
-            player_hash: &player_hash,
-            mux_hash: &fix.mux.hash,
+            league_template: &league_template,
+            player_template: &player_template,
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &black.owner_hash,
             player_id: &black.player_id,
@@ -5836,7 +5853,7 @@ fn players_can_start_a_real_mux_game() {
             Expr::int(0),
             Expr::int(player_prefix_len),
             Expr::int(player_suffix_len),
-            Expr::bytes(route_hashes.clone()),
+            Expr::bytes(route_templates.clone()),
             Expr::int(DEFAULT_MOVE_TIMEOUT),
             Expr::bytes(fix.mux.prefix.clone()),
             Expr::bytes(fix.mux.suffix.clone()),
@@ -5882,7 +5899,7 @@ fn players_can_start_a_real_mux_game() {
             Expr::int(0),
             Expr::int(player_prefix_len),
             Expr::int(player_suffix_len),
-            Expr::bytes(route_hashes.clone()),
+            Expr::bytes(route_templates.clone()),
             Expr::int(DEFAULT_MOVE_TIMEOUT),
             Expr::bytes(fix.mux.prefix.clone()),
             Expr::bytes(fix.mux.suffix.clone()),
@@ -5945,17 +5962,17 @@ fn draw_settlement_rejects_the_wrong_odd_split() {
 #[test]
 fn player_rebalance_allows_same_spk_with_new_value() {
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
     let owner = player_from_seed(0x33);
     let covenant_id = Hash::from_bytes([0x79u8; 32]);
 
     let player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &[0x43u8; 32],
-            player_hash: &player_template_hash(&fix),
-            mux_hash: &fix.mux.hash,
+            league_template: &[0x43u8; 32],
+            player_template: &player_template_hash(&fix),
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &[0x53u8; 32],
@@ -5983,17 +6000,17 @@ fn player_rebalance_allows_same_spk_with_new_value() {
 #[test]
 fn player_rebalance_rejects_changed_state_spk() {
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
     let owner = player_from_seed(0x34);
     let covenant_id = Hash::from_bytes([0x7au8; 32]);
 
     let player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &[0x44u8; 32],
-            player_hash: &player_template_hash(&fix),
-            mux_hash: &fix.mux.hash,
+            league_template: &[0x44u8; 32],
+            player_template: &player_template_hash(&fix),
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &[0x54u8; 32],
@@ -6008,9 +6025,9 @@ fn player_rebalance_rejects_changed_state_spk() {
     let mutated = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &[0x44u8; 32],
-            player_hash: &player_template_hash(&fix),
-            mux_hash: &fix.mux.hash,
+            league_template: &[0x44u8; 32],
+            player_template: &player_template_hash(&fix),
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &[0x54u8; 32],
@@ -6038,17 +6055,17 @@ fn player_rebalance_rejects_changed_state_spk() {
 #[test]
 fn player_can_retire_with_no_open_games() {
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
     let owner = player_from_seed(0x31);
     let covenant_id = Hash::from_bytes([0x73u8; 32]);
 
     let player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &[0x41u8; 32],
-            player_hash: &player_template_hash(&fix),
-            mux_hash: &fix.mux.hash,
+            league_template: &[0x41u8; 32],
+            player_template: &player_template_hash(&fix),
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &[0x51u8; 32],
@@ -6075,17 +6092,17 @@ fn player_can_retire_with_no_open_games() {
 #[test]
 fn player_cannot_retire_with_open_games() {
     let fix = build_fixture();
-    let route_hashes = packed_route_hashes(&fix);
-    let routes_commitment = routes_commitment(&route_hashes);
+    let route_templates = packed_route_templates(&fix);
+    let routes_commitment = routes_commitment(&route_templates);
     let owner = player_from_seed(0x32);
     let covenant_id = Hash::from_bytes([0x74u8; 32]);
 
     let player = compile_player_state(
         player_source(),
         PlayerStateArgs {
-            league_hash: &[0x42u8; 32],
-            player_hash: &player_template_hash(&fix),
-            mux_hash: &fix.mux.hash,
+            league_template: &[0x42u8; 32],
+            player_template: &player_template_hash(&fix),
+            mux_template: &fix.mux.hash,
             routes_commitment: &routes_commitment,
             owner_hash: &owner.owner_hash,
             player_id: &[0x52u8; 32],

@@ -1,17 +1,17 @@
 pragma silverscript ^0.1.0;
 
 contract League(
-    byte[32] init_league_hash,
-    byte[32] init_player_hash,
-    byte[32] init_mux_hash,
+    byte[32] init_league_template,
+    byte[32] init_player_template,
+    byte[32] init_mux_template,
     byte[32] init_routes_commitment,
     int init_base_rating,
     byte[32] init_admin
 ) {
     struct PlayerState {
-        byte[32] league_hash;
-        byte[32] player_hash;
-        byte[32] mux_hash;
+        byte[32] league_template;
+        byte[32] player_template;
+        byte[32] mux_template;
         byte[32] routes_commitment;
         byte[32] owner;
         byte[32] player_id;
@@ -23,6 +23,9 @@ contract League(
         int losses;
     }
 
+    // Naming convention: `*_template` fields carry template selectors (hash-
+    // sized values), not object identities.
+    //
     // Each live League UTXO is one immutable registration lane. A registration
     // spend always:
     // 1. recreates the same League lane
@@ -33,9 +36,9 @@ contract League(
     //
     // This avoids any mutable next_player_id counter and allows many
     // registration lanes to operate in parallel.
-    byte[32] league_hash = init_league_hash;
-    byte[32] player_hash = init_player_hash;
-    byte[32] mux_hash = init_mux_hash;
+    byte[32] league_template = init_league_template;
+    byte[32] player_template = init_player_template;
+    byte[32] mux_template = init_mux_template;
     byte[32] routes_commitment = init_routes_commitment;
     int base_rating = init_base_rating;
     byte[32] admin = init_admin;
@@ -59,9 +62,9 @@ contract League(
         byte[32] player_id = blake2b(player_id_domain + spent_outpoint_txid + spent_outpoint_index);
 
         PlayerState next_player = {
-            league_hash: league_hash,
-            player_hash: player_hash,
-            mux_hash: mux_hash,
+            league_template: league_template,
+            player_template: player_template,
+            mux_template: mux_template,
             routes_commitment: routes_commitment,
             owner: owner,
             player_id: player_id,
@@ -84,13 +87,13 @@ contract League(
         require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
 
         // Auth output 1 is the freshly minted Player, validated against the
-        // foreign Player state layout and template hash.
+        // foreign Player state layout and template selector.
         validateOutputStateWithTemplate(
             OpAuthOutputIdx(this.activeInputIndex, 1),
             next_player,
             player_prefix,
             player_suffix,
-            player_hash
+            player_template
         );
     }
 

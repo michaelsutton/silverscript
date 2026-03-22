@@ -2,20 +2,22 @@ pragma silverscript ^0.1.0;
 // @consts constants.sil
 
 contract ChessSettle(
-    byte[32] init_player_hash,
+    byte[32] init_player_template,
     byte[32] init_white_player,
     byte[32] init_black_player,
     int init_status,
 ) {
-    byte[32] player_hash = init_player_hash;
+    // Naming convention: `*_template` fields carry template selectors (hash-
+    // sized values), not object identities.
+    byte[32] player_template = init_player_template;
     byte[32] white_player = init_white_player;
     byte[32] black_player = init_black_player;
     int status = init_status;
 
     struct PlayerState {
-        byte[32] league_hash;
-        byte[32] player_hash;
-        byte[32] mux_hash;
+        byte[32] league_template;
+        byte[32] player_template;
+        byte[32] mux_template;
         byte[32] routes_commitment;
         byte[32] owner;
         byte[32] player_id;
@@ -45,8 +47,8 @@ contract ChessSettle(
         int white_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
         int black_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
 
-        PlayerState white_in = readInputStateWithTemplate(white_input_idx, player_prefix_len, player_suffix_len, player_hash);
-        PlayerState black_in = readInputStateWithTemplate(black_input_idx, player_prefix_len, player_suffix_len, player_hash);
+        PlayerState white_in = readInputStateWithTemplate(white_input_idx, player_prefix_len, player_suffix_len, player_template);
+        PlayerState black_in = readInputStateWithTemplate(black_input_idx, player_prefix_len, player_suffix_len, player_template);
 
         require(blake2b(white_in.owner + white_in.player_id) == white_player);
         require(blake2b(black_in.owner + black_in.player_id) == black_player);
@@ -146,9 +148,9 @@ contract ChessSettle(
         require(black_in.open_games > 0);
 
         PlayerState next_white = {
-            league_hash: white_in.league_hash,
-            player_hash: white_in.player_hash,
-            mux_hash: white_in.mux_hash,
+            league_template: white_in.league_template,
+            player_template: white_in.player_template,
+            mux_template: white_in.mux_template,
             routes_commitment: white_in.routes_commitment,
             owner: white_in.owner,
             player_id: white_in.player_id,
@@ -161,9 +163,9 @@ contract ChessSettle(
         };
 
         PlayerState next_black = {
-            league_hash: black_in.league_hash,
-            player_hash: black_in.player_hash,
-            mux_hash: black_in.mux_hash,
+            league_template: black_in.league_template,
+            player_template: black_in.player_template,
+            mux_template: black_in.mux_template,
             routes_commitment: black_in.routes_commitment,
             owner: black_in.owner,
             player_id: black_in.player_id,
@@ -182,14 +184,14 @@ contract ChessSettle(
             next_white,
             player_prefix,
             player_suffix,
-            player_hash
+            player_template
         );
         validateOutputStateWithTemplate(
             black_output_idx,
             next_black,
             player_prefix,
             player_suffix,
-            player_hash
+            player_template
         );
     }
 }
