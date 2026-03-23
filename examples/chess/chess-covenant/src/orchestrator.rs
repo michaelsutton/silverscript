@@ -135,6 +135,15 @@ pub enum Side {
 }
 
 const DEFAULT_MOVE_TIMEOUT: i64 = 600;
+const WHITE: i64 = 0;
+const BLACK: i64 = 1;
+const LIVE: i64 = 0;
+const WWIN: i64 = 1;
+const BWIN: i64 = 2;
+const DRAW: i64 = 3;
+const CLEAR: i64 = 0;
+const CLAIMED: i64 = 1;
+const DEFENSE: i64 = 2;
 
 fn hash_expr(value: Hash) -> Expr<'static> {
     Expr::bytes(hash_bytes(value))
@@ -1445,7 +1454,7 @@ impl TxArena {
         let executed_route_tx = route_tx.clone();
         let worker_outpoint = TransactionOutpoint { transaction_id: executed_route_tx.id(), index: 0 };
 
-        let next = apply_move_to_state(&game, mv)?;
+        let next = apply_worker_state(worker, &game, mv)?;
         let next_mux = self.compile_mux(&next);
         let apply_sigscript = entry_sigscript(
             &worker_contract,
@@ -2445,6 +2454,87 @@ fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateDa
     })
 }
 
+fn apply_worker_state(worker: WorkerKind, game: &GameStateData, mv: MoveSpec) -> Result<GameStateData, OrchestratorError> {
+    let mut next = apply_move_to_state(game, mv)?;
+    next.castle_rights = match worker {
+        WorkerKind::Pawn | WorkerKind::Knight | WorkerKind::Diag => game.castle_rights,
+        WorkerKind::Vert | WorkerKind::Horiz => {
+            let mut castle_rights = game.castle_rights;
+            let from_idx = square_idx(mv.from_x, mv.from_y);
+            let to_idx = square_idx(mv.to_x, mv.to_y);
+            if from_idx == 0 || to_idx == 0 {
+                castle_rights[1] = 0;
+            }
+            if from_idx == 7 || to_idx == 7 {
+                castle_rights[0] = 0;
+            }
+            if from_idx == 56 || to_idx == 56 {
+                castle_rights[3] = 0;
+            }
+            if from_idx == 63 || to_idx == 63 {
+                castle_rights[2] = 0;
+            }
+            castle_rights
+        }
+        WorkerKind::King | WorkerKind::Castle => {
+            let mut castle_rights = game.castle_rights;
+            let moving_piece = game.board[square_idx(mv.from_x, mv.from_y) as usize];
+            let moving_is_black = moving_piece > 8;
+            if moving_is_black {
+                castle_rights[2] = 0;
+                castle_rights[3] = 0;
+            } else {
+                castle_rights[0] = 0;
+                castle_rights[1] = 0;
+            }
+            castle_rights
+        }
+        WorkerKind::CastleChallenge => {
+            return Err(OrchestratorError("castle challenge apply is not modeled as a direct player move".to_string()));
+        }
+    };
+    if worker == WorkerKind::Castle {
+        return Ok(next);
+    }
+
+    let target_piece = game.board[square_idx(mv.to_x, mv.to_y) as usize];
+    let target_num = i64::from(target_piece);
+    let is_draw_claim_mode = game.draw_state < DRAW;
+    let effective_turn = if is_draw_claim_mode { 1 - game.turn } else { game.turn };
+
+    let mut next_status = game.status;
+    if game.recent_castle != CLEAR {
+        next_status = if game.turn == WHITE { WWIN } else { BWIN };
+    } else if is_draw_claim_mode {
+        if effective_turn == WHITE && target_num == 14 {
+            next_status = if game.turn == WHITE { WWIN } else { BWIN };
+        }
+        if effective_turn == BLACK && target_num == 6 {
+            next_status = if game.turn == WHITE { WWIN } else { BWIN };
+        }
+    } else {
+        let moving_piece = game.board[square_idx(mv.from_x, mv.from_y) as usize];
+        let moving_is_black = moving_piece > 8;
+        if !moving_is_black && target_num == 14 {
+            next_status = WWIN;
+        }
+        if moving_is_black && target_num == 6 {
+            next_status = BWIN;
+        }
+    }
+
+    let mut next_draw_state = game.draw_state;
+    if game.draw_state == CLAIMED {
+        next_draw_state = DEFENSE;
+    } else if game.draw_state == DEFENSE && next_status == LIVE {
+        next_status = if game.turn == WHITE { BWIN } else { WWIN };
+    }
+
+    next.status = next_status;
+    next.draw_state = next_draw_state;
+    Ok(next)
+}
+
 fn compile_game_state(source: &'static str, fix: &ExecutionFixture, state: &GameStateData) -> CompiledContract<'static> {
     let ctor = vec![
         hash_expr(fix.mux.hash),
@@ -3030,5 +3120,44 @@ mod tests {
             assert_eq!(black_state.open_games, 0);
             assert_eq!(arena.active_game_snapshot(), None);
         }
+    }
+
+    #[test]
+    fn actual_txs_can_capture_the_enemy_king() {
+        let shared = TxArena::shared().expect("actual arena builds");
+        let mut white = TxOrchestrator::new("white", 0x71, shared.clone());
+        let mut black = TxOrchestrator::new("black", 0x72, shared.clone());
+
+        white.register().expect("white register tx passes");
+        black.register().expect("black register tx passes");
+        white.start_game(&black).expect("start game tx passes");
+
+        {
+            let mut arena = shared.borrow_mut();
+            let game = arena.game.as_mut().expect("active game exists");
+            let mut board = vec![0u8; 64];
+            board[0] = 0x05;
+            board[24] = 0x0e;
+            game.board = board;
+            game.turn = Side::White as i64;
+            game.status = LIVE;
+            game.castle_rights = [1, 1, 1, 1];
+            game.en_passant_idx = -1;
+            game.pending_src_idx = -1;
+            game.pending_dst_idx = -1;
+            game.pending_promo = 0;
+            game.recent_castle = CLEAR;
+            game.draw_state = DRAW;
+            game.move_log.clear();
+        }
+
+        white.submit_move(MoveSpec::new(0, 0, 0, 3)).expect("king capture txs pass");
+
+        let arena = shared.borrow();
+        let game = arena.active_game_snapshot().expect("active game remains until settlement");
+        assert_eq!(game.status, WWIN);
+        assert_eq!(game.turn, Side::Black);
+        assert_eq!(game.board[24], 0x05);
+        assert_eq!(game.board[0], 0x00);
     }
 }

@@ -776,6 +776,39 @@ fn apply_worker_state(worker: WorkerKind, state: &GameState) -> Result<GameState
         promo_piece: state.pending_promo,
     };
     let mut next = apply_move_to_state(state, pending)?;
+    next.castle_rights = match worker {
+        WorkerKind::Pawn | WorkerKind::Knight | WorkerKind::Diag => state.castle_rights.clone(),
+        WorkerKind::Vert | WorkerKind::Horiz => {
+            let mut castle_rights = state.castle_rights.clone();
+            if state.pending_src_idx == 0 || state.pending_dst_idx == 0 {
+                castle_rights[1] = 0;
+            }
+            if state.pending_src_idx == 7 || state.pending_dst_idx == 7 {
+                castle_rights[0] = 0;
+            }
+            if state.pending_src_idx == 56 || state.pending_dst_idx == 56 {
+                castle_rights[3] = 0;
+            }
+            if state.pending_src_idx == 63 || state.pending_dst_idx == 63 {
+                castle_rights[2] = 0;
+            }
+            castle_rights
+        }
+        WorkerKind::King | WorkerKind::Castle => {
+            let mut castle_rights = state.castle_rights.clone();
+            let moving_piece = state.board[state.pending_src_idx as usize];
+            let moving_is_black = moving_piece > 8;
+            if moving_is_black {
+                castle_rights[2] = 0;
+                castle_rights[3] = 0;
+            } else {
+                castle_rights[0] = 0;
+                castle_rights[1] = 0;
+            }
+            castle_rights
+        }
+        WorkerKind::CastleChallenge => unreachable!(),
+    };
     if worker == WorkerKind::Castle {
         next.status = state.status;
         next.draw_state = state.draw_state;
