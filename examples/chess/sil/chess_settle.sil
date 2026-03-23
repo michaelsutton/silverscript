@@ -44,9 +44,6 @@ contract ChessSettle(
 
         int white_input_idx = OpCovInputIdx(cov_id, 1);
         int black_input_idx = OpCovInputIdx(cov_id, 2);
-        int white_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-        int black_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
-
         PlayerState white_in = readInputStateWithTemplate(white_input_idx, player_prefix_len, player_suffix_len, player_template);
         PlayerState black_in = readInputStateWithTemplate(black_input_idx, player_prefix_len, player_suffix_len, player_template);
 
@@ -177,6 +174,8 @@ contract ChessSettle(
             losses: black_losses
         };
 
+        int white_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        int black_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
         require(tx.outputs[white_output_idx].value == white_output_value);
         require(tx.outputs[black_output_idx].value == black_output_value);
         validateOutputStateWithTemplate(
