@@ -103,13 +103,6 @@ contract ChessMux(
         // 4 -> accept draw in mux
         require(termination_action >= CLEAR && termination_action <= ACCEPT);
 
-        // selector -> target template
-        byte[] move_route_templates = route_templates.slice(0, 256);
-        byte[] all_route_templates = move_route_templates + mux_template;
-        int hash_start = selector * 32;
-        int hash_end = hash_start + 32;
-        byte[32] target_template = all_route_templates.slice(hash_start, hash_end);
-
         int next_status = status;
         int next_turn = turn;
         int next_en_passant_idx = en_passant_idx;
@@ -216,6 +209,12 @@ contract ChessMux(
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
         require(tx.outputs[output_idx].value == tx.inputs[this.activeInputIndex].value);
+        
+        byte[] move_route_templates = route_templates.slice(0, 256);
+        byte[] all_route_templates = move_route_templates + mux_template;
+        int hash_start = selector * 32;
+        int hash_end = hash_start + 32;
+        byte[32] target_template = all_route_templates.slice(hash_start, hash_end);
         validateOutputStateWithTemplate(
             output_idx,
             next_state,

@@ -60,11 +60,6 @@ contract ChessVert(
         int from_idx = OpBin2Num(pending_src_idx);
         int to_idx = OpBin2Num(pending_dst_idx);
 
-        int from_y = from_idx / 8;
-        int from_x = from_idx % 8;
-        int to_y = to_idx / 8;
-        int to_x = to_idx % 8;
-
         // Chess alternates between white (0) and black (1).
         require(turn == WHITE || turn == BLACK);
 
@@ -101,6 +96,11 @@ contract ChessVert(
             require(!target_is_black);
         }
 
+        int from_y = from_idx / 8;
+        int from_x = from_idx % 8;
+        int to_y = to_idx / 8;
+        int to_x = to_idx % 8;
+        
         // Vertical rook/queen movement keeps the same file and changes rank.
         require(to_x == from_x && to_y != from_y);
         int dy = to_y - from_y;

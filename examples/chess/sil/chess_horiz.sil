@@ -60,11 +60,6 @@ contract ChessHoriz(
         int from_idx = OpBin2Num(pending_src_idx);
         int to_idx = OpBin2Num(pending_dst_idx);
 
-        int from_y = from_idx / 8;
-        int from_x = from_idx % 8;
-        int to_y = to_idx / 8;
-        int to_x = to_idx % 8;
-
         // Chess alternates between white (0) and black (1).
         require(turn == WHITE || turn == BLACK);
 
@@ -101,6 +96,11 @@ contract ChessHoriz(
             require(!target_is_black);
         }
 
+        int from_y = from_idx / 8;
+        int from_x = from_idx % 8;
+        int to_y = to_idx / 8;
+        int to_x = to_idx % 8;
+        
         // Horizontal rook/queen movement keeps the same rank and changes file.
         require(to_y == from_y && to_x != from_x);
         int dx = to_x - from_x;
