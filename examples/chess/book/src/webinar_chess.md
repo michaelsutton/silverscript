@@ -98,25 +98,32 @@ That is the second big teaching point:
 
 ## Transaction Entity Flow
 
-Here is the entity flow through the main lifecycle.
+Here is the covenant-entity flow through the main lifecycle.
 
 ```mermaid
-flowchart TD
-    A["1 -> 2 register player
-League -> League + Player"]
-    B["2 -> 3 start game
-Player + Player -> Player + Player + Game"]
-    C["1 -> 1 game step
-Mux -> Worker -> Mux"]
-    D["1 -> 1 timeout escape
-Worker -> ChessSettle"]
-    E["3 -> 2 settle
-ChessSettle + Player + Player -> Player + Player"]
+flowchart LR
+    L0["League"]
 
-    A --> B --> C
-    C --> C
-    C --> D --> E
-    C --> E
+    L0 -->|"register"| L1["League"]
+    L0 -->|"register"| P1["Player A"]
+
+    L1 -->|"register"| L2["League"]
+    L1 -->|"register"| P2["Player B"]
+
+    P1 -->|"start game"| P1G["Player A"]
+    P2 -->|"start game"| P2G["Player B"]
+    P1 -->|"start game"| G0["Game"]
+    P2 -->|"start game"| G0
+
+    G0 -->|"route"| W["Worker"]
+    W -->|"apply"| G1["Game"]
+    G1 -->|"route"| W
+
+    G1 -->|"terminal route / timeout"| S["ChessSettle"]
+    S -->|"settle"| P1S["Player A"]
+    S -->|"settle"| P2S["Player B"]
+    P1G -->|"settle"| P1S
+    P2G -->|"settle"| P2S
 ```
 
 What changes in each phase:
@@ -141,9 +148,11 @@ What changes in each phase:
 
 - `ChessMux` authenticates the side to move
 - commits the pending move into game state
-- routes into the selected worker
-- the worker applies one bounded transition
-- the worker returns to mux
+- routes into the selected worker as `1 -> 1`
+- the worker applies one bounded transition as `1 -> 1`
+- so one logical game step is two covenant transactions:
+  - `Game -> Worker`
+  - `Worker -> Game`
 
 There are two subtle control points worth showing live:
 
