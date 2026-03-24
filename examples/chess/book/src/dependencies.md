@@ -29,30 +29,30 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph League
-        LH[player_template]
-        LM[mux_template]
-        LR[routes_commitment]
+    subgraph League["League"]
+        LH["player_template"]
+        LM["mux_template"]
+        LR["routes_commitment"]
     end
 
-    subgraph Player
-        PM[mux_template]
-        PX[routes_commitment]
-        PP[player_id]
-        PO[owner]
-        PR[rating]
+    subgraph Player["Player"]
+        PM["mux_template"]
+        PX["routes_commitment"]
+        PP["player_id"]
+        PO["owner"]
+        PR["rating"]
     end
 
-    subgraph Game
-        GH[route_templates]
-        GW[white_player_ref]
-        GB[black_player_ref]
-        GR[result / terminal state]
+    subgraph Game["Game"]
+        GH["route_templates"]
+        GW["white_player_ref"]
+        GB["black_player_ref"]
+        GR["result / terminal state"]
     end
 
-    subgraph Settle
-        SH[blake2b(settle_template || player_template)]
-        SR[terminal result]
+    subgraph Settle["Settle"]
+        SH["blake2b(settle_template || player_template)"]
+        SR["terminal result"]
     end
 
     LH --> Player
