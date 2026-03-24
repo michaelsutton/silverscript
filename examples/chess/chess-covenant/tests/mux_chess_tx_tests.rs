@@ -3453,6 +3453,173 @@ fn expired_en_passant_attempt_fails() {
 }
 
 #[test]
+fn all_castle_shapes_rewrite_expected_board() {
+    let fix = build_fixture();
+    let white = player_from_seed(1);
+    let black = player_from_seed(2);
+
+    struct CastleCase {
+        label: &'static str,
+        board0: Vec<u8>,
+        turn: i64,
+        to_x: i64,
+        to_y: i64,
+        expected_board: Vec<u8>,
+        expected_turn: i64,
+        expected_castle_rights: [u8; 4],
+        expected_recent_castle: i64,
+    }
+
+    let mut cases = Vec::new();
+
+    let mut white_kingside_board = vec![0u8; 64];
+    white_kingside_board[4] = 0x06;
+    white_kingside_board[7] = 0x04;
+    let mut white_kingside_expected = white_kingside_board.clone();
+    white_kingside_expected[4] = 0x00;
+    white_kingside_expected[5] = 0x04;
+    white_kingside_expected[6] = 0x06;
+    white_kingside_expected[7] = 0x00;
+    cases.push(CastleCase {
+        label: "white_kingside_castle",
+        board0: white_kingside_board,
+        turn: 0,
+        to_x: 6,
+        to_y: 0,
+        expected_board: white_kingside_expected,
+        expected_turn: 1,
+        expected_castle_rights: [0, 0, 1, 1],
+        expected_recent_castle: 1,
+    });
+
+    let mut white_queenside_board = vec![0u8; 64];
+    white_queenside_board[0] = 0x04;
+    white_queenside_board[4] = 0x06;
+    let mut white_queenside_expected = white_queenside_board.clone();
+    white_queenside_expected[0] = 0x00;
+    white_queenside_expected[1] = 0x00;
+    white_queenside_expected[2] = 0x06;
+    white_queenside_expected[3] = 0x04;
+    white_queenside_expected[4] = 0x00;
+    cases.push(CastleCase {
+        label: "white_queenside_castle",
+        board0: white_queenside_board,
+        turn: 0,
+        to_x: 2,
+        to_y: 0,
+        expected_board: white_queenside_expected,
+        expected_turn: 1,
+        expected_castle_rights: [0, 0, 1, 1],
+        expected_recent_castle: 2,
+    });
+
+    let mut black_kingside_board = vec![0u8; 64];
+    black_kingside_board[60] = 0x0e;
+    black_kingside_board[63] = 0x0c;
+    let mut black_kingside_expected = black_kingside_board.clone();
+    black_kingside_expected[60] = 0x00;
+    black_kingside_expected[61] = 0x0c;
+    black_kingside_expected[62] = 0x0e;
+    black_kingside_expected[63] = 0x00;
+    cases.push(CastleCase {
+        label: "black_kingside_castle",
+        board0: black_kingside_board,
+        turn: 1,
+        to_x: 6,
+        to_y: 7,
+        expected_board: black_kingside_expected,
+        expected_turn: 0,
+        expected_castle_rights: [1, 1, 0, 0],
+        expected_recent_castle: 3,
+    });
+
+    let mut black_queenside_board = vec![0u8; 64];
+    black_queenside_board[56] = 0x0c;
+    black_queenside_board[60] = 0x0e;
+    let mut black_queenside_expected = black_queenside_board.clone();
+    black_queenside_expected[56] = 0x00;
+    black_queenside_expected[57] = 0x00;
+    black_queenside_expected[58] = 0x0e;
+    black_queenside_expected[59] = 0x0c;
+    black_queenside_expected[60] = 0x00;
+    cases.push(CastleCase {
+        label: "black_queenside_castle",
+        board0: black_queenside_board,
+        turn: 1,
+        to_x: 2,
+        to_y: 7,
+        expected_board: black_queenside_expected,
+        expected_turn: 0,
+        expected_castle_rights: [1, 1, 0, 0],
+        expected_recent_castle: 4,
+    });
+
+    for case in cases {
+        let mover = if case.turn == 0 { &white } else { &black };
+        let from_y = if case.turn == 0 { 0 } else { 7 };
+
+        let mux0 = compile_state(
+            fix.mux.source,
+            &fix,
+            &white.player_ref,
+            &black.player_ref,
+            GameStateArgs {
+                board: &case.board0,
+                turn: case.turn,
+                status: 0,
+                castle_rights: full_castle_rights(),
+                en_passant_idx: -1,
+                pending_src_idx: -1,
+                pending_dst_idx: -1,
+                pending_promo: 0,
+                recent_castle: 0,
+                draw_state: 3,
+            },
+        );
+        let covenant_id = populate_single_output_genesis_covenant(&mux0);
+        let castle = compile_state(
+            fix.castle.source,
+            &fix,
+            &white.player_ref,
+            &black.player_ref,
+            GameStateArgs {
+                board: &case.board0,
+                turn: case.turn,
+                status: 0,
+                castle_rights: full_castle_rights(),
+                en_passant_idx: -1,
+                pending_src_idx: square_idx(4, from_y),
+                pending_dst_idx: square_idx(case.to_x, case.to_y),
+                pending_promo: 0,
+                recent_castle: 0,
+                draw_state: 3,
+            },
+        );
+        run_route(&mux0, 6, mv(4, from_y, case.to_x, case.to_y), mover, &fix.castle, &castle, covenant_id);
+
+        let mux1 = compile_state(
+            fix.mux.source,
+            &fix,
+            &white.player_ref,
+            &black.player_ref,
+            GameStateArgs {
+                board: &case.expected_board,
+                turn: case.expected_turn,
+                status: 0,
+                castle_rights: case.expected_castle_rights,
+                en_passant_idx: -1,
+                pending_src_idx: -1,
+                pending_dst_idx: -1,
+                pending_promo: 0,
+                recent_castle: case.expected_recent_castle,
+                draw_state: 3,
+            },
+        );
+        run_worker_apply(case.label, &castle, &mux1, covenant_id, &fix.mux);
+    }
+}
+
+#[test]
 fn ordinary_reply_after_castle_clears_recent_castle() {
     let fix = build_fixture();
     let white = player_from_seed(1);

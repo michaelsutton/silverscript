@@ -130,42 +130,31 @@ contract ChessCastle(
         byte rook_piece = prev_board[rook_from_idx];
         byte empty_piece = byte(0x00);
 
-        // Castling rewrites four fixed squares. The sorted rewrite order differs
-        // by flank, but the final splice shape is shared.
+        // Castling rewrites four fixed squares. Both flanks fit the shared
+        // splice shape: prefix + empty + middle + two rewritten squares + empty + suffix.
         int a = row_base;
-        byte va = empty_piece;
         int b = row_base + 2;
         byte vb = moving_piece;
-        int c = row_base + 3;
         byte vc = rook_piece;
         int d = row_base + 4;
-        byte vd = empty_piece;
         if (is_king_side) {
             a = row_base + 4;
-            va = empty_piece;
             b = row_base + 5;
             vb = rook_piece;
-            c = row_base + 6;
             vc = moving_piece;
             d = row_base + 7;
-            vd = empty_piece;
         }
 
-        byte[] prev_dyn = byte[](prev_board);
-        byte[] prefix = prev_dyn.slice(0, a);
-        byte[] mid_ab = prev_dyn.slice(a + 1, b);
-        byte[] mid_bc = prev_dyn.slice(b + 1, c);
-        byte[] mid_cd = prev_dyn.slice(c + 1, d);
-        byte[] suffix = prev_dyn.slice(d + 1, 64);
+        byte[] prefix = prev_board.slice(0, a);
+        byte[] middle = prev_board.slice(a + 1, b);
+        byte[] suffix = prev_board.slice(d + 1, 64);
         byte[64] next_board =
             prefix +
-            byte[1](va) +
-            mid_ab +
+            byte[1](empty_piece) +
+            middle +
             byte[1](vb) +
-            mid_bc +
             byte[1](vc) +
-            mid_cd +
-            byte[1](vd) +
+            byte[1](empty_piece) +
             suffix;
 
         byte next_white_can_castle_k = castle_rights[0];
