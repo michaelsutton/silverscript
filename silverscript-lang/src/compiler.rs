@@ -2575,7 +2575,6 @@ fn compile_entrypoint_function<'i>(
                 &mut stack_bindings,
                 &mut builder,
                 options,
-                true,
                 contract_fields,
                 contract_field_prefix_len,
                 constants,
@@ -2666,7 +2665,6 @@ fn compile_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    enable_mutable_scalar_stack_locals: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -2875,7 +2873,7 @@ fn compile_statement<'i>(
                 // for mutation to avoid nested IfElse expression blowups under unrolled control flow.
                 let used_at_least_twice = identifier_uses.get(name).copied().unwrap_or(0) >= 2;
                 let stack_for_reuse = used_at_least_twice && !assigned_names.contains(name);
-                let stack_for_mutation = enable_mutable_scalar_stack_locals && assigned_names.contains(name);
+                let stack_for_mutation = assigned_names.contains(name);
                 if (stack_for_reuse || stack_for_mutation)
                     && (!env.contains_key(name) || existing_is_predeclared_default)
                     && !stack_bindings.contains(name)
@@ -3042,7 +3040,6 @@ fn compile_statement<'i>(
             stack_bindings,
             builder,
             options,
-            enable_mutable_scalar_stack_locals,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
@@ -3068,7 +3065,6 @@ fn compile_statement<'i>(
             stack_bindings,
             builder,
             options,
-            enable_mutable_scalar_stack_locals,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
@@ -3291,7 +3287,6 @@ fn compile_statement<'i>(
                     stack_bindings,
                     builder,
                     options,
-                    enable_mutable_scalar_stack_locals,
                     contract_fields,
                     contract_field_prefix_len,
                     contract_constants,
@@ -3414,10 +3409,7 @@ fn compile_statement<'i>(
             if let Some(type_name) = types.get(name) {
                 // If this is a stack-bound scalar local, compile a real mutation instead of
                 // rewriting `env[name]` (which can explode under unrolled control flow).
-                if enable_mutable_scalar_stack_locals
-                    && stack_bindings.contains(name)
-                    && matches!(type_name.as_str(), "int" | "bool" | "byte")
-                {
+                if stack_bindings.contains(name) && matches!(type_name.as_str(), "int" | "bool" | "byte") {
                     let expected_type_ref = parse_type_ref(type_name)?;
                     let lowered_expr = lower_runtime_expr(expr, types, structs)?;
                     if !expr_matches_return_type_ref(&lowered_expr, &expected_type_ref, types, contract_constants) {
@@ -3455,6 +3447,13 @@ fn compile_statement<'i>(
                     // drop the old target, then restore the peeled items. This makes new_value end
                     // up exactly where the old binding was.
                     stack_bindings.emit_update_stack_for_rebinding(name, builder)?;
+                    let updated = if let Some(previous) = env.get(name) {
+                        replace_identifier(&lowered_expr, name, previous)
+                    } else {
+                        lowered_expr
+                    };
+                    let resolved = resolve_expr_for_runtime(updated, env, types, &mut HashSet::new())?;
+                    env.insert(name.clone(), resolved);
                     return Ok(Vec::new());
                 }
 
@@ -4678,7 +4677,6 @@ fn compile_inline_call<'i>(
                 &mut bindings.stack_bindings,
                 builder,
                 options,
-                false,
                 contract_fields,
                 0,
                 contract_constants,
@@ -4715,7 +4713,6 @@ fn compile_if_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    enable_mutable_scalar_stack_locals: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -4758,7 +4755,6 @@ fn compile_if_statement<'i>(
         &mut then_stack_bindings,
         builder,
         options,
-        enable_mutable_scalar_stack_locals,
         contract_fields,
         contract_field_prefix_len,
         contract_constants,
@@ -4786,7 +4782,6 @@ fn compile_if_statement<'i>(
             &mut else_stack_bindings,
             builder,
             options,
-            enable_mutable_scalar_stack_locals,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
@@ -4953,7 +4948,6 @@ fn compile_block<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    enable_mutable_scalar_stack_locals: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -4978,7 +4972,6 @@ fn compile_block<'i>(
                 stack_bindings,
                 builder,
                 options,
-                enable_mutable_scalar_stack_locals,
                 contract_fields,
                 contract_field_prefix_len,
                 contract_constants,
@@ -5019,7 +5012,6 @@ fn compile_for_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    enable_mutable_scalar_stack_locals: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -5061,7 +5053,6 @@ fn compile_for_statement<'i>(
                 stack_bindings,
                 builder,
                 options,
-                enable_mutable_scalar_stack_locals,
                 contract_fields,
                 contract_field_prefix_len,
                 contract_constants,
@@ -5087,7 +5078,6 @@ fn compile_for_statement<'i>(
                 stack_bindings,
                 builder,
                 options,
-                enable_mutable_scalar_stack_locals,
                 contract_fields,
                 contract_field_prefix_len,
                 contract_constants,
@@ -5136,7 +5126,6 @@ fn compile_constant_for_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    enable_mutable_scalar_stack_locals: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -5171,7 +5160,6 @@ fn compile_constant_for_statement<'i>(
             stack_bindings,
             builder,
             options,
-            enable_mutable_scalar_stack_locals,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
@@ -5203,7 +5191,6 @@ fn compile_runtime_for_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    enable_mutable_scalar_stack_locals: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -5243,7 +5230,6 @@ fn compile_runtime_for_statement<'i>(
             stack_bindings,
             builder,
             options,
-            enable_mutable_scalar_stack_locals,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
