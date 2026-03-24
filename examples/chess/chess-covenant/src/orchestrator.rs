@@ -19,6 +19,7 @@ use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledContract};
 
+use crate::protocol_move::{apply_protocol_move, ProtocolMoveSpec, ProtocolState};
 use crate::{
     castle_challenge_contract_path, castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path,
     knight_contract_path, league_contract_path, load_contract_source, mux_contract_path, pawn_contract_path, player_contract_path,
@@ -1454,7 +1455,7 @@ impl TxArena {
         let executed_route_tx = route_tx.clone();
         let worker_outpoint = TransactionOutpoint { transaction_id: executed_route_tx.id(), index: 0 };
 
-        let next = apply_worker_state(worker, &game, mv)?;
+        let next = apply_worker_state(worker, &pending, mv)?;
         let next_mux = self.compile_mux(&next);
         let apply_sigscript = entry_sigscript(
             &worker_contract,
@@ -2265,14 +2266,6 @@ fn square_idx(x: i64, y: i64) -> i64 {
     y * 8 + x
 }
 
-fn move_piece(board: &mut [u8], from_x: usize, from_y: usize, to_x: usize, to_y: usize) {
-    let from_idx = from_y * 8 + from_x;
-    let to_idx = to_y * 8 + to_x;
-    let piece = board[from_idx];
-    board[from_idx] = 0;
-    board[to_idx] = piece;
-}
-
 fn worker_selector(worker: WorkerKind) -> i64 {
     match worker {
         WorkerKind::Pawn => 0,
@@ -2367,88 +2360,33 @@ fn pending_state_for_move(game: &GameStateData, mv: MoveSpec) -> GameStateData {
     }
 }
 
-fn clear_castle_rights_for_square(castle_rights: &mut [u8; 4], x: i64, y: i64) {
-    match (x, y) {
-        (7, 0) => castle_rights[0] = 0,
-        (0, 0) => castle_rights[1] = 0,
-        (7, 7) => castle_rights[2] = 0,
-        (0, 7) => castle_rights[3] = 0,
-        _ => {}
-    }
-}
-
 fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateData, OrchestratorError> {
-    let mut board = game.board.clone();
-    let from_idx = square_idx(mv.from_x, mv.from_y) as usize;
-    let to_idx = square_idx(mv.to_x, mv.to_y) as usize;
-    let piece = board[from_idx];
-    if piece == 0 {
-        return Err(OrchestratorError("no piece on source square".to_string()));
-    }
-    let base = if piece > 8 { piece - 8 } else { piece };
-    let is_black = piece > 8;
-    let mut castle_rights = game.castle_rights;
-    let mut en_passant_idx = -1;
-    let mut recent_castle = 0;
-
-    clear_castle_rights_for_square(&mut castle_rights, mv.to_x, mv.to_y);
-    if base == 6 {
-        if is_black {
-            castle_rights[2] = 0;
-            castle_rights[3] = 0;
-        } else {
-            castle_rights[0] = 0;
-            castle_rights[1] = 0;
-        }
-    }
-    if base == 4 {
-        clear_castle_rights_for_square(&mut castle_rights, mv.from_x, mv.from_y);
-    }
-
-    if base == 1 {
-        let direction = if is_black { -1 } else { 1 };
-        if mv.from_x != mv.to_x && board[to_idx] == 0 && game.en_passant_idx == square_idx(mv.to_x, mv.to_y) {
-            let captured_y = mv.to_y - direction;
-            board[square_idx(mv.to_x, captured_y) as usize] = 0;
-        }
-        board[from_idx] = 0;
-        let mut placed_piece = piece;
-        if mv.promo_piece != 0 {
-            placed_piece = if is_black { (mv.promo_piece as u8) + 8 } else { mv.promo_piece as u8 };
-        }
-        board[to_idx] = placed_piece;
-        if mv.from_x == mv.to_x && (mv.to_y - mv.from_y).abs() == 2 {
-            en_passant_idx = square_idx(mv.from_x, mv.from_y + direction);
-        }
-    } else if base == 6 && (mv.to_x - mv.from_x).abs() == 2 && mv.from_y == mv.to_y {
-        board[from_idx] = 0;
-        board[to_idx] = piece;
-        if mv.to_x > mv.from_x {
-            move_piece(&mut board, 7, mv.from_y as usize, 5, mv.from_y as usize);
-            recent_castle = if is_black { 3 } else { 1 };
-        } else {
-            move_piece(&mut board, 0, mv.from_y as usize, 3, mv.from_y as usize);
-            recent_castle = if is_black { 4 } else { 2 };
-        }
-    } else {
-        move_piece(&mut board, mv.from_x as usize, mv.from_y as usize, mv.to_x as usize, mv.to_y as usize);
-    }
+    let next = apply_protocol_move(
+        &ProtocolState {
+            board: game.board.clone(),
+            turn: game.turn,
+            castle_rights: game.castle_rights,
+            en_passant_idx: game.en_passant_idx,
+        },
+        ProtocolMoveSpec { from_x: mv.from_x, from_y: mv.from_y, to_x: mv.to_x, to_y: mv.to_y, promo_piece: mv.promo_piece },
+    )
+    .map_err(|err| OrchestratorError(err.to_string()))?;
 
     let mut move_log = game.move_log.clone();
     move_log.push(mv.label());
     Ok(GameStateData {
         white_player: game.white_player,
         black_player: game.black_player,
-        board,
-        turn: 1 - game.turn,
+        board: next.board,
+        turn: next.turn,
         status: game.status,
         move_timeout: game.move_timeout,
-        castle_rights,
-        en_passant_idx,
+        castle_rights: next.castle_rights,
+        en_passant_idx: next.en_passant_idx,
         pending_src_idx: -1,
         pending_dst_idx: -1,
         pending_promo: 0,
-        recent_castle,
+        recent_castle: next.recent_castle,
         draw_state: game.draw_state,
         move_log,
     })
@@ -3159,5 +3097,42 @@ mod tests {
         assert_eq!(game.turn, Side::Black);
         assert_eq!(game.board[24], 0x05);
         assert_eq!(game.board[0], 0x00);
+    }
+
+    #[test]
+    fn opponent_can_reply_normally_after_castle() {
+        let shared = TxArena::shared().expect("actual arena builds");
+        let mut white = TxOrchestrator::new("white", 0x81, shared.clone());
+        let mut black = TxOrchestrator::new("black", 0x82, shared.clone());
+
+        white.register().expect("white register tx passes");
+        black.register().expect("black register tx passes");
+        white.start_game(&black).expect("start game tx passes");
+
+        white.submit_move(MoveSpec::new(4, 1, 4, 3)).expect("white e2e4 tx passes");
+        black.submit_move(MoveSpec::new(4, 6, 4, 4)).expect("black e7e5 tx passes");
+        white.submit_move(MoveSpec::new(6, 0, 5, 2)).expect("white g1f3 tx passes");
+        black.submit_move(MoveSpec::new(1, 7, 2, 5)).expect("black b8c6 tx passes");
+        white.submit_move(MoveSpec::new(5, 0, 4, 1)).expect("white f1e2 tx passes");
+        black.submit_move(MoveSpec::new(6, 7, 5, 5)).expect("black g8f6 tx passes");
+        white.submit_move(MoveSpec::new(4, 0, 6, 0)).expect("white castles kingside");
+
+        {
+            let arena = shared.borrow();
+            let game = arena.active_game_snapshot().expect("active game exists after castle");
+            assert_eq!(game.turn, Side::Black);
+            assert_eq!(game.board[4], 0x00);
+            assert_eq!(game.board[5], 0x04);
+            assert_eq!(game.board[6], 0x06);
+            assert_eq!(game.board[7], 0x00);
+        }
+
+        black.submit_move(MoveSpec::new(0, 6, 0, 5)).expect("black a7a6 reply should pass after castle");
+
+        let arena = shared.borrow();
+        let game = arena.active_game_snapshot().expect("active game exists after reply");
+        assert_eq!(game.turn, Side::White);
+        assert_eq!(game.board[48], 0x00);
+        assert_eq!(game.board[40], 0x09);
     }
 }

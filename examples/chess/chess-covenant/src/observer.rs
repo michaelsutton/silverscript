@@ -7,6 +7,7 @@ use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions};
 
 use crate::orchestrator::WorkerKind;
+use crate::protocol_move::{apply_protocol_move, ProtocolMoveSpec, ProtocolState};
 use crate::txdecode::{decode_p2sh_call, ContractTemplate, DecodeError, DecodeValue, DecodedCall, DecodedObject};
 use crate::{
     castle_challenge_contract_path, castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path,
@@ -1011,94 +1012,32 @@ struct MoveSpec {
 }
 
 fn apply_move_to_state(game: &GameState, mv: MoveSpec) -> Result<GameState, ObserverError> {
-    let mut board = game.board.clone();
-    let from_idx = square_idx(mv.from_x, mv.from_y) as usize;
-    let to_idx = square_idx(mv.to_x, mv.to_y) as usize;
-    let piece = board[from_idx];
-    if piece == 0 {
-        return Err(ObserverError("no piece on source square".to_string()));
-    }
-    let base = if piece > 8 { piece - 8 } else { piece };
-    let is_black = piece > 8;
-    let mut castle_rights = [game.castle_rights[0], game.castle_rights[1], game.castle_rights[2], game.castle_rights[3]];
-    let mut en_passant_idx = -1;
-    let mut recent_castle = 0;
-
-    clear_castle_rights_for_square(&mut castle_rights, mv.to_x, mv.to_y);
-    if base == 6 {
-        if is_black {
-            castle_rights[2] = 0;
-            castle_rights[3] = 0;
-        } else {
-            castle_rights[0] = 0;
-            castle_rights[1] = 0;
-        }
-    }
-    if base == 4 {
-        clear_castle_rights_for_square(&mut castle_rights, mv.from_x, mv.from_y);
-    }
-
-    if base == 1 {
-        let direction = if is_black { -1 } else { 1 };
-        if mv.from_x != mv.to_x && board[to_idx] == 0 && game.en_passant_idx == square_idx(mv.to_x, mv.to_y) {
-            let captured_y = mv.to_y - direction;
-            board[square_idx(mv.to_x, captured_y) as usize] = 0;
-        }
-        board[from_idx] = 0;
-        let mut placed_piece = piece;
-        if mv.promo_piece != 0 {
-            placed_piece = if is_black { (mv.promo_piece as u8) + 8 } else { mv.promo_piece as u8 };
-        }
-        board[to_idx] = placed_piece;
-        if mv.from_x == mv.to_x && (mv.to_y - mv.from_y).abs() == 2 {
-            en_passant_idx = square_idx(mv.from_x, mv.from_y + direction);
-        }
-    } else if base == 6 && (mv.to_x - mv.from_x).abs() == 2 && mv.from_y == mv.to_y {
-        board[from_idx] = 0;
-        board[to_idx] = piece;
-        if mv.to_x > mv.from_x {
-            move_piece(&mut board, 7, mv.from_y as usize, 5, mv.from_y as usize);
-            recent_castle = if is_black { 3 } else { 1 };
-        } else {
-            move_piece(&mut board, 0, mv.from_y as usize, 3, mv.from_y as usize);
-            recent_castle = if is_black { 4 } else { 2 };
-        }
-    } else {
-        move_piece(&mut board, mv.from_x as usize, mv.from_y as usize, mv.to_x as usize, mv.to_y as usize);
-    }
+    let next = apply_protocol_move(
+        &ProtocolState {
+            board: game.board.clone(),
+            turn: game.turn,
+            castle_rights: [game.castle_rights[0], game.castle_rights[1], game.castle_rights[2], game.castle_rights[3]],
+            en_passant_idx: game.en_passant_idx,
+        },
+        ProtocolMoveSpec { from_x: mv.from_x, from_y: mv.from_y, to_x: mv.to_x, to_y: mv.to_y, promo_piece: mv.promo_piece },
+    )
+    .map_err(|err| ObserverError(err.to_string()))?;
 
     Ok(GameState {
-        board,
-        turn: 1 - game.turn,
-        castle_rights: castle_rights.to_vec(),
-        en_passant_idx,
+        board: next.board,
+        turn: next.turn,
+        castle_rights: next.castle_rights.to_vec(),
+        en_passant_idx: next.en_passant_idx,
         pending_src_idx: -1,
         pending_dst_idx: -1,
         pending_promo: 0,
-        recent_castle,
+        recent_castle: next.recent_castle,
         ..game.clone()
     })
 }
 
 fn square_idx(x: i64, y: i64) -> i64 {
     y * 8 + x
-}
-
-fn move_piece(board: &mut [u8], from_x: usize, from_y: usize, to_x: usize, to_y: usize) {
-    let from_idx = from_y * 8 + from_x;
-    let to_idx = to_y * 8 + to_x;
-    board[to_idx] = board[from_idx];
-    board[from_idx] = 0;
-}
-
-fn clear_castle_rights_for_square(castle_rights: &mut [u8; 4], x: i64, y: i64) {
-    match (x, y) {
-        (7, 0) => castle_rights[0] = 0,
-        (0, 0) => castle_rights[1] = 0,
-        (7, 7) => castle_rights[2] = 0,
-        (0, 7) => castle_rights[3] = 0,
-        _ => {}
-    }
 }
 
 fn blake2b(bytes: &[u8]) -> Hash {
