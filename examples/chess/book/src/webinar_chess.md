@@ -144,6 +144,36 @@ What changes in each phase:
 - one opening `ChessMux` state is created
 - game funding is defined here by mutual consent
 
+Illustrative SIL excerpt:
+
+```js
+State next_self = {
+    league_template: league_template,
+    player_template: player_template,
+    mux_template: mux_template,
+    routes_commitment: routes_commitment,
+    owner: owner,
+    player_id: player_id,
+    open_games: open_games + 1,
+    rating: rating,
+    games: games,
+    wins: wins,
+    draws: draws,
+    losses: losses
+};
+
+require(OpAuthOutputCount(this.activeInputIndex) == 3);
+validateOutputState(OpAuthOutputIdx(this.activeInputIndex, 0), next_self);
+validateOutputState(OpAuthOutputIdx(this.activeInputIndex, 1), next_other);
+validateOutputStateWithTemplate(
+    OpAuthOutputIdx(this.activeInputIndex, 2),
+    next_game,
+    mux_prefix,
+    mux_suffix,
+    mux_template
+);
+```
+
 ### `1 -> 1` Game step
 
 - `ChessMux` authenticates the side to move
@@ -158,6 +188,42 @@ There are two subtle control points worth showing live:
 
 - player commitment is checked at mux exit
 - timeout escape exists on every worker
+
+Illustrative SIL excerpt:
+
+```js
+State next_state = {
+    mux_template: mux_template,
+    route_templates: route_templates,
+    white_player: white_player,
+    black_player: black_player,
+    board: board,
+    turn: next_turn,
+    status: next_status,
+    move_timeout: move_timeout,
+    castle_rights: castle_rights,
+    en_passant_idx: next_en_passant_idx,
+    pending_src_idx: next_pending_src_idx,
+    pending_dst_idx: next_pending_dst_idx,
+    pending_promo: next_pending_promo,
+    recent_castle: next_recent_castle,
+    draw_state: next_draw_state
+};
+
+byte[32] target_template = all_route_templates.slice(hash_start, hash_end);
+validateOutputStateWithTemplate(
+    output_idx,
+    next_state,
+    target_prefix,
+    target_suffix,
+    target_template
+);
+```
+
+This is the mux doing the two jobs that matter:
+
+- commit the pending move into shared state
+- route into exactly one worker template
 
 ### `3 -> 2` Game settle
 
@@ -178,6 +244,44 @@ Settlement has two outputs:
   - apply the bounded Elo-style rating update
 
 That is what makes the final stage permissionless once the result is fixed.
+
+Illustrative SIL excerpt:
+
+```js
+if (status == WWIN) {
+    white_output_value = white_output_value + stake;
+} else if (status == BWIN) {
+    black_output_value = black_output_value + stake;
+} else {
+    int white_share = stake / 2;
+    int black_share = stake - white_share;
+    white_output_value = white_output_value + white_share;
+    black_output_value = black_output_value + black_share;
+}
+
+require(tx.outputs[white_output_idx].value == white_output_value);
+require(tx.outputs[black_output_idx].value == black_output_value);
+validateOutputStateWithTemplate(
+    white_output_idx,
+    next_white,
+    player_prefix,
+    player_suffix,
+    player_template
+);
+validateOutputStateWithTemplate(
+    black_output_idx,
+    next_black,
+    player_prefix,
+    player_suffix,
+    player_template
+);
+```
+
+That is the terminal move from protocol logic back into durable player state:
+
+- calculate the payout split
+- enforce the output values
+- recreate both player states with updated scores
 
 ## What This Example Teaches
 
