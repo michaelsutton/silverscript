@@ -1,37 +1,38 @@
-contract Mux(byte[32] initMuxHash, byte[32] initAHash, byte[32] initBHash, int initValue) {
-    byte[32] muxHash = initMuxHash;
-    byte[32] aHash = initAHash;
-    byte[32] bHash = initBHash;
-    int value = initValue;
+contract Mux(byte[32] init_mux_template, byte[32] init_a_template, byte[32] init_b_template, int init_value) {
+    // -------------------------------------------------------------------------
+    // Injected immutable peer templates
+    // -------------------------------------------------------------------------
+    //
+    // In a multi-contract covenant family, each contract stores the peer templates it may
+    // route to or return to. These template ids are injected into state instead of derived
+    // recursively from peer scripts, which avoids template-hashing cycles.
+    byte[32] mux_template = init_mux_template;
+    byte[32] a_template = init_a_template;
+    byte[32] b_template = init_b_template;
 
-    // The policy stage decides which worker template hash to route to.
-    function policy_route(State prev_state, int selector) : (byte[32]) {
-        byte[32] prev_b_hash = prev_state.bHash;
-        byte[32] targetHash = prev_state.aHash;
+    // -------------------------------------------------------------------------
+    // Mutable shared application state
+    // -------------------------------------------------------------------------
+    int value = init_value;
+
+    // Mux is the entry lane. It chooses a worker template based on the selector,
+    // but does not change shared state itself.
+    entrypoint function route(int selector, byte[] target_prefix, byte[] target_suffix) {
+        // Pre-conditions: verify covenant boundaries (1 -> 1)
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+
+        // Multiplexer logic:
+        //
+        // 1. Select the target worker template
+        byte[32] target_template = a_template;
         if (selector != 0) {
             require(selector == 1);
-            targetHash = prev_b_hash;
+            target_template = b_template;
         }
 
-        return(targetHash);
-    }
-
-    // The wrapper reconstructs State, enforces singleton continuation, and validates the chosen worker output.
-    entrypoint function route(int selector, byte[] targetPrefix, byte[] targetSuffix) {
-        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
-
-        State prev_state = { muxHash: muxHash, aHash: aHash, bHash: bHash, value: value };
-        (byte[32] targetHash) = policy_route(prev_state, selector);
-
-        require(cov_out_count == 1);
-        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-
-        validateOutputStateWithTemplate(
-            cov_out_idx,
-            prev_state,
-            targetPrefix,
-            targetSuffix,
-            targetHash
-        );
+        // 2. Pass state as is to the selected worker
+        State state = { mux_template: mux_template, a_template: a_template, b_template: b_template, value: value };
+        validateOutputStateWithTemplate(output_idx, state, target_prefix, target_suffix, target_template);
     }
 }
