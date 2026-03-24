@@ -40,8 +40,8 @@ pub enum ProtocolMoveError {
     Standard(#[from] StandardMoveError),
 }
 
-pub fn apply_protocol_move(state: &ProtocolState, mv: ProtocolMoveSpec) -> Result<ProtocolTransition, ProtocolMoveError> {
-    match apply_standard_move(
+pub fn apply_standard_chess_move(state: &ProtocolState, mv: ProtocolMoveSpec) -> Result<ProtocolTransition, ProtocolMoveError> {
+    let next = apply_standard_move(
         &StandardState {
             board: state.board.clone(),
             turn: state.turn,
@@ -49,12 +49,17 @@ pub fn apply_protocol_move(state: &ProtocolState, mv: ProtocolMoveSpec) -> Resul
             en_passant_idx: state.en_passant_idx,
         },
         StandardMoveSpec { from_x: mv.from_x, from_y: mv.from_y, to_x: mv.to_x, to_y: mv.to_y, promo_piece: mv.promo_piece },
-    ) {
-        Ok(next) => Ok(from_standard_transition(next)),
-        Err(StandardMoveError::InvalidFen(_) | StandardMoveError::IllegalMove(_) | StandardMoveError::MissingPiece(_)) => {
-            apply_sil_protocol_move(state, mv)
-        }
-        Err(err) => Err(ProtocolMoveError::Standard(err)),
+    )?;
+    Ok(from_standard_transition(next))
+}
+
+pub fn apply_protocol_move(state: &ProtocolState, mv: ProtocolMoveSpec) -> Result<ProtocolTransition, ProtocolMoveError> {
+    match apply_standard_chess_move(state, mv) {
+        Ok(next) => Ok(next),
+        Err(ProtocolMoveError::Standard(
+            StandardMoveError::InvalidFen(_) | StandardMoveError::IllegalMove(_) | StandardMoveError::MissingPiece(_),
+        )) => apply_sil_protocol_move(state, mv),
+        Err(err) => Err(err),
     }
 }
 
