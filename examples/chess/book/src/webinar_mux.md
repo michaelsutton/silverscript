@@ -57,6 +57,37 @@ This is the first important multi-contract pattern:
 - carry trusted peer templates in state
 - use them later to validate foreign outputs
 
+An illustrative SIL excerpt:
+
+```js
+byte[32] target_template = a_template;
+if (selector != 0) {
+    require(selector == 1);
+    target_template = b_template;
+}
+
+State state = {
+    mux_template: mux_template,
+    a_template: a_template,
+    b_template: b_template,
+    value: value
+};
+
+validateOutputStateWithTemplate(
+    output_idx,
+    state,
+    target_prefix,
+    target_suffix,
+    target_template
+);
+```
+
+That is the mux pattern in one small block:
+
+- choose a peer template
+- preserve or commit state
+- validate one foreign output under that template
+
 ## Why A Naive Mux Can Stall
 
 The naive mux pattern is elegant, but incomplete.
