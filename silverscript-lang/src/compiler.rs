@@ -2572,7 +2572,6 @@ fn compile_entrypoint_function<'i>(
                 &mut stack_bindings,
                 &mut builder,
                 options,
-                false,
                 contract_fields,
                 contract_field_prefix_len,
                 constants,
@@ -2663,7 +2662,6 @@ fn compile_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    preserve_stack_rebinding_exprs: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -3046,7 +3044,6 @@ fn compile_statement<'i>(
             stack_bindings,
             builder,
             options,
-            preserve_stack_rebinding_exprs,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
@@ -3072,7 +3069,6 @@ fn compile_statement<'i>(
             stack_bindings,
             builder,
             options,
-            preserve_stack_rebinding_exprs,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
@@ -3295,7 +3291,6 @@ fn compile_statement<'i>(
                     stack_bindings,
                     builder,
                     options,
-                    preserve_stack_rebinding_exprs,
                     contract_fields,
                     contract_field_prefix_len,
                     contract_constants,
@@ -3457,17 +3452,13 @@ fn compile_statement<'i>(
                     // drop the old target, then restore the peeled items. This makes new_value end
                     // up exactly where the old binding was.
                     stack_bindings.emit_update_stack_for_rebinding(name, builder)?;
-                    if preserve_stack_rebinding_exprs {
-                        let updated = if let Some(previous) = env.get(name) {
-                            replace_identifier(&lowered_expr, name, previous)
-                        } else {
-                            lowered_expr
-                        };
-                        let resolved = resolve_expr_for_runtime(updated, env, stack_bindings, types, &mut HashSet::new())?;
-                        env.insert(name.clone(), resolved);
+                    let updated = if let Some(previous) = env.get(name) {
+                        replace_identifier(&lowered_expr, name, previous)
                     } else {
-                        env.insert(name.clone(), Expr::identifier(name));
-                    }
+                        lowered_expr
+                    };
+                    let resolved = resolve_expr_for_runtime(updated, env, stack_bindings, types, &mut HashSet::new())?;
+                    env.insert(name.clone(), resolved);
                     return Ok(Vec::new());
                 }
 
@@ -4697,7 +4688,6 @@ fn compile_inline_call<'i>(
                 &mut bindings.stack_bindings,
                 builder,
                 options,
-                true,
                 contract_fields,
                 0,
                 contract_constants,
@@ -4734,7 +4724,6 @@ fn compile_if_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    preserve_stack_rebinding_exprs: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -4777,7 +4766,6 @@ fn compile_if_statement<'i>(
         &mut then_stack_bindings,
         builder,
         options,
-        preserve_stack_rebinding_exprs,
         contract_fields,
         contract_field_prefix_len,
         contract_constants,
@@ -4805,7 +4793,6 @@ fn compile_if_statement<'i>(
             &mut else_stack_bindings,
             builder,
             options,
-            preserve_stack_rebinding_exprs,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
@@ -4972,7 +4959,6 @@ fn compile_block<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    preserve_stack_rebinding_exprs: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -4997,7 +4983,6 @@ fn compile_block<'i>(
                 stack_bindings,
                 builder,
                 options,
-                preserve_stack_rebinding_exprs,
                 contract_fields,
                 contract_field_prefix_len,
                 contract_constants,
@@ -5038,7 +5023,6 @@ fn compile_for_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    preserve_stack_rebinding_exprs: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -5080,7 +5064,6 @@ fn compile_for_statement<'i>(
                 stack_bindings,
                 builder,
                 options,
-                preserve_stack_rebinding_exprs,
                 contract_fields,
                 contract_field_prefix_len,
                 contract_constants,
@@ -5106,7 +5089,6 @@ fn compile_for_statement<'i>(
                 stack_bindings,
                 builder,
                 options,
-                preserve_stack_rebinding_exprs,
                 contract_fields,
                 contract_field_prefix_len,
                 contract_constants,
@@ -5155,7 +5137,6 @@ fn compile_constant_for_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    preserve_stack_rebinding_exprs: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -5190,7 +5171,6 @@ fn compile_constant_for_statement<'i>(
             stack_bindings,
             builder,
             options,
-            preserve_stack_rebinding_exprs,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
@@ -5222,7 +5202,6 @@ fn compile_runtime_for_statement<'i>(
     stack_bindings: &mut StackBindings,
     builder: &mut ScriptBuilder,
     options: CompileOptions,
-    preserve_stack_rebinding_exprs: bool,
     contract_fields: &[ContractFieldAst<'i>],
     contract_field_prefix_len: usize,
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -5262,7 +5241,6 @@ fn compile_runtime_for_statement<'i>(
             stack_bindings,
             builder,
             options,
-            preserve_stack_rebinding_exprs,
             contract_fields,
             contract_field_prefix_len,
             contract_constants,
