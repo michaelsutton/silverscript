@@ -19,7 +19,7 @@ use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use silverscript_lang::ast::Expr;
 use silverscript_lang::compiler::{compile_contract, CompileOptions, CompiledContract};
 
-use crate::protocol_move::{apply_protocol_move, ProtocolMoveSpec, ProtocolState};
+use crate::protocol_move::{apply_protocol_move, apply_standard_chess_move, ProtocolMoveSpec, ProtocolState};
 use crate::{
     castle_challenge_contract_path, castle_contract_path, diag_contract_path, horiz_contract_path, king_contract_path,
     knight_contract_path, league_contract_path, load_contract_source, mux_contract_path, pawn_contract_path, player_contract_path,
@@ -1455,7 +1455,7 @@ impl TxArena {
         let executed_route_tx = route_tx.clone();
         let worker_outpoint = TransactionOutpoint { transaction_id: executed_route_tx.id(), index: 0 };
 
-        let next = apply_worker_state(worker, &pending, mv)?;
+        let next = apply_worker_state(worker, &pending, mv, allow_partial_commit)?;
         let next_mux = self.compile_mux(&next);
         let apply_sigscript = entry_sigscript(
             &worker_contract,
@@ -2360,17 +2360,39 @@ fn pending_state_for_move(game: &GameStateData, mv: MoveSpec) -> GameStateData {
     }
 }
 
-fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateData, OrchestratorError> {
-    let next = apply_protocol_move(
-        &ProtocolState {
-            board: game.board.clone(),
-            turn: game.turn,
-            castle_rights: game.castle_rights,
-            en_passant_idx: game.en_passant_idx,
-        },
-        ProtocolMoveSpec { from_x: mv.from_x, from_y: mv.from_y, to_x: mv.to_x, to_y: mv.to_y, promo_piece: mv.promo_piece },
-    )
-    .map_err(|err| OrchestratorError(err.to_string()))?;
+fn apply_move_to_state(
+    game: &GameStateData,
+    mv: MoveSpec,
+    allow_protocol_nonstandard: bool,
+) -> Result<GameStateData, OrchestratorError> {
+    let next = if allow_protocol_nonstandard {
+        apply_protocol_move(
+            &ProtocolState {
+                board: game.board.clone(),
+                turn: game.turn,
+                castle_rights: game.castle_rights,
+                en_passant_idx: game.en_passant_idx,
+            },
+            ProtocolMoveSpec { from_x: mv.from_x, from_y: mv.from_y, to_x: mv.to_x, to_y: mv.to_y, promo_piece: mv.promo_piece },
+        )
+    } else {
+        apply_standard_chess_move(
+            &ProtocolState {
+                board: game.board.clone(),
+                turn: game.turn,
+                castle_rights: game.castle_rights,
+                en_passant_idx: game.en_passant_idx,
+            },
+            ProtocolMoveSpec { from_x: mv.from_x, from_y: mv.from_y, to_x: mv.to_x, to_y: mv.to_y, promo_piece: mv.promo_piece },
+        )
+    }
+    .map_err(|err| {
+        if allow_protocol_nonstandard {
+            OrchestratorError(err.to_string())
+        } else {
+            OrchestratorError(format!("{err}. Use Force Move to follow the broader protocol path."))
+        }
+    })?;
 
     let mut move_log = game.move_log.clone();
     move_log.push(mv.label());
@@ -2392,8 +2414,13 @@ fn apply_move_to_state(game: &GameStateData, mv: MoveSpec) -> Result<GameStateDa
     })
 }
 
-fn apply_worker_state(worker: WorkerKind, game: &GameStateData, mv: MoveSpec) -> Result<GameStateData, OrchestratorError> {
-    let mut next = apply_move_to_state(game, mv)?;
+fn apply_worker_state(
+    worker: WorkerKind,
+    game: &GameStateData,
+    mv: MoveSpec,
+    allow_protocol_nonstandard: bool,
+) -> Result<GameStateData, OrchestratorError> {
+    let mut next = apply_move_to_state(game, mv, allow_protocol_nonstandard)?;
     next.castle_rights = match worker {
         WorkerKind::Pawn | WorkerKind::Knight | WorkerKind::Diag => game.castle_rights,
         WorkerKind::Vert | WorkerKind::Horiz => {
@@ -2994,7 +3021,7 @@ mod tests {
         };
 
         let err = white.submit_move(MoveSpec::new(4, 1, 4, 4)).expect_err("illegal e2e5 should fail");
-        assert!(err.to_string().contains("apply failed"), "unexpected error: {err}");
+        assert!(err.to_string().contains("Use Force Move"), "unexpected error: {err}");
 
         {
             let arena = shared.borrow();
@@ -3089,7 +3116,10 @@ mod tests {
             game.move_log.clear();
         }
 
-        white.submit_move(MoveSpec::new(0, 0, 0, 3)).expect("king capture txs pass");
+        let err = white.submit_move(MoveSpec::new(0, 0, 0, 3)).expect_err("standard submit should reject king capture");
+        assert!(err.0.contains("Force Move"), "unexpected error: {}", err.0);
+
+        white.force_move(MoveSpec::new(0, 0, 0, 3)).expect("forced king capture txs pass");
 
         let arena = shared.borrow();
         let game = arena.active_game_snapshot().expect("active game remains until settlement");

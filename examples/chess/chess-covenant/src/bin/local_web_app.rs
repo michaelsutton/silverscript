@@ -145,6 +145,9 @@ impl LocalWebController {
 
     fn handle_action(&mut self, action: ActionRequest) -> Result<(), Box<dyn std::error::Error>> {
         match action.action.as_str() {
+            "reset_session" => {
+                *self = Self::new()?;
+            }
             "register" => self.player_mut(action.actor.as_deref().ok_or("missing actor")?)?.register()?,
             "invite" => self.white.send_game_invite(&self.black)?,
             "accept_invite" => self.black.accept_game_invite(&self.white)?,
@@ -187,12 +190,7 @@ impl LocalWebController {
             } else {
                 vec![player_view(&arena, &self.white.player, "white"), player_view(&arena, &self.black.player, "black")]
             },
-            game: observed
-                .active_games
-                .first()
-                .cloned()
-                .map(observed_game_board_view)
-                .or_else(|| arena.active_game_snapshot().map(game_view)),
+            game: arena.active_game_snapshot().map(game_view),
             history: arena.history().iter().map(history_view).collect(),
             notices: self.notices.clone(),
             observer: observed,
@@ -330,18 +328,6 @@ fn observed_game_view(game: &ActiveEntry<GameState>) -> ObservedGameView {
         move_timeout: game.state.move_timeout,
         board_rows: board_rows(&game.state.board),
         move_log: Vec::new(),
-    }
-}
-
-fn observed_game_board_view(game: ObservedGameView) -> GameView {
-    GameView {
-        phase: "mux".to_string(),
-        turn: game.turn,
-        status: game.status,
-        value: Some(game.value),
-        move_timeout: Some(game.move_timeout),
-        board_rows: game.board_rows,
-        move_log: game.move_log,
     }
 }
 
@@ -649,15 +635,97 @@ const INDEX_HTML: &str = r#"<!doctype html>
   <meta charset="utf-8" />
   <title>Chess Covenant Local Arena</title>
   <style>
-    body { font-family: Georgia, serif; margin: 24px; background: #f4f0e8; color: #1f1a17; }
-    h1, h2 { margin-bottom: 0.3rem; }
-    .row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
-    .card { background: #fffaf2; border: 1px solid #d8c8ae; padding: 16px; border-radius: 12px; min-width: 280px; }
-    button, select, input { padding: 8px 10px; margin: 4px 0; font: inherit; }
-    ul { margin-top: 0.5rem; }
-    .error { color: #9d1c1c; min-height: 1.5rem; }
-    .ok { color: #245b2a; min-height: 1.5rem; }
-    .board-wrap { display: inline-block; border: 1px solid #8f7a5b; border-radius: 10px; overflow: hidden; background: #d7c0a2; }
+    :root {
+      --paper: #f5f0e6;
+      --panel: #fffaf2;
+      --ink: #211916;
+      --muted: #6e5b47;
+      --line: #d8c8ae;
+      --accent: #1f6f59;
+      --accent-soft: #d7ece5;
+      --alert: #9d1c1c;
+      --dark-square: #a56d3f;
+      --light-square: #f3e3c8;
+      --white-piece: #fffaf2;
+      --black-piece: #24160d;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: Georgia, serif; margin: 0; background: linear-gradient(180deg, #efe6d6 0%, var(--paper) 26%, #efe9dd 100%); color: var(--ink); }
+    .shell { max-width: 1440px; margin: 0 auto; padding: 24px; }
+    h1, h2, h3 { margin: 0; }
+    p { margin: 0; color: var(--muted); }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .header-actions { display: flex; gap: 10px; align-items: center; }
+    .layout {
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr) 360px;
+      gap: 20px;
+      align-items: start;
+    }
+    .stack { display: grid; gap: 16px; }
+    .card {
+      background: color-mix(in srgb, var(--panel) 92%, white 8%);
+      border: 1px solid var(--line);
+      padding: 16px;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(57, 39, 21, 0.06);
+      min-width: 0;
+    }
+    .card-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+    .card-kicker { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+    .form-grid { display: grid; gap: 10px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    button, select, input {
+      padding: 9px 11px;
+      margin: 0;
+      font: inherit;
+      border-radius: 10px;
+      border: 1px solid #cdb897;
+      background: white;
+    }
+    button {
+      cursor: pointer;
+      background: #f8efe0;
+    }
+    button.primary {
+      background: var(--accent);
+      color: white;
+      border-color: #1b5e4c;
+    }
+    button.secondary {
+      background: #efe5d3;
+    }
+    button.warn {
+      background: #8f2b21;
+      color: white;
+      border-color: #7d2219;
+    }
+    ul { margin: 0; padding-left: 18px; }
+    .status-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .error, .ok {
+      min-height: 42px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.55);
+    }
+    .error { color: var(--alert); }
+    .ok { color: #245b2a; }
+    .board-card { position: relative; }
+    .board-wrap { display: inline-block; border: 1px solid #8f7a5b; border-radius: 14px; overflow: hidden; background: #cfb28f; }
     .board-grid { display: grid; grid-template-columns: repeat(8, 54px); grid-template-rows: repeat(8, 54px); }
     .square {
       width: 54px;
@@ -670,24 +738,26 @@ const INDEX_HTML: &str = r#"<!doctype html>
       user-select: none;
       cursor: pointer;
     }
-    .light { background: #f1e3c6; }
-    .dark { background: #b88b5a; }
-    .piece-white { color: #fff8ef; text-shadow: 0 1px 0 rgba(0,0,0,0.35); }
-    .piece-black { color: #24160d; }
+    .light { background: var(--light-square); }
+    .dark { background: var(--dark-square); }
+    .piece-white { color: var(--white-piece); text-shadow: 0 1px 0 rgba(0,0,0,0.5), 0 0 8px rgba(255,248,231,0.2); }
+    .piece-black { color: var(--black-piece); }
     .selected-square { box-shadow: inset 0 0 0 4px #1f6f59; }
     .target-square { box-shadow: inset 0 0 0 4px #b33b2e; }
     .board-empty {
-      min-width: 430px;
-      min-height: 430px;
+      min-width: 446px;
+      min-height: 446px;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #6e5b47;
+      color: var(--muted);
       background: #f7ecda;
+      border-radius: 14px;
+      border: 1px dashed #cdb897;
     }
     .board-files, .board-ranks {
       display: grid;
-      color: #6e5b47;
+      color: var(--muted);
       font-size: 12px;
       letter-spacing: 0.06em;
       text-transform: uppercase;
@@ -696,96 +766,251 @@ const INDEX_HTML: &str = r#"<!doctype html>
     .board-files span, .board-ranks span { display: flex; align-items: center; justify-content: center; }
     .board-shell { display: flex; gap: 8px; align-items: stretch; }
     .board-ranks { grid-template-rows: repeat(8, 54px); }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .meta-chip {
+      background: #f4ebdd;
+      border: 1px solid #e3d4bb;
+      border-radius: 12px;
+      padding: 10px;
+    }
+    .meta-chip strong { display: block; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+    .list { display: grid; gap: 8px; }
+    .list-item {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid #e3d4bb;
+      background: #fcf6ea;
+    }
+    .list-item.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .list-item button {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
+    .list-title { font-weight: 700; }
+    .list-sub { color: var(--muted); font-size: 14px; margin-top: 3px; }
+    .list-meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .scroll {
+      max-height: 360px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .tx-block {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid #eadbc3;
+      background: #fdf9f2;
+    }
+    .tx-block + .tx-block { margin-top: 8px; }
+    .tx-events { margin-top: 6px; display: grid; gap: 4px; }
+    .tx-inputs { margin-top: 8px; color: var(--muted); font-size: 13px; }
+    .muted { color: var(--muted); }
+    .pill {
+      display: inline-flex;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #efe4d1;
+      color: #654f39;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    @media (max-width: 1240px) {
+      .layout { grid-template-columns: 1fr; }
+      .board-card { position: relative; }
+      .board-empty { min-width: 100%; }
+    }
   </style>
 </head>
 <body>
-  <h1>Chess Covenant Local Arena</h1>
-  <p>Interactive local game UI over the shared tx-driven orchestrator.</p>
-  <div id="status" class="ok"></div>
-  <div id="error" class="error"></div>
-  <div class="row">
-    <div class="card">
-      <h2>Setup</h2>
-      <button onclick="act({action:'register', actor:'white'})">Register White</button><br/>
-      <button onclick="act({action:'register', actor:'black'})">Register Black</button><br/>
-      <button onclick="act({action:'invite'})">White Sends Invite</button><br/>
-      <button onclick="act({action:'accept_invite'})">Black Accepts Invite</button><br/>
-      <button onclick="act({action:'start_game'})">Start Game</button>
+  <div class="shell">
+    <div class="header">
+      <div>
+        <h1>Chess Covenant Local Arena</h1>
+        <p>Interactive local game UI over the shared tx-driven orchestrator and observer index.</p>
+      </div>
+      <div class="header-actions">
+        <span class="pill">local only</span>
+        <button class="secondary" onclick="resetSession()">New Session</button>
+      </div>
     </div>
-    <div class="card">
-      <h2>Moves</h2>
-      <select id="moveActor">
-        <option value="white">white</option>
-        <option value="black">black</option>
-      </select>
-      <input id="moveLabel" value="e2e4" />
-      <button onclick="submitMove()">Submit Move</button>
-      <button onclick="forceMove()">Force Move</button><br/>
-      <select id="surrenderActor">
-        <option value="white">white</option>
-        <option value="black">black</option>
-      </select>
-      <button onclick="submitSurrender()">Surrender</button>
+    <div class="status-bar">
+      <div id="status" class="ok"></div>
+      <div id="error" class="error"></div>
     </div>
-    <div class="card">
-      <h2>Settlement</h2>
-      <select id="settlementActor">
-        <option value="white">white</option>
-        <option value="black">black</option>
-      </select>
-      <select id="settlementResult">
-        <option value="white_win">white win</option>
-        <option value="black_win">black win</option>
-        <option value="draw">draw</option>
-      </select><br/>
-      <button onclick="requestSettlement()">Request Settlement</button>
-      <button onclick="settle()">Settle</button>
-      <button onclick="claimTimeout()">Claim Timeout</button><br/>
-      <select id="retireActor">
-        <option value="white">white</option>
-        <option value="black">black</option>
-      </select>
-      <button onclick="retirePlayer()">Retire</button>
-    </div>
-  </div>
-  <div class="row" style="margin-top: 24px;">
-    <div class="card">
-      <h2>Players</h2>
-      <div id="players"></div>
-    </div>
-    <div class="card">
-      <h2>Board</h2>
-      <div id="board" class="board-empty">No active game</div>
-      <div id="gameMeta"></div>
-    </div>
-    <div class="card">
-      <h2>Notices</h2>
-      <ul id="notices"></ul>
-    </div>
-    <div class="card">
-      <h2>Tx History</h2>
-      <ul id="history"></ul>
-    </div>
-  </div>
-  <div class="row" style="margin-top: 24px;">
-    <div class="card">
-      <h2>Observed Chain</h2>
-      <div id="observerMeta"></div>
-      <ul id="observerGames"></ul>
-      <ul id="observerWarnings"></ul>
-    </div>
-    <div class="card">
-      <h2>Observed Settles</h2>
-      <ul id="observerSettles"></ul>
-    </div>
-    <div class="card">
-      <h2>Observed Tx Events</h2>
-      <ul id="observerTxs"></ul>
+    <div class="layout">
+      <div class="stack">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Setup</div>
+              <h2>Session Controls</h2>
+            </div>
+          </div>
+          <div class="button-row">
+            <button onclick="act({action:'register', actor:'white'})">Register White</button>
+            <button onclick="act({action:'register', actor:'black'})">Register Black</button>
+          </div>
+          <div class="button-row" style="margin-top: 8px;">
+            <button onclick="act({action:'invite'})">Send Invite</button>
+            <button onclick="act({action:'accept_invite'})">Accept Invite</button>
+            <button class="primary" onclick="act({action:'start_game'})">Start Game</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Moves</div>
+              <h2>Play</h2>
+            </div>
+            <div class="muted">Click or drag pieces on the board</div>
+          </div>
+          <div class="form-grid">
+            <div class="form-row">
+              <select id="moveActor">
+                <option value="white">white</option>
+                <option value="black">black</option>
+              </select>
+              <input id="moveLabel" value="e2e4" />
+            </div>
+            <div class="button-row">
+              <button class="primary" onclick="submitMove()">Submit Move</button>
+              <button onclick="forceMove()">Force Protocol Move</button>
+            </div>
+            <div class="form-row">
+              <select id="surrenderActor">
+                <option value="white">white</option>
+                <option value="black">black</option>
+              </select>
+              <button class="warn" onclick="submitSurrender()">Surrender</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Settlement</div>
+              <h2>Resolve</h2>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="form-row">
+              <select id="settlementActor">
+                <option value="white">white</option>
+                <option value="black">black</option>
+              </select>
+              <select id="settlementResult">
+                <option value="white_win">white win</option>
+                <option value="black_win">black win</option>
+                <option value="draw">draw</option>
+              </select>
+            </div>
+            <div class="button-row">
+              <button onclick="requestSettlement()">Request Settlement</button>
+              <button class="primary" onclick="settle()">Settle</button>
+              <button onclick="claimTimeout()">Claim Timeout</button>
+            </div>
+            <div id="settlementHint" class="muted"></div>
+            <div class="form-row">
+              <select id="retireActor">
+                <option value="white">white</option>
+                <option value="black">black</option>
+              </select>
+              <button onclick="retirePlayer()">Retire</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Players</div>
+              <h2>Registered Players</h2>
+            </div>
+          </div>
+          <div id="players" class="list"></div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="card board-card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Board</div>
+              <h2>Current Position</h2>
+            </div>
+            <div id="boardSource" class="muted"></div>
+          </div>
+          <div id="board" class="board-empty">No active game</div>
+          <div id="gameMeta" class="meta-grid"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Games</div>
+              <h2>Active Games</h2>
+            </div>
+          </div>
+          <div id="observerMeta" class="muted" style="margin-bottom: 12px;"></div>
+          <div id="observerGames" class="list"></div>
+          <div id="observerWarnings" class="list" style="margin-top: 12px;"></div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Messages</div>
+              <h2>Notices</h2>
+            </div>
+          </div>
+          <div id="notices" class="list scroll"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Transactions</div>
+              <h2>Tx History</h2>
+            </div>
+          </div>
+          <div id="history" class="list scroll"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Observed</div>
+              <h2>Settles</h2>
+            </div>
+          </div>
+          <div id="observerSettles" class="list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-kicker">Observed</div>
+              <h2>Tx Events</h2>
+            </div>
+          </div>
+          <div id="observerTxs" class="scroll"></div>
+        </div>
+      </div>
     </div>
   </div>
   <script>
     let latestState = null;
     let selectedSource = null;
+    let hoveredTarget = null;
+    let focusedGameOutpoint = null;
 
     async function fetchState() {
       const res = await fetch('/api/state');
@@ -808,6 +1033,12 @@ const INDEX_HTML: &str = r#"<!doctype html>
         document.getElementById('error').textContent = data.error;
       }
     }
+    function resetSession() {
+      selectedSource = null;
+      hoveredTarget = null;
+      focusedGameOutpoint = null;
+      act({action: 'reset_session'});
+    }
     function submitMove() {
       act({
         action: 'move',
@@ -829,16 +1060,18 @@ const INDEX_HTML: &str = r#"<!doctype html>
       });
     }
     function requestSettlement() {
+      const result = currentSettlementResult(latestState) || document.getElementById('settlementResult').value;
       act({
         action: 'request_settlement',
         actor: document.getElementById('settlementActor').value,
-        result: document.getElementById('settlementResult').value
+        result
       });
     }
     function settle() {
+      const result = currentSettlementResult(latestState) || document.getElementById('settlementResult').value;
       act({
         action: 'settle',
-        result: document.getElementById('settlementResult').value
+        result
       });
     }
     function claimTimeout() {
@@ -870,44 +1103,52 @@ const INDEX_HTML: &str = r#"<!doctype html>
     }
     function clearSelection() {
       selectedSource = null;
+      hoveredTarget = null;
     }
     function beginSourceSelection(square) {
-      if (!latestState || !latestState.game) return;
-      const piece = pieceAt(latestState.game.board_rows, square);
+      const game = displayedGame(latestState);
+      if (!game) return;
+      const piece = pieceAt(game.board_rows, square);
       const side = pieceSide(piece);
       if (!side) {
         document.getElementById('status').textContent = 'Choose a source square with a piece.';
         return;
       }
-      if (side !== latestState.game.turn) {
-        document.getElementById('status').textContent = `It is ${latestState.game.turn}'s turn.`;
+      if (side !== game.turn) {
+        document.getElementById('status').textContent = `It is ${game.turn}'s turn.`;
         return;
       }
       selectedSource = square;
-      document.getElementById('moveActor').value = latestState.game.turn;
+      document.getElementById('moveActor').value = game.turn;
       document.getElementById('status').textContent = `Selected ${square}. Choose a destination square.`;
       render(latestState);
     }
     function finishSquareMove(source, target) {
-      if (!latestState || !latestState.game) return;
+      const game = displayedGame(latestState);
+      if (!game) return;
       if (source === target) {
         clearSelection();
         document.getElementById('status').textContent = 'Selection cleared.';
         render(latestState);
         return;
       }
-      document.getElementById('moveActor').value = latestState.game.turn;
+      const targetPiece = pieceAt(game.board_rows, target);
+      if (pieceSide(targetPiece) === game.turn) {
+        beginSourceSelection(target);
+        return;
+      }
+      document.getElementById('moveActor').value = game.turn;
       document.getElementById('moveLabel').value = `${source}${target}`;
       clearSelection();
       render(latestState);
-      if (isPromotionMove(latestState.game.board_rows, source, target)) {
+      if (isPromotionMove(game.board_rows, source, target)) {
         document.getElementById('status').textContent = `Move filled as ${source}${target}. Append promotion piece like q/n/r/b if needed.`;
         return;
       }
       submitMove();
     }
     function handleSquareClick(square) {
-      if (!latestState || !latestState.game) return;
+      if (!displayedGame(latestState)) return;
       if (!selectedSource) {
         beginSourceSelection(square);
         return;
@@ -915,28 +1156,106 @@ const INDEX_HTML: &str = r#"<!doctype html>
       finishSquareMove(selectedSource, square);
     }
     function handleSquareDragStart(event, square) {
-      if (!latestState || !latestState.game) return;
-      const piece = pieceAt(latestState.game.board_rows, square);
-      if (pieceSide(piece) !== latestState.game.turn) {
+      const game = displayedGame(latestState);
+      if (!game) return;
+      const piece = pieceAt(game.board_rows, square);
+      if (pieceSide(piece) !== game.turn) {
         event.preventDefault();
         return;
       }
       selectedSource = square;
+      hoveredTarget = null;
       event.dataTransfer.setData('text/plain', square);
       event.dataTransfer.effectAllowed = 'move';
-      document.getElementById('moveActor').value = latestState.game.turn;
+      document.getElementById('moveActor').value = game.turn;
       document.getElementById('status').textContent = `Dragging from ${square}. Drop on a destination square.`;
-      render(latestState);
     }
-    function handleSquareDragOver(event) {
+    function handleSquareDragOver(event, square) {
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
+      if (hoveredTarget !== square) {
+        hoveredTarget = square;
+        render(latestState);
+      }
     }
     function handleSquareDrop(event, square) {
       event.preventDefault();
       const source = event.dataTransfer.getData('text/plain') || selectedSource;
       if (!source) return;
+       hoveredTarget = null;
       finishSquareMove(source, square);
+    }
+    function handleSquareDragEnd() {
+      hoveredTarget = null;
+      render(latestState);
+    }
+    function selectObservedGame(outpoint) {
+      focusedGameOutpoint = outpoint;
+      clearSelection();
+      render(latestState);
+    }
+    function displayedGame(state) {
+      if (!state) return null;
+      if (focusedGameOutpoint) {
+        const selected = state.observer.active_games.find(g => g.outpoint === focusedGameOutpoint);
+        if (selected) {
+          return {
+            source: `observed game ${selected.outpoint}`,
+            phase: 'observed',
+            turn: selected.turn,
+            status: selected.status,
+            value: selected.value,
+            move_timeout: selected.move_timeout,
+            board_rows: selected.board_rows,
+            move_log: selected.move_log,
+          };
+        }
+      }
+      if (state.game) {
+        return {
+          source: 'current local game',
+          phase: state.game.phase,
+          turn: state.game.turn,
+          status: state.game.status,
+          value: state.game.value,
+          move_timeout: state.game.move_timeout,
+          board_rows: state.game.board_rows,
+          move_log: state.game.move_log,
+        };
+      }
+      if (state.observer.active_games.length > 0) {
+        const selected = state.observer.active_games[state.observer.active_games.length - 1];
+        focusedGameOutpoint = selected.outpoint;
+        return {
+          source: `observed game ${selected.outpoint}`,
+          phase: 'observed',
+          turn: selected.turn,
+          status: selected.status,
+          value: selected.value,
+          move_timeout: selected.move_timeout,
+          board_rows: selected.board_rows,
+          move_log: selected.move_log,
+        };
+      }
+      focusedGameOutpoint = null;
+      return null;
+    }
+    function currentSettlementResult(state) {
+      if (!state) return null;
+      if (state.game) {
+        if (state.game.status === 'white_win') return 'white_win';
+        if (state.game.status === 'black_win') return 'black_win';
+        if (state.game.status === 'draw') return 'draw';
+      }
+      const focusedSettle = focusedGameOutpoint
+        ? state.observer.active_settles.find(s => s.outpoint === focusedGameOutpoint)
+        : null;
+      const settle = focusedSettle || state.observer.active_settles[0];
+      if (!settle) return null;
+      if (settle.status === 'white_win') return 'white_win';
+      if (settle.status === 'black_win') return 'black_win';
+      if (settle.status === 'draw') return 'draw';
+      return null;
     }
     function renderBoard(boardRows) {
       const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -963,11 +1282,13 @@ const INDEX_HTML: &str = r#"<!doctype html>
           const tone = ((row + col) % 2 === 0) ? 'light' : 'dark';
           const glyphInfo = pieceGlyph[piece] ?? ['',''];
           const selectionClass = square === selectedSource ? 'selected-square' : '';
+          const targetClass = square === hoveredTarget ? 'target-square' : '';
           squares.push(
-            `<div class="square ${tone} ${glyphInfo[1]} ${selectionClass}" title="${square}" draggable="${piece !== '.'}"
+            `<div class="square ${tone} ${glyphInfo[1]} ${selectionClass} ${targetClass}" title="${square}" draggable="${piece !== '.'}"
               onclick="handleSquareClick('${square}')"
               ondragstart="handleSquareDragStart(event, '${square}')"
-              ondragover="handleSquareDragOver(event)"
+              ondragend="handleSquareDragEnd()"
+              ondragover="handleSquareDragOver(event, '${square}')"
               ondrop="handleSquareDrop(event, '${square}')">${glyphInfo[0]}</div>`
           );
         }
@@ -986,38 +1307,84 @@ const INDEX_HTML: &str = r#"<!doctype html>
     }
     function render(state) {
       latestState = state;
+      const game = displayedGame(state);
       document.getElementById('players').innerHTML = state.players.map(p =>
-        `<div><strong>${p.role}</strong>: ref=${p.player_ref}, value=${p.value ?? 'n/a'}, rating=${p.rating}, open=${p.open_games}, W/D/L=${p.wins}/${p.draws}/${p.losses}</div>`
+        `<div class="list-item">
+          <div class="list-title">${p.role}</div>
+          <div class="list-sub">${p.player_ref}</div>
+          <div class="list-meta">value=${p.value ?? 'n/a'} · rating=${p.rating} · open=${p.open_games} · W/D/L=${p.wins}/${p.draws}/${p.losses}</div>
+        </div>`
       ).join('');
-      if (state.game) {
+      if (game) {
         document.getElementById('board').className = '';
-        document.getElementById('board').innerHTML = renderBoard(state.game.board_rows);
-        document.getElementById('gameMeta').textContent =
-          `phase=${state.game.phase}, turn=${state.game.turn}, status=${state.game.status}, value=${state.game.value ?? 'n/a'}, timeout=${state.game.move_timeout ?? 'n/a'}, moves=${state.game.move_log.join(', ')}`;
+        document.getElementById('board').innerHTML = renderBoard(game.board_rows);
+        document.getElementById('boardSource').textContent = game.source;
+        document.getElementById('gameMeta').innerHTML = [
+          ['phase', game.phase],
+          ['turn', game.turn],
+          ['status', game.status],
+          ['value', game.value ?? 'n/a'],
+          ['timeout', game.move_timeout ?? 'n/a'],
+          ['moves', game.move_log.length ? game.move_log.join(', ') : 'none yet'],
+        ].map(([label, value]) => `<div class="meta-chip"><strong>${label}</strong>${value}</div>`).join('');
       } else {
         clearSelection();
         document.getElementById('board').className = 'board-empty';
         document.getElementById('board').textContent = 'No active game';
-        document.getElementById('gameMeta').textContent = '';
+        document.getElementById('boardSource').textContent = '';
+        document.getElementById('gameMeta').innerHTML = '';
       }
-      document.getElementById('notices').innerHTML = state.notices.map(n => `<li>${n}</li>`).join('');
-      document.getElementById('history').innerHTML = state.history.map(h => `<li>${h.recipe_name} [${h.signer_names.join(', ')}]</li>`).join('');
+      document.getElementById('notices').innerHTML = state.notices.length
+        ? state.notices.map(n => `<div class="list-item"><div class="list-sub">${n}</div></div>`).join('')
+        : `<div class="list-item"><div class="list-sub">No notices yet.</div></div>`;
+      document.getElementById('history').innerHTML = state.history.length
+        ? state.history.map(h => `<div class="list-item"><div class="list-title">${h.recipe_name}</div><div class="list-sub">${h.signer_names.join(', ') || 'unsigned'}</div></div>`).join('')
+        : `<div class="list-item"><div class="list-sub">No submitted transactions yet.</div></div>`;
       const observer = state.observer;
+      const suggestedResult = currentSettlementResult(state);
+      if (suggestedResult) {
+        document.getElementById('settlementResult').value = suggestedResult;
+        document.getElementById('settlementHint').textContent = `Current terminal result: ${suggestedResult.replace('_', ' ')}. Settle will use it by default.`;
+      } else {
+        document.getElementById('settlementHint').textContent = 'No terminal result yet. Standard play rejects illegal moves; use Force Protocol Move only if you want to push the broader protocol path.';
+      }
       document.getElementById('observerMeta').textContent = observer.error
         ? `observer error: ${observer.error}`
         : `league lanes=${observer.league_lane_count}, base rating=${observer.latest_league_rating ?? 'n/a'}, active games=${observer.active_games.length}, active settles=${observer.active_settles.length}`;
-      document.getElementById('observerGames').innerHTML = observer.active_games.map(g =>
-        `<li>${g.pair} @ ${g.outpoint}: value=${g.value}, turn=${g.turn}, status=${g.status}, timeout=${g.move_timeout}</li>`
-      ).join('');
-      document.getElementById('observerWarnings').innerHTML = observer.warnings.map(w => `<li>${w}</li>`).join('');
-      document.getElementById('observerSettles').innerHTML = observer.active_settles.map(s =>
-        `<li>${s.pair} @ ${s.outpoint}: value=${s.value}, status=${s.status}</li>`
-      ).join('');
-      document.getElementById('observerTxs').innerHTML = observer.transactions.map(tx => {
-        const events = tx.event_lines.length ? tx.event_lines.join(' | ') : 'no high-level events';
-        const inputs = tx.input_lines.join(' ; ');
-        return `<li><strong>${tx.txid}</strong><br/>${events}<br/><small>${inputs}</small></li>`;
-      }).join('');
+      document.getElementById('observerGames').innerHTML = observer.active_games.length
+        ? observer.active_games.map(g =>
+            `<div class="list-item ${g.outpoint === focusedGameOutpoint ? 'active' : ''}">
+              <button onclick="selectObservedGame('${g.outpoint}')">
+                <div class="list-title">${g.pair}</div>
+                <div class="list-sub">${g.outpoint}</div>
+                <div class="list-meta">value=${g.value} · turn=${g.turn} · status=${g.status} · timeout=${g.move_timeout}</div>
+              </button>
+            </div>`
+          ).join('')
+        : `<div class="list-item"><div class="list-sub">No active games.</div></div>`;
+      document.getElementById('observerWarnings').innerHTML = observer.warnings.length
+        ? observer.warnings.map(w => `<div class="list-item"><div class="list-sub">${w}</div></div>`).join('')
+        : '';
+      document.getElementById('observerSettles').innerHTML = observer.active_settles.length
+        ? observer.active_settles.map(s =>
+            `<div class="list-item">
+              <div class="list-title">${s.pair}</div>
+              <div class="list-sub">${s.outpoint}</div>
+              <div class="list-meta">value=${s.value} · status=${s.status}</div>
+            </div>`
+          ).join('')
+        : `<div class="list-item"><div class="list-sub">No active settles.</div></div>`;
+      document.getElementById('observerTxs').innerHTML = observer.transactions.length
+        ? observer.transactions.map(tx => {
+            const events = tx.event_lines.length
+              ? tx.event_lines.map(line => `<div>${line}</div>`).join('')
+              : '<div class="muted">no high-level events</div>';
+            const inputs = tx.input_lines.length
+              ? tx.input_lines.map(line => `<div>${line}</div>`).join('')
+              : '<div class="muted">no observed inputs</div>';
+            return `<div class="tx-block"><div class="list-title">${tx.txid}</div><div class="tx-events">${events}</div><div class="tx-inputs">${inputs}</div></div>`;
+          }).join('')
+        : `<div class="list-item"><div class="list-sub">No observed transactions yet.</div></div>`;
     }
     fetchState();
   </script>
@@ -1092,5 +1459,93 @@ mod tests {
         assert_eq!(mv.to_x, 4);
         assert_eq!(mv.to_y, 7);
         assert_eq!(mv.promo_piece, 5);
+    }
+
+    #[test]
+    fn reset_session_clears_local_state() {
+        let mut app = LocalWebController::new().expect("controller builds");
+        app.handle_action(ActionRequest { action: "register".into(), actor: Some("white".into()), move_label: None, result: None })
+            .expect("white registers");
+        app.handle_action(ActionRequest { action: "register".into(), actor: Some("black".into()), move_label: None, result: None })
+            .expect("black registers");
+        app.handle_action(ActionRequest { action: "start_game".into(), actor: None, move_label: None, result: None })
+            .expect("game starts");
+
+        app.handle_action(ActionRequest { action: "reset_session".into(), actor: None, move_label: None, result: None })
+            .expect("reset works");
+
+        let snapshot = app.snapshot();
+        assert!(snapshot.game.is_none());
+        assert!(snapshot.history.is_empty());
+        assert!(snapshot.players.iter().any(|player| !player.registered));
+    }
+
+    #[test]
+    fn settlement_snapshot_updates_player_ratings() {
+        let mut app = LocalWebController::new().expect("controller builds");
+        app.handle_action(ActionRequest { action: "register".into(), actor: Some("white".into()), move_label: None, result: None })
+            .expect("white registers");
+        app.handle_action(ActionRequest { action: "register".into(), actor: Some("black".into()), move_label: None, result: None })
+            .expect("black registers");
+        app.handle_action(ActionRequest { action: "invite".into(), actor: None, move_label: None, result: None })
+            .expect("invite works");
+        app.handle_action(ActionRequest { action: "accept_invite".into(), actor: None, move_label: None, result: None })
+            .expect("accept works");
+        app.handle_action(ActionRequest { action: "start_game".into(), actor: None, move_label: None, result: None })
+            .expect("start works");
+        app.handle_action(ActionRequest {
+            action: "move".into(),
+            actor: Some("white".into()),
+            move_label: Some("e2e4".into()),
+            result: None,
+        })
+        .expect("white move works");
+        app.handle_action(ActionRequest { action: "surrender".into(), actor: Some("black".into()), move_label: None, result: None })
+            .expect("surrender works");
+        app.handle_action(ActionRequest {
+            action: "request_settlement".into(),
+            actor: Some("black".into()),
+            move_label: None,
+            result: Some("white_win".into()),
+        })
+        .expect("request works");
+        app.handle_action(ActionRequest { action: "settle".into(), actor: None, move_label: None, result: Some("white_win".into()) })
+            .expect("settle works");
+
+        let snapshot = app.snapshot();
+        let white = snapshot.players.iter().find(|player| player.role == "white").expect("white player in snapshot");
+        let black = snapshot.players.iter().find(|player| player.role == "black").expect("black player in snapshot");
+        assert_eq!(white.rating, 1216);
+        assert_eq!(black.rating, 1184);
+    }
+
+    #[test]
+    fn surrender_can_settle_without_manual_request() {
+        let mut app = LocalWebController::new().expect("controller builds");
+        app.handle_action(ActionRequest { action: "register".into(), actor: Some("white".into()), move_label: None, result: None })
+            .expect("white registers");
+        app.handle_action(ActionRequest { action: "register".into(), actor: Some("black".into()), move_label: None, result: None })
+            .expect("black registers");
+        app.handle_action(ActionRequest { action: "invite".into(), actor: None, move_label: None, result: None })
+            .expect("invite works");
+        app.handle_action(ActionRequest { action: "accept_invite".into(), actor: None, move_label: None, result: None })
+            .expect("accept works");
+        app.handle_action(ActionRequest { action: "start_game".into(), actor: None, move_label: None, result: None })
+            .expect("start works");
+        app.handle_action(ActionRequest {
+            action: "move".into(),
+            actor: Some("white".into()),
+            move_label: Some("e2e4".into()),
+            result: None,
+        })
+        .expect("white move works");
+        app.handle_action(ActionRequest { action: "surrender".into(), actor: Some("black".into()), move_label: None, result: None })
+            .expect("surrender works");
+        app.handle_action(ActionRequest { action: "settle".into(), actor: None, move_label: None, result: Some("white_win".into()) })
+            .expect("settle works immediately");
+
+        let snapshot = app.snapshot();
+        assert!(snapshot.game.is_none());
+        assert!(snapshot.notices.iter().any(|notice| notice.contains("settlement complete")));
     }
 }
