@@ -270,7 +270,7 @@ impl<'i> DebugRecorderImpl<'i> for ActiveDebugRecorder<'i> {
         };
 
         let updates = collect_variable_updates(&frame.env_before, &frame.stack_bindings_before, env, types, stack_bindings)?;
-        let console_args = collect_console_args(stmt, env)?;
+        let console_args = collect_console_args(stmt, env, stack_bindings)?;
         let span = SourceSpan::from(stmt.span());
         let bytecode_len = bytecode_end.saturating_sub(frame.start);
         let step_index = entrypoint.push_step(frame.start, frame.start + bytecode_len, span, StepKind::Source {});
@@ -308,7 +308,7 @@ impl<'i> DebugRecorderImpl<'i> for ActiveDebugRecorder<'i> {
         for name in synthetic_names {
             if let Some(expr) = env.get(&name).cloned() {
                 let runtime_binding = runtime_binding_for_inline_binding(&expr, stack_bindings);
-                resolve_variable_update(env, &mut updates, &name, "internal", expr, runtime_binding)?;
+                resolve_variable_update(env, stack_bindings, &mut updates, &name, "internal", expr, runtime_binding)?;
             }
         }
 
@@ -316,7 +316,15 @@ impl<'i> DebugRecorderImpl<'i> for ActiveDebugRecorder<'i> {
             let expr = env.get(&param.name).cloned().unwrap_or_else(|| Expr::identifier(param.name.clone()));
             let runtime_binding = runtime_binding_for_inline_binding(&expr, stack_bindings)
                 .or_else(|| runtime_binding_for_stack_name(&param.name, stack_bindings));
-            resolve_variable_update(env, &mut updates, &param.name, &param.type_ref.type_name(), expr, runtime_binding)?;
+            resolve_variable_update(
+                env,
+                stack_bindings,
+                &mut updates,
+                &param.name,
+                &param.type_ref.type_name(),
+                expr,
+                runtime_binding,
+            )?;
         }
 
         entrypoint.steps[enter_step_index].variable_updates.extend(updates);
@@ -532,30 +540,35 @@ fn collect_variable_updates<'i>(
             continue;
         }
 
-        resolve_variable_update(after_env, &mut updates, &name, type_name, after_expr, after_runtime_binding)?;
+        resolve_variable_update(after_env, after_stack_bindings, &mut updates, &name, type_name, after_expr, after_runtime_binding)?;
     }
     Ok(updates)
 }
 
 fn resolve_variable_update<'i>(
     env: &HashMap<String, Expr<'i>>,
+    stack_bindings: &StackBindings,
     updates: &mut Vec<DebugVariableUpdate<'i>>,
     name: &str,
     type_name: &str,
     expr: Expr<'i>,
     runtime_binding: Option<RuntimeBinding>,
 ) -> Result<(), CompilerError> {
-    let resolved = resolve_expr_for_debug(expr, env, &mut HashSet::new())?;
+    let resolved = resolve_expr_for_debug(expr, env, stack_bindings, &mut HashSet::new())?;
     updates.push(DebugVariableUpdate { name: name.to_string(), type_name: type_name.to_string(), runtime_binding, expr: resolved });
     Ok(())
 }
 
-fn collect_console_args<'i>(stmt: &Statement<'i>, env: &HashMap<String, Expr<'i>>) -> Result<Vec<Expr<'i>>, CompilerError> {
+fn collect_console_args<'i>(
+    stmt: &Statement<'i>,
+    env: &HashMap<String, Expr<'i>>,
+    stack_bindings: &StackBindings,
+) -> Result<Vec<Expr<'i>>, CompilerError> {
     let Statement::Console { args, .. } = stmt else {
         return Ok(Vec::new());
     };
 
-    args.iter().cloned().map(|expr| resolve_expr_for_debug(expr, env, &mut HashSet::new())).collect()
+    args.iter().cloned().map(|expr| resolve_expr_for_debug(expr, env, stack_bindings, &mut HashSet::new())).collect()
 }
 
 fn static_binding_for_stack_name(name: &str, stack_bindings: &HashMap<String, i64>) -> Option<RuntimeBinding> {
