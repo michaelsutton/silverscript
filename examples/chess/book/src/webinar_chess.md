@@ -1,0 +1,183 @@
+# Webinar: Chess As A Multi-Contract System
+
+Chess extends the mux idea into a full multi-role covenant system.
+
+## Zoom Out: The Outer Contracts
+
+Start with the outer shells and ignore the inner move engine for a moment.
+
+```mermaid
+flowchart LR
+    L["League"]
+    P1["Player"]
+    P2["Player"]
+    G["Game family"]
+    S["ChessSettle"]
+
+    L -- "register" --> P1
+    L -- "register" --> P2
+    P1 -- "start game" --> G
+    P2 -- "start game" --> G
+    G -- "terminal route" --> S
+    S -- "settle back" --> P1
+    S -- "settle back" --> P2
+```
+
+Role split:
+
+- `League`: root allocator and public registration lane
+- `Player`: durable identity, funds shell, and score record
+- `Game`: episodic chess state machine
+- `ChessSettle`: terminal worker for payout and score updates
+
+This is the core MCF message:
+
+- not one contract with many branches
+- a system of contracts with different responsibilities
+
+## Zoom In: The Game Family
+
+Inside the game lane, the system narrows again into mux plus workers.
+
+```mermaid
+flowchart TD
+    M["ChessMux"]
+    P["Pawn"]
+    N["Knight"]
+    V["Vert"]
+    H["Horiz"]
+    D["Diag"]
+    K["King"]
+    C["Castle"]
+    CC["Castle Challenge"]
+    S["ChessSettle"]
+
+    M --> P
+    M --> N
+    M --> V
+    M --> H
+    M --> D
+    M --> K
+    M --> C
+    M --> CC
+
+    P --> M
+    N --> M
+    V --> M
+    H --> M
+    D --> M
+    K --> M
+    C --> M
+    CC --> M
+
+    M -- "terminal route / timeout" --> S
+    P -- "timeout" --> S
+    N -- "timeout" --> S
+    V -- "timeout" --> S
+    H -- "timeout" --> S
+    D -- "timeout" --> S
+    K -- "timeout" --> S
+    C -- "timeout" --> S
+    CC -- "timeout" --> S
+```
+
+The branching is not arbitrary. Each worker owns one bounded claim:
+
+- pawn-specific rules
+- knight geometry
+- straight-line sweeps
+- diagonal sweeps
+- king rules
+- castling
+- castle challenge proofs
+
+That is the second big teaching point:
+
+- split a large function into bounded validators
+- let the mux route into the one validator that matches the claimed transition
+
+## Transaction Entity Flow
+
+Here is the entity flow through the main lifecycle.
+
+```mermaid
+flowchart TD
+    A["1 -> 2 register player
+League -> League + Player"]
+    B["2 -> 3 start game
+Player + Player -> Player + Player + Game"]
+    C["1 -> 1 game step
+Mux -> Worker -> Mux"]
+    D["1 -> 1 timeout escape
+Worker -> ChessSettle"]
+    E["3 -> 2 settle
+ChessSettle + Player + Player -> Player + Player"]
+
+    A --> B --> C
+    C --> C
+    C --> D --> E
+    C --> E
+```
+
+What changes in each phase:
+
+### `1 -> 2` League register player
+
+- one immutable league lane recreates itself
+- one fresh player account is emitted
+- the league injects:
+  - `player_template`
+  - `mux_template`
+  - `routes_commitment`
+
+### `2 -> 3` Players start game
+
+- both durable player states are recreated
+- both increment `open_games`
+- one opening `ChessMux` state is created
+- game funding is defined here by mutual consent
+
+### `1 -> 1` Game step
+
+- `ChessMux` authenticates the side to move
+- commits the pending move into game state
+- routes into the selected worker
+- the worker applies one bounded transition
+- the worker returns to mux
+
+There are two subtle control points worth showing live:
+
+- player commitment is checked at mux exit
+- timeout escape exists on every worker
+
+### `3 -> 2` Game settle
+
+Settlement has two outputs:
+
+- KAS value settlement
+- rating / score settlement
+
+`ChessSettle` enforces both:
+
+- objective payout split
+  - winner takes all
+  - draw splits with the odd extra unit going to black
+- objective durable score transition
+  - decrement `open_games`
+  - increment `games`
+  - update `wins / draws / losses`
+  - apply the bounded Elo-style rating update
+
+That is what makes the final stage permissionless once the result is fixed.
+
+## What This Example Teaches
+
+The chess example is not mainly about chess.
+
+It teaches:
+
+- template injection as secure contract family bootstrapping
+- mux/worker multiplexing as bounded verification
+- multi-role covenant systems under one family
+- timeout escape as a liveness primitive
+- objective terminal settlement as the way out of post-result bargaining
