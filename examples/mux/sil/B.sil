@@ -1,37 +1,33 @@
-contract B(byte[32] initMuxHash, byte[32] initAHash, byte[32] initBHash, int initValue) {
-    byte[32] muxHash = initMuxHash;
-    byte[32] aHash = initAHash;
-    byte[32] bHash = initBHash;
-    int value = initValue;
+contract B(byte[32] init_mux_template, byte[32] init_a_template, byte[32] init_b_template, int init_value) {
+    // Injected immutable peer templates (see mux.sil)
+    byte[32] mux_template = init_mux_template;
+    byte[32] a_template = init_a_template;
+    byte[32] b_template = init_b_template;
 
-    // Worker B policy applies a net value change from two args.
-    function policy_apply(State prev_state, int gain, int fee) : (State) {
+    // Mutable shared application state
+    int value = init_value;
+
+    // Worker B is the other routed branch. It applies a net value change from
+    // gain minus fee, then hands control back to Mux.
+    entrypoint function apply(int gain, int fee, byte[] mux_prefix, byte[] mux_suffix) {
+        // Pre-conditions: verify covenant boundaries (1 -> 1)
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+
+        // Worker B logic:
+        //
+        // 1. Verify the net update is positive
         require(gain > fee);
 
-        return({
-            muxHash: prev_state.muxHash,
-            aHash: prev_state.aHash,
-            bHash: prev_state.bHash,
-            value: prev_state.value + gain - fee
-        });
-    }
+        // 2. Rebuild the next state with the net value change
+        State state = {
+            mux_template: mux_template,
+            a_template: a_template,
+            b_template: b_template,
+            value: value + gain - fee
+        };
 
-    // The wrapper reconstructs State, enforces singleton continuation, and validates the return path to Mux.
-    entrypoint function apply(int gain, int fee, byte[] muxPrefix, byte[] muxSuffix) {
-        int cov_out_count = OpAuthOutputCount(this.activeInputIndex);
-
-        State prev_state = { muxHash: muxHash, aHash: aHash, bHash: bHash, value: value };
-        (State cov_new_state) = policy_apply(prev_state, gain, fee);
-
-        require(cov_out_count == 1);
-        int cov_out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-
-        validateOutputStateWithTemplate(
-            cov_out_idx,
-            cov_new_state,
-            muxPrefix,
-            muxSuffix,
-            muxHash
-        );
+        // 3. Return to Mux
+        validateOutputStateWithTemplate(output_idx, state, mux_prefix, mux_suffix, mux_template);
     }
 }

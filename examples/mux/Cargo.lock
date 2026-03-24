@@ -3001,6 +3001,7 @@ dependencies = [
  "chrono",
  "clap",
  "faster-hex 0.10.0",
+ "indexmap",
  "kaspa-consensus-core",
  "kaspa-txscript",
  "kaspa-txscript-errors",

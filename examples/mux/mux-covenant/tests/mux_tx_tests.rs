@@ -24,8 +24,8 @@ fn template_parts_and_hash(source: &str, state: &[Expr<'_>]) -> (Vec<u8>, Vec<u8
     let layout = compiled.state_layout;
     let prefix = compiled.script[..layout.start].to_vec();
     let suffix = compiled.script[layout.start + layout.len..].to_vec();
-    let hash = Blake2bParams::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize().as_bytes().to_vec();
-    (prefix, suffix, hash)
+    let template = Blake2bParams::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize().as_bytes().to_vec();
+    (prefix, suffix, template)
 }
 
 fn test_input(index: u32, signature_script: Vec<u8>) -> TransactionInput {
@@ -107,13 +107,13 @@ struct MuxFixture {
     b_source: String,
     mux_prefix: Vec<u8>,
     mux_suffix: Vec<u8>,
-    mux_hash: Vec<u8>,
+    mux_template: Vec<u8>,
     a_prefix: Vec<u8>,
     a_suffix: Vec<u8>,
-    a_hash: Vec<u8>,
+    a_template: Vec<u8>,
     b_prefix: Vec<u8>,
     b_suffix: Vec<u8>,
-    b_hash: Vec<u8>,
+    b_template: Vec<u8>,
 }
 
 fn build_mux_fixture() -> MuxFixture {
@@ -121,11 +121,11 @@ fn build_mux_fixture() -> MuxFixture {
     let a_source = load_contract_source(worker_a_contract_path());
     let b_source = load_contract_source(worker_b_contract_path());
 
-    let (mux_prefix, mux_suffix, mux_hash) =
+    let (mux_prefix, mux_suffix, mux_template) =
         template_parts_and_hash(&mux_source, &[vec![0x11u8; 32].into(), vec![0x21u8; 32].into(), vec![0x31u8; 32].into(), 5.into()]);
-    let (a_prefix, a_suffix, a_hash) =
+    let (a_prefix, a_suffix, a_template) =
         template_parts_and_hash(&a_source, &[vec![0x41u8; 32].into(), vec![0x51u8; 32].into(), vec![0x61u8; 32].into(), 5.into()]);
-    let (b_prefix, b_suffix, b_hash) =
+    let (b_prefix, b_suffix, b_template) =
         template_parts_and_hash(&b_source, &[vec![0x71u8; 32].into(), vec![0x81u8; 32].into(), vec![0x91u8; 32].into(), 5.into()]);
 
     MuxFixture {
@@ -134,20 +134,20 @@ fn build_mux_fixture() -> MuxFixture {
         b_source,
         mux_prefix,
         mux_suffix,
-        mux_hash,
+        mux_template,
         a_prefix,
         a_suffix,
-        a_hash,
+        a_template,
         b_prefix,
         b_suffix,
-        b_hash,
+        b_template,
     }
 }
 
 #[test]
 fn mux_routes_and_workers_return_to_mux() {
     let fix = build_mux_fixture();
-    let state = [fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), 5.into()];
+    let state = [fix.mux_template.clone().into(), fix.a_template.clone().into(), fix.b_template.clone().into(), 5.into()];
     let a_reward = 3;
     let b_gain = 5;
     let b_fee = 1;
@@ -158,13 +158,13 @@ fn mux_routes_and_workers_return_to_mux() {
     let b = compile_contract(&fix.b_source, &state, CompileOptions::default()).expect("compile B succeeds");
     let mux_after_a = compile_contract(
         &fix.mux_source,
-        &[fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), (5 + a_reward).into()],
+        &[fix.mux_template.clone().into(), fix.a_template.clone().into(), fix.b_template.clone().into(), (5 + a_reward).into()],
         CompileOptions::default(),
     )
     .expect("compile mux after A succeeds");
     let mux_after_b = compile_contract(
         &fix.mux_source,
-        &[fix.mux_hash.clone().into(), fix.a_hash.clone().into(), fix.b_hash.clone().into(), (5 + b_gain - b_fee).into()],
+        &[fix.mux_template.clone().into(), fix.a_template.clone().into(), fix.b_template.clone().into(), (5 + b_gain - b_fee).into()],
         CompileOptions::default(),
     )
     .expect("compile mux after B succeeds");
