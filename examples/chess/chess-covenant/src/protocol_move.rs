@@ -73,6 +73,9 @@ fn from_standard_transition(next: StandardTransition) -> ProtocolTransition {
     }
 }
 
+// Mirrors the covenant's broader protocol semantics for states that are not standard-chess positions.
+// This keeps forced illegal moves, king capture modeling, and raw worker-oriented board transitions
+// available without making them part of the default standard-chess path.
 fn apply_sil_protocol_move(state: &ProtocolState, mv: ProtocolMoveSpec) -> Result<ProtocolTransition, ProtocolMoveError> {
     if state.board.len() != 64 {
         return Err(ProtocolMoveError::InvalidBoardLen(state.board.len()));
@@ -94,7 +97,9 @@ fn apply_sil_protocol_move(state: &ProtocolState, mv: ProtocolMoveSpec) -> Resul
     let mut en_passant_idx = -1;
     let mut recent_castle = 0;
 
+    // Any move that lands on an original rook square consumes that side's matching castle right.
     clear_castle_rights_for_square(&mut castle_rights, mv.to_x, mv.to_y);
+    // King motion clears both castle rights for the moving side even if the move is otherwise non-standard.
     if base_piece == 6 {
         if is_black {
             castle_rights[2] = 0;
@@ -104,26 +109,31 @@ fn apply_sil_protocol_move(state: &ProtocolState, mv: ProtocolMoveSpec) -> Resul
             castle_rights[1] = 0;
         }
     }
+    // Rook motion from an original corner clears only the relevant side-specific castle right.
     if base_piece == 4 {
         clear_castle_rights_for_square(&mut castle_rights, mv.from_x, mv.from_y);
     }
 
     if base_piece == 1 {
         let direction = if is_black { -1 } else { 1 };
+        // The protocol preserves SIL-style en passant capture semantics directly from board bytes.
         if mv.from_x != mv.to_x && board[to_idx] == 0 && state.en_passant_idx == square_idx(mv.to_x, mv.to_y) {
             let captured_y = mv.to_y - direction;
             board[square_idx(mv.to_x, captured_y) as usize] = 0;
         }
         board[from_idx] = 0;
         let mut placed_piece = piece;
+        // Promotion writes the chosen piece directly without re-checking standard legality.
         if mv.promo_piece != 0 {
             placed_piece = if is_black { (mv.promo_piece as u8) + 8 } else { mv.promo_piece as u8 };
         }
         board[to_idx] = placed_piece;
+        // A two-step pawn move exposes the passed-over square as the next en passant target.
         if mv.from_x == mv.to_x && (mv.to_y - mv.from_y).abs() == 2 {
             en_passant_idx = square_idx(mv.from_x, mv.from_y + direction);
         }
     } else if base_piece == 6 && (mv.to_x - mv.from_x).abs() == 2 && mv.from_y == mv.to_y {
+        // Castling is materialized explicitly because the protocol also tracks recent_castle for follow-up routes.
         board[from_idx] = 0;
         board[to_idx] = piece;
         if mv.to_x > mv.from_x {
@@ -134,6 +144,7 @@ fn apply_sil_protocol_move(state: &ProtocolState, mv: ProtocolMoveSpec) -> Resul
             recent_castle = if is_black { 4 } else { 2 };
         }
     } else {
+        // All other protocol moves are simple byte-level piece transfers, even for non-standard positions.
         move_piece(&mut board, mv.from_x as usize, mv.from_y as usize, mv.to_x as usize, mv.to_y as usize);
     }
 
