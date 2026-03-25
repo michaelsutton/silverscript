@@ -1160,7 +1160,7 @@ fn compile_contract_fields<'i>(
         }
 
         let mut resolve_visiting = HashSet::new();
-        let resolved = resolve_expr(field.expr.clone(), &env, &mut resolve_visiting)?;
+        let resolved = resolve_expr(field.expr.clone(), &env, &stack_bindings, &mut resolve_visiting)?;
         if !expr_matches_declared_type_ref(&resolved, &field.type_ref, structs) {
             return Err(CompilerError::Unsupported(format!("contract field '{}' expects {}", field.name, type_name)));
         }
@@ -1514,6 +1514,7 @@ fn store_struct_binding<'i>(
     expr: &Expr<'i>,
     env: &mut HashMap<String, Expr<'i>>,
     types: &mut HashMap<String, String>,
+    stack_bindings: &StackBindings,
     structs: &StructRegistry,
     contract_fields: &[ContractFieldAst<'i>],
     contract_constants: &HashMap<String, Expr<'i>>,
@@ -1522,7 +1523,7 @@ fn store_struct_binding<'i>(
 ) -> Result<(), CompilerError> {
     let lowered_values =
         lower_runtime_struct_expr(expr, type_ref, types, structs, contract_fields, contract_constants, contract_field_prefix_len)?;
-    store_struct_binding_from_lowered_values(name, type_ref, lowered_values, env, types, structs, is_assignment)
+    store_struct_binding_from_lowered_values(name, type_ref, lowered_values, env, types, stack_bindings, structs, is_assignment)
 }
 
 fn store_struct_binding_from_lowered_values<'i>(
@@ -1531,6 +1532,7 @@ fn store_struct_binding_from_lowered_values<'i>(
     lowered_values: Vec<Expr<'i>>,
     env: &mut HashMap<String, Expr<'i>>,
     types: &mut HashMap<String, String>,
+    stack_bindings: &StackBindings,
     structs: &StructRegistry,
     is_assignment: bool,
 ) -> Result<(), CompilerError> {
@@ -1546,7 +1548,7 @@ fn store_struct_binding_from_lowered_values<'i>(
             } else {
                 lowered_expr
             };
-            resolve_expr_for_runtime(updated, &original_env, types, &mut HashSet::new())?
+            resolve_expr_for_runtime(updated, &original_env, stack_bindings, types, &mut HashSet::new())?
         } else {
             lowered_expr
         };
@@ -1608,7 +1610,7 @@ fn store_struct_binding_with_stack_rebindings<'i>(
         } else {
             lowered_expr
         };
-        let stored_expr = resolve_expr_for_runtime(updated, &original_env, types, &mut HashSet::new())?;
+        let stored_expr = resolve_expr_for_runtime(updated, &original_env, stack_bindings, types, &mut HashSet::new())?;
         env.insert(leaf_name, stored_expr);
     }
 
@@ -2690,7 +2692,16 @@ fn compile_statement<'i>(
                         script_size,
                         contract_constants,
                     )?;
-                    store_struct_binding_from_lowered_values(name, type_ref, lowered_values, env, types, structs, false)?;
+                    store_struct_binding_from_lowered_values(
+                        name,
+                        type_ref,
+                        lowered_values,
+                        env,
+                        types,
+                        stack_bindings,
+                        structs,
+                        false,
+                    )?;
                     return push_struct_leaf_stack_bindings(
                         name,
                         type_ref,
@@ -2712,6 +2723,7 @@ fn compile_statement<'i>(
                     expr,
                     env,
                     types,
+                    stack_bindings,
                     structs,
                     contract_fields,
                     contract_constants,
@@ -2741,6 +2753,7 @@ fn compile_statement<'i>(
                         expr,
                         env,
                         types,
+                        stack_bindings,
                         structs,
                         contract_fields,
                         contract_constants,
@@ -2800,9 +2813,10 @@ fn compile_statement<'i>(
                         if !array_literal_matches_type_with_env(values, &effective_type_name, types, contract_constants) {
                             return Err(CompilerError::Unsupported("array initializer must be another array".to_string()));
                         }
-                        resolve_expr(
+                        resolve_expr_with_stack(
                             lower_runtime_expr(&Expr::new(ExprKind::Array(values.clone()), e.span), types, structs)?,
                             env,
+                            stack_bindings,
                             &mut HashSet::new(),
                         )?
                     }
@@ -2840,8 +2854,11 @@ fn compile_statement<'i>(
                     }
                 }
 
-                let stored_expr =
-                    if matches!(&expr.kind, ExprKind::Array(_)) { resolve_expr(expr, env, &mut HashSet::new())? } else { expr };
+                let stored_expr = if matches!(&expr.kind, ExprKind::Array(_)) {
+                    resolve_expr_with_stack(expr, env, stack_bindings, &mut HashSet::new())?
+                } else {
+                    expr
+                };
                 env.insert(name.clone(), stored_expr);
                 types.insert(name.clone(), effective_type_name.clone());
                 Ok(Vec::new())
@@ -2917,7 +2934,7 @@ fn compile_statement<'i>(
                 for ((path, leaf_type), leaf_expr) in
                     flatten_type_ref_leaves(&element_type, structs)?.into_iter().zip(leaf_values.into_iter())
                 {
-                    let resolved_leaf_expr = resolve_expr(leaf_expr, env, &mut HashSet::new())?;
+                    let resolved_leaf_expr = resolve_expr_with_stack(leaf_expr, env, stack_bindings, &mut HashSet::new())?;
                     let leaf_name = flattened_struct_name(name, &path);
                     let leaf_type_name = type_name_from_ref(&leaf_type);
                     let element_expr = if leaf_type_name == "int" {
@@ -3342,6 +3359,7 @@ fn compile_statement<'i>(
                         &expr,
                         env,
                         types,
+                        stack_bindings,
                         structs,
                         contract_fields,
                         contract_constants,
@@ -3446,7 +3464,7 @@ fn compile_statement<'i>(
                     } else {
                         lowered_expr
                     };
-                    let resolved = resolve_expr_for_runtime(updated, env, types, &mut HashSet::new())?;
+                    let resolved = resolve_expr_for_runtime(updated, env, stack_bindings, types, &mut HashSet::new())?;
                     env.insert(name.clone(), resolved);
                     return Ok(Vec::new());
                 }
@@ -3548,14 +3566,14 @@ fn compile_statement<'i>(
                 }
                 let updated =
                     if let Some(previous) = env.get(name) { replace_identifier(&lowered_expr, name, previous) } else { lowered_expr };
-                let resolved = resolve_expr_for_runtime(updated, env, types, &mut HashSet::new())?;
+                let resolved = resolve_expr_for_runtime(updated, env, stack_bindings, types, &mut HashSet::new())?;
                 env.insert(name.clone(), resolved);
                 return Ok(Vec::new());
             }
             let lowered_expr = lower_runtime_expr(expr, types, structs)?;
             let updated =
                 if let Some(previous) = env.get(name) { replace_identifier(&lowered_expr, name, previous) } else { lowered_expr };
-            let resolved = resolve_expr_for_runtime(updated, env, types, &mut HashSet::new())?;
+            let resolved = resolve_expr_for_runtime(updated, env, stack_bindings, types, &mut HashSet::new())?;
             env.insert(name.clone(), resolved);
             Ok(Vec::new())
         }
@@ -4403,7 +4421,7 @@ fn prepare_inline_call_bindings<'i>(
     let mut preserved_return_idents = HashSet::new();
     let caller_scope = lowering_scope_from_types(caller_types)?;
     for (param, arg) in function.params.iter().zip(args.iter()) {
-        let resolved = resolve_expr(arg.clone(), caller_env, &mut HashSet::new())?;
+        let resolved = resolve_expr_with_stack(arg.clone(), caller_env, caller_stack_bindings, &mut HashSet::new())?;
         let param_type_name = type_name_from_ref(&param.type_ref);
 
         preserved_return_idents.insert(param.name.clone());
@@ -4425,7 +4443,7 @@ fn prepare_inline_call_bindings<'i>(
                 )?)
             {
                 let leaf_name = flattened_struct_name(&param.name, &path);
-                let lowered_expr = resolve_expr(lowered_expr, caller_env, &mut HashSet::new())?;
+                let lowered_expr = resolve_expr_with_stack(lowered_expr, caller_env, caller_stack_bindings, &mut HashSet::new())?;
                 types.insert(leaf_name.clone(), type_name_from_ref(&field_type));
                 if !matches!(&lowered_expr.kind, ExprKind::Identifier(identifier) if identifier == &leaf_name) {
                     env.insert(leaf_name, lowered_expr);
@@ -4798,7 +4816,7 @@ fn compile_if_statement<'i>(
 
     builder.add_op(OpEndIf)?;
 
-    let resolved_condition = resolve_expr_for_runtime(condition, &original_env, types, &mut HashSet::new())?;
+    let resolved_condition = resolve_expr_for_runtime(condition, &original_env, stack_bindings, types, &mut HashSet::new())?;
     merge_env_after_if(env, &original_env, &then_env, &else_env, &resolved_condition);
     Ok(())
 }
@@ -5195,7 +5213,7 @@ fn compile_runtime_for_statement<'i>(
     script_size: Option<i64>,
     recorder: &mut DebugRecorder<'i>,
 ) -> Result<(), CompilerError> {
-    let mut current = resolve_expr_for_runtime(start, env, types, &mut HashSet::new())?;
+    let mut current = resolve_expr_for_runtime(start, env, stack_bindings, types, &mut HashSet::new())?;
     let mut current_const = eval_const_int(&current, contract_constants).ok();
     for _ in 0..max_iterations {
         let loop_value = current_const.map_or_else(|| current.clone(), Expr::int);
@@ -5247,7 +5265,7 @@ fn compile_runtime_for_statement<'i>(
             span::Span::default(),
         );
         current_const = None;
-        current = resolve_expr_for_runtime(next, env, types, &mut HashSet::new())?;
+        current = resolve_expr_for_runtime(next, env, stack_bindings, types, &mut HashSet::new())?;
     }
 
     Ok(())
@@ -5292,124 +5310,41 @@ fn eval_const_int<'i>(expr: &Expr<'i>, constants: &HashMap<String, Expr<'i>>) ->
 fn resolve_expr<'i>(
     expr: Expr<'i>,
     env: &HashMap<String, Expr<'i>>,
+    stack_bindings: &StackBindings,
     visiting: &mut HashSet<String>,
 ) -> Result<Expr<'i>, CompilerError> {
-    let Expr { kind, span } = expr;
-    match kind {
-        ExprKind::Identifier(name) => {
-            if name.starts_with(SYNTHETIC_ARG_PREFIX) {
-                return Ok(Expr::new(ExprKind::Identifier(name), span));
-            }
-            if let Some(value) = env.get(&name) {
-                if !visiting.insert(name.clone()) {
-                    return Err(CompilerError::CyclicIdentifier(name));
-                }
-                let resolved = resolve_expr(value.clone(), env, visiting)?;
-                visiting.remove(&name);
-                Ok(resolved)
-            } else {
-                Ok(Expr::new(ExprKind::Identifier(name), span))
-            }
-        }
-        ExprKind::Unary { op, expr } => {
-            Ok(Expr::new(ExprKind::Unary { op, expr: Box::new(resolve_expr(*expr, env, visiting)?) }, span))
-        }
-        ExprKind::Binary { op, left, right } => Ok(Expr::new(
-            ExprKind::Binary {
-                op,
-                left: Box::new(resolve_expr(*left, env, visiting)?),
-                right: Box::new(resolve_expr(*right, env, visiting)?),
-            },
-            span,
-        )),
-        ExprKind::IfElse { condition, then_expr, else_expr } => Ok(Expr::new(
-            ExprKind::IfElse {
-                condition: Box::new(resolve_expr(*condition, env, visiting)?),
-                then_expr: Box::new(resolve_expr(*then_expr, env, visiting)?),
-                else_expr: Box::new(resolve_expr(*else_expr, env, visiting)?),
-            },
-            span,
-        )),
-        ExprKind::Array(values) => {
-            let mut resolved = Vec::with_capacity(values.len());
-            for value in values {
-                resolved.push(resolve_expr(value, env, visiting)?);
-            }
-            Ok(Expr::new(ExprKind::Array(resolved), span))
-        }
-        ExprKind::StateObject(fields) => {
-            let mut resolved_fields = Vec::with_capacity(fields.len());
-            for field in fields {
-                resolved_fields.push(StateFieldExpr {
-                    name: field.name,
-                    expr: resolve_expr(field.expr, env, visiting)?,
-                    span: field.span,
-                    name_span: field.name_span,
-                });
-            }
-            Ok(Expr::new(ExprKind::StateObject(resolved_fields), span))
-        }
-        ExprKind::FieldAccess { source, field, field_span } => {
-            Ok(Expr::new(ExprKind::FieldAccess { source: Box::new(resolve_expr(*source, env, visiting)?), field, field_span }, span))
-        }
-        ExprKind::Call { name, args, name_span } => {
-            let mut resolved = Vec::with_capacity(args.len());
-            for arg in args {
-                resolved.push(resolve_expr(arg, env, visiting)?);
-            }
-            Ok(Expr::new(ExprKind::Call { name, args: resolved, name_span }, span))
-        }
-        ExprKind::New { name, args, name_span } => {
-            let mut resolved = Vec::with_capacity(args.len());
-            for arg in args {
-                resolved.push(resolve_expr(arg, env, visiting)?);
-            }
-            Ok(Expr::new(ExprKind::New { name, args: resolved, name_span }, span))
-        }
-        ExprKind::Split { source, index, part, span: split_span } => Ok(Expr::new(
-            ExprKind::Split {
-                source: Box::new(resolve_expr(*source, env, visiting)?),
-                index: Box::new(resolve_expr(*index, env, visiting)?),
-                part,
-                span: split_span,
-            },
-            span,
-        )),
-        ExprKind::ArrayIndex { source, index } => Ok(Expr::new(
-            ExprKind::ArrayIndex {
-                source: Box::new(resolve_expr(*source, env, visiting)?),
-                index: Box::new(resolve_expr(*index, env, visiting)?),
-            },
-            span,
-        )),
-        ExprKind::Introspection { kind, index, field_span } => {
-            Ok(Expr::new(ExprKind::Introspection { kind, index: Box::new(resolve_expr(*index, env, visiting)?), field_span }, span))
-        }
-        ExprKind::UnarySuffix { source, kind, span: suffix_span } => Ok(Expr::new(
-            ExprKind::UnarySuffix { source: Box::new(resolve_expr(*source, env, visiting)?), kind, span: suffix_span },
-            span,
-        )),
-        ExprKind::Slice { source, start, end, span: slice_span } => Ok(Expr::new(
-            ExprKind::Slice {
-                source: Box::new(resolve_expr(*source, env, visiting)?),
-                start: Box::new(resolve_expr(*start, env, visiting)?),
-                end: Box::new(resolve_expr(*end, env, visiting)?),
-                span: slice_span,
-            },
-            span,
-        )),
-        other => Ok(Expr::new(other, span)),
-    }
+    resolve_expr_with_stack(expr, env, stack_bindings, visiting)
+}
+
+fn preserves_self_referential_identifier<'i>(name: &str, env: &HashMap<String, Expr<'i>>) -> bool {
+    matches!(env.get(name), Some(Expr { kind: ExprKind::Identifier(identifier), .. }) if identifier == name)
+}
+
+fn resolve_expr_with_stack<'i>(
+    expr: Expr<'i>,
+    env: &HashMap<String, Expr<'i>>,
+    stack_bindings: &StackBindings,
+    visiting: &mut HashSet<String>,
+) -> Result<Expr<'i>, CompilerError> {
+    let preserve_identifier = |name: &str| {
+        name.starts_with(SYNTHETIC_ARG_PREFIX) || stack_bindings.contains(name) || preserves_self_referential_identifier(name, env)
+    };
+    resolve_expr_with_policy(expr, env, visiting, &preserve_identifier)
 }
 
 fn resolve_expr_for_runtime<'i>(
     expr: Expr<'i>,
     env: &HashMap<String, Expr<'i>>,
+    stack_bindings: &StackBindings,
     types: &HashMap<String, String>,
     visiting: &mut HashSet<String>,
 ) -> Result<Expr<'i>, CompilerError> {
-    let preserve_identifier =
-        |name: &str| name.starts_with(SYNTHETIC_ARG_PREFIX) || types.get(name).is_some_and(|type_name| is_array_type(type_name));
+    let preserve_identifier = |name: &str| {
+        name.starts_with(SYNTHETIC_ARG_PREFIX)
+            || stack_bindings.contains(name)
+            || preserves_self_referential_identifier(name, env)
+            || types.get(name).is_some_and(|type_name| is_array_type(type_name))
+    };
     resolve_expr_with_policy(expr, env, visiting, &preserve_identifier)
 }
 
@@ -5434,7 +5369,9 @@ fn resolve_inline_return_expr<'i>(
     preserved_idents: &HashSet<String>,
     visiting: &mut HashSet<String>,
 ) -> Result<Expr<'i>, CompilerError> {
-    let preserve_identifier = |name: &str| name.starts_with(SYNTHETIC_ARG_PREFIX) || preserved_idents.contains(name);
+    let preserve_identifier = |name: &str| {
+        name.starts_with(SYNTHETIC_ARG_PREFIX) || preserves_self_referential_identifier(name, env) || preserved_idents.contains(name)
+    };
     resolve_expr_with_policy(expr, env, visiting, &preserve_identifier)
 }
 
@@ -6122,7 +6059,7 @@ fn compile_expr<'i>(
         ExprKind::ArrayIndex { source, index } => {
             let resolved_source = match source.as_ref() {
                 Expr { kind: ExprKind::Identifier(_), .. } => source.as_ref().clone(),
-                _ => resolve_expr(*source.clone(), env, visiting)?,
+                _ => resolve_expr_with_stack(*source.clone(), env, stack_bindings, visiting)?,
             };
             let element_type = match &resolved_source.kind {
                 ExprKind::Identifier(name) => {
@@ -7293,9 +7230,10 @@ pub fn compile_debug_expr<'i>(
 pub(super) fn resolve_expr_for_debug<'i>(
     expr: Expr<'i>,
     env: &HashMap<String, Expr<'i>>,
+    stack_bindings: &StackBindings,
     visiting: &mut HashSet<String>,
 ) -> Result<Expr<'i>, CompilerError> {
-    resolve_expr(expr, env, visiting)
+    resolve_expr_with_stack(expr, env, stack_bindings, visiting)
 }
 
 #[cfg(test)]

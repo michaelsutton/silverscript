@@ -4327,7 +4327,7 @@ fn validate_output_state_with_template_rejects_different_target_state_layout() {
 }
 
 #[test]
-fn conditional_counter_in_unrolled_loop_does_not_explode() {
+fn conditional_counter_in_loop_does_not_explode() {
     const SOURCE: &str = r#"
 pragma silverscript ^0.1.0;
 
@@ -4344,6 +4344,50 @@ contract Sweep(int BOUND, byte[64] init_board) {
             }
         }
         require(zero_count >= 0);
+    }
+}
+"#;
+
+    let bounds = [4i64, 8i64, 12i64];
+    let mut lens = Vec::new();
+    for b in bounds {
+        let args = [Expr::int(b), Expr::bytes(vec![0u8; 64])];
+        let compiled = compile_contract(SOURCE, &args, CompileOptions::default()).expect("compile succeeds");
+        lens.push(compiled.script.len());
+    }
+
+    // Monotonic growth, and no doubling behavior in this range.
+    assert!(lens[0] < lens[1] && lens[1] < lens[2], "expected monotonic growth, got {lens:?}");
+    let d1 = lens[1] - lens[0];
+    let d2 = lens[2] - lens[1];
+    assert!(d2 <= d1 * 2, "unexpected superlinear growth: lens={lens:?} d1={d1} d2={d2}");
+
+    // Absolute cap: the old exponential behavior already blew past this by bound=8..12.
+    assert!(lens[2] < 5_000, "unexpected script size: lens={lens:?}");
+}
+
+#[test]
+fn conditional_counter_in_inlined_func_loop_does_not_explode() {
+    const SOURCE: &str = r#"
+pragma silverscript ^0.1.0;
+
+contract Sweep(int BOUND, byte[64] init_board) {
+    byte[64] board = init_board;
+
+    function f() {
+        int zero_count = 0;
+        // Keep this loop small so regressions fail fast (the previous exponential blow-up
+        // already manifested at single-digit iteration counts).
+        for (i, 0, BOUND, BOUND) {
+            if (OpBin2Num(board[i]) == 0) {
+                zero_count = zero_count + 1;
+            }
+        }
+        require(zero_count >= 0);
+    }
+
+    entrypoint function main() {
+        f();
     }
 }
 "#;
@@ -7962,4 +8006,125 @@ contract StructCounterLoop(int BOUND) {
 
     assert!(d2 <= d1 * 2, "unexpected superlinear growth: lens={lens:?} d1={d1} d2={d2}");
     assert!(lens[2] < 10_000, "unexpected script size: lens={lens:?}");
+}
+
+#[test]
+fn reassignment_pushes_new_value_and_rebinds_stack_local() {
+    let source = r#"
+        contract ReassignPush() {
+            entrypoint function main(int start) {
+                int x = start + 1;
+                x = x + 1;
+                require(x == 4);
+            }
+        }
+    "#;
+
+    let compiled = compile_contract(source, &[], CompileOptions::default()).expect("reassignment should compile");
+    let expected = ScriptBuilder::new()
+        // Initialize `x` from the `start` argument.
+        .add_i64(0)
+        .unwrap()
+        .add_op(OpPick)
+        .unwrap()
+        .add_i64(1)
+        .unwrap()
+        .add_op(OpAdd)
+        .unwrap()
+        // Recompute the RHS from the current stack-local `x`.
+        .add_i64(0)
+        .unwrap()
+        .add_op(OpPick)
+        .unwrap()
+        .add_i64(1)
+        .unwrap()
+        .add_op(OpAdd)
+        .unwrap()
+        // Replace the previous `x` binding with the new value in place.
+        .add_i64(1)
+        .unwrap()
+        .add_op(OpRoll)
+        .unwrap()
+        .add_op(OpDrop)
+        .unwrap()
+        // Verify the rebound top-of-stack value.
+        .add_i64(0)
+        .unwrap()
+        .add_op(OpPick)
+        .unwrap()
+        .add_i64(4)
+        .unwrap()
+        .add_op(OpNumEqual)
+        .unwrap()
+        .add_op(OpVerify)
+        .unwrap()
+        // Drop the rebound stack local, then the original argument.
+        .add_i64(0)
+        .unwrap()
+        .add_op(OpRoll)
+        .unwrap()
+        .add_op(OpDrop)
+        .unwrap()
+        .add_op(OpDrop)
+        .unwrap()
+        .add_op(OpTrue)
+        .unwrap()
+        .drain();
+    assert_eq!(compiled.script, expected);
+
+    let sigscript_ok = compiled.build_sig_script("main", vec![Expr::int(2)]).expect("sigscript builds");
+    let result_ok = run_script_with_sigscript(compiled.script.clone(), sigscript_ok);
+    assert!(result_ok.is_ok(), "reassigned stack local should execute successfully: {}", result_ok.unwrap_err());
+
+    let sigscript_err = compiled.build_sig_script("main", vec![Expr::int(1)]).expect("sigscript builds");
+    let result_err = run_script_with_sigscript(compiled.script, sigscript_err);
+    assert!(result_err.is_err(), "reassigned stack local should still enforce the updated value");
+}
+
+#[test]
+fn conditional_struct_counter_in_inlined_func_loop_does_not_explode() {
+    const SOURCE: &str = r#"
+pragma silverscript ^0.1.0;
+
+contract Sweep(int BOUND, byte[64] init_board) {
+    byte[64] board = init_board;
+    struct S {
+        int a;
+        int b;
+    }
+
+    function f() {
+        S zero_count = {a: 0, b: 0};
+        // Keep this loop small so regressions fail fast (the previous exponential blow-up
+        // already manifested at single-digit iteration counts).
+        for (i, 0, BOUND, BOUND) {
+            if (OpBin2Num(board[i]) == 0) {
+                zero_count = {a: zero_count.a + 1, b: zero_count.b + 1};
+            }
+        }
+        require(zero_count.a >= 0 && zero_count.b >= 0);
+    }
+
+    entrypoint function main() {
+        f();
+    }
+}
+"#;
+
+    let bounds = [4i64, 8i64, 12i64];
+    let mut lens = Vec::new();
+    for b in bounds {
+        let args = [Expr::int(b), Expr::bytes(vec![0u8; 64])];
+        let compiled = compile_contract(SOURCE, &args, CompileOptions::default()).expect("compile succeeds");
+        lens.push(compiled.script.len());
+    }
+
+    // Monotonic growth, and no doubling behavior in this range.
+    assert!(lens[0] < lens[1] && lens[1] < lens[2], "expected monotonic growth, got {lens:?}");
+    let d1 = lens[1] - lens[0];
+    let d2 = lens[2] - lens[1];
+    assert!(d2 <= d1 * 2, "unexpected superlinear growth: lens={lens:?} d1={d1} d2={d2}");
+
+    // Absolute cap: the old exponential behavior already blew past this by bound=8..12.
+    assert!(lens[2] < 5_000, "unexpected script size: lens={lens:?}");
 }
