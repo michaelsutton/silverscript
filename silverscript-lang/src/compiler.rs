@@ -2557,9 +2557,8 @@ fn compile_entrypoint_function<'i>(
                 constants,
             )?;
             for expr in exprs {
-                let resolved =
-                    resolve_return_expr_for_runtime(expr.clone(), &env, &stack_bindings, &types, &mut HashSet::new())
-                        .map_err(|err| err.with_span(&expr.span))?;
+                let resolved = resolve_return_expr_for_runtime(expr.clone(), &env, &stack_bindings, &types, &mut HashSet::new())
+                    .map_err(|err| err.with_span(&expr.span))?;
                 return_exprs.push(resolved);
             }
         } else {
@@ -2693,7 +2692,16 @@ fn compile_statement<'i>(
                         script_size,
                         contract_constants,
                     )?;
-                    store_struct_binding_from_lowered_values(name, type_ref, lowered_values, env, types, stack_bindings, structs, false)?;
+                    store_struct_binding_from_lowered_values(
+                        name,
+                        type_ref,
+                        lowered_values,
+                        env,
+                        types,
+                        stack_bindings,
+                        structs,
+                        false,
+                    )?;
                     return push_struct_leaf_stack_bindings(
                         name,
                         type_ref,
@@ -2846,12 +2854,11 @@ fn compile_statement<'i>(
                     }
                 }
 
-                let stored_expr =
-                    if matches!(&expr.kind, ExprKind::Array(_)) {
-                        resolve_expr_with_stack(expr, env, stack_bindings, &mut HashSet::new())?
-                    } else {
-                        expr
-                    };
+                let stored_expr = if matches!(&expr.kind, ExprKind::Array(_)) {
+                    resolve_expr_with_stack(expr, env, stack_bindings, &mut HashSet::new())?
+                } else {
+                    expr
+                };
                 env.insert(name.clone(), stored_expr);
                 types.insert(name.clone(), effective_type_name.clone());
                 Ok(Vec::new())
@@ -4668,13 +4675,7 @@ fn compile_inline_call<'i>(
             .map_err(|err| err.with_span(&stmt.span()))?;
             for expr in exprs {
                 let resolved =
-                    resolve_inline_return_expr(
-                        expr.clone(),
-                        &bindings.env,
-                        &bindings.stack_bindings,
-                        &bindings.preserved_return_idents,
-                        &mut HashSet::new(),
-                    )
+                    resolve_inline_return_expr(expr.clone(), &bindings.env, &bindings.preserved_return_idents, &mut HashSet::new())
                         .map_err(|err| err.with_span(&expr.span))?;
                 returns.push(resolved);
             }
@@ -5315,10 +5316,7 @@ fn resolve_expr<'i>(
     resolve_expr_with_stack(expr, env, stack_bindings, visiting)
 }
 
-fn preserves_self_referential_identifier<'i>(
-    name: &str,
-    env: &HashMap<String, Expr<'i>>,
-) -> bool {
+fn preserves_self_referential_identifier<'i>(name: &str, env: &HashMap<String, Expr<'i>>) -> bool {
     matches!(env.get(name), Some(Expr { kind: ExprKind::Identifier(identifier), .. }) if identifier == name)
 }
 
@@ -5328,12 +5326,9 @@ fn resolve_expr_with_stack<'i>(
     stack_bindings: &StackBindings,
     visiting: &mut HashSet<String>,
 ) -> Result<Expr<'i>, CompilerError> {
-    let preserve_identifier =
-        |name: &str| {
-            name.starts_with(SYNTHETIC_ARG_PREFIX)
-                || stack_bindings.contains(name)
-                || preserves_self_referential_identifier(name, env)
-        };
+    let preserve_identifier = |name: &str| {
+        name.starts_with(SYNTHETIC_ARG_PREFIX) || stack_bindings.contains(name) || preserves_self_referential_identifier(name, env)
+    };
     resolve_expr_with_policy(expr, env, visiting, &preserve_identifier)
 }
 
@@ -5371,14 +5366,11 @@ fn resolve_return_expr_for_runtime<'i>(
 fn resolve_inline_return_expr<'i>(
     expr: Expr<'i>,
     env: &HashMap<String, Expr<'i>>,
-    _stack_bindings: &StackBindings,
     preserved_idents: &HashSet<String>,
     visiting: &mut HashSet<String>,
 ) -> Result<Expr<'i>, CompilerError> {
     let preserve_identifier = |name: &str| {
-        name.starts_with(SYNTHETIC_ARG_PREFIX)
-            || preserves_self_referential_identifier(name, env)
-            || preserved_idents.contains(name)
+        name.starts_with(SYNTHETIC_ARG_PREFIX) || preserves_self_referential_identifier(name, env) || preserved_idents.contains(name)
     };
     resolve_expr_with_policy(expr, env, visiting, &preserve_identifier)
 }
