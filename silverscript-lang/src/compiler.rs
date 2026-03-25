@@ -1222,10 +1222,7 @@ fn statement_uses_script_size(stmt: &Statement<'_>) -> bool {
                 || body.iter().any(statement_uses_script_size)
         }
         Statement::Return { exprs, .. } => exprs.iter().any(expr_uses_script_size),
-        Statement::Console { args, .. } => args.iter().any(|arg| match arg {
-            crate::ast::ConsoleArg::Identifier(_, _) => false,
-            crate::ast::ConsoleArg::Literal(expr) => expr_uses_script_size(expr),
-        }),
+        Statement::Console { args, .. } => args.iter().any(expr_uses_script_size),
     }
 }
 
@@ -1623,7 +1620,6 @@ fn push_struct_leaf_stack_bindings<'i>(
     name: &str,
     type_ref: &TypeRef,
     env: &HashMap<String, Expr<'i>>,
-    _assigned_names: &HashSet<String>,
     identifier_uses: &HashMap<String, usize>,
     types: &HashMap<String, String>,
     stack_bindings: &mut StackBindings,
@@ -1840,10 +1836,7 @@ fn collect_statement_identifier_uses<'i>(stmt: &Statement<'i>, uses: &mut HashMa
         }
         Statement::Console { args, .. } => {
             for arg in args {
-                match arg {
-                    crate::ast::ConsoleArg::Identifier(name, ..) => bump_identifier_use(uses, name),
-                    crate::ast::ConsoleArg::Literal(expr) => collect_expr_identifier_uses(expr, uses),
-                }
+                collect_expr_identifier_uses(arg, uses);
             }
         }
     }
@@ -2701,7 +2694,6 @@ fn compile_statement<'i>(
                         name,
                         type_ref,
                         env,
-                        assigned_names,
                         identifier_uses,
                         types,
                         stack_bindings,
@@ -2728,7 +2720,6 @@ fn compile_statement<'i>(
                     name,
                     type_ref,
                     env,
-                    assigned_names,
                     identifier_uses,
                     types,
                     stack_bindings,
@@ -3359,7 +3350,6 @@ fn compile_statement<'i>(
                             &binding.name,
                             &binding.type_ref,
                             env,
-                            assigned_names,
                             identifier_uses,
                             types,
                             stack_bindings,

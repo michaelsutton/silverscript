@@ -12,15 +12,15 @@ use kaspa_txscript::covenants::CovenantsContext;
 use kaspa_txscript::opcodes::codes::*;
 use kaspa_txscript::script_builder::ScriptBuilder;
 use kaspa_txscript::{
-    EngineCtx, EngineFlags, SeqCommitAccessor, TxScriptEngine, pay_to_address_script, pay_to_script_hash_script,
+    EngineCtx, EngineFlags, SeqCommitAccessor, TxScriptEngine, parse_script, pay_to_address_script, pay_to_script_hash_script,
     pay_to_script_hash_signature_script,
 };
-use silverscript_lang::ast::{Expr, format_contract_ast, parse_contract_ast};
+use silverscript_lang::ast::{Expr, ExprKind, format_contract_ast, parse_contract_ast};
 use silverscript_lang::compiler::{
     CompileOptions, CompiledContract, CovenantDeclCallOptions, FunctionAbiEntry, FunctionInputAbi, compile_contract,
     compile_contract_ast, function_branch_index, struct_object,
 };
-use silverscript_lang::debug_info::RuntimeBinding;
+use silverscript_lang::debug_info::{RuntimeBinding, StepKind};
 
 fn run_script_with_selector(script: Vec<u8>, selector: Option<i64>) -> Result<(), kaspa_txscript_errors::TxScriptError> {
     let sigscript = selector_sigscript(selector);
@@ -91,6 +91,21 @@ fn run_script_with_sigscript(script: Vec<u8>, sigscript: Vec<u8>) -> Result<(), 
         EngineFlags { covenants_enabled: true },
     );
     vm.execute()
+}
+
+fn script_op_counts(script: &[u8]) -> (usize, usize) {
+    let mut instruction_count = 0;
+    let mut charged_op_count = 0;
+
+    for opcode in parse_script::<PopulatedTransaction<'static>, SigHashReusedValuesUnsync>(script) {
+        let opcode = opcode.expect("compiled script should parse");
+        instruction_count += 1;
+        if !opcode.is_push_opcode() {
+            charged_op_count += 1;
+        }
+    }
+
+    (instruction_count, charged_op_count)
 }
 
 fn sigscript_push_script(script: &[u8]) -> Vec<u8> {
@@ -203,6 +218,360 @@ fn compile_contract_emits_debug_info_when_recording_enabled() {
     assert!(!debug_info.steps.is_empty());
     assert!(!debug_info.functions.is_empty());
     assert!(debug_info.params.iter().any(|param| param.name == "x"));
+}
+
+#[test]
+fn branch_heavy_if_else_logic_matches_rust_model_across_cases() {
+    fn branch_maze_expected(a: i64, b: i64, c: i64, d: i64) -> (i64, i64, i64, i64) {
+        let mut x = a + b;
+        let mut y = c - d;
+        let mut z = 1i64;
+        let mut score = 0i64;
+
+        if a > b {
+            x += c;
+            if c > 0 {
+                y += a;
+                score += 3;
+            } else {
+                z *= 2;
+                score -= 2;
+            }
+        } else {
+            x -= d;
+            if d % 2 == 0 {
+                y -= b;
+                score += 5;
+            } else {
+                z += 3;
+                score -= 1;
+            }
+        }
+
+        if x > y {
+            z += x - y;
+            if (a + d) > (b + c) {
+                score += z;
+            } else {
+                score -= z;
+            }
+        } else {
+            x += z;
+            y += z;
+            if (c - a) > d {
+                score += x;
+            } else {
+                score += y;
+            }
+        }
+
+        if (x + y + z) % 2 == 0 {
+            score += 7;
+        } else {
+            score -= 4;
+        }
+
+        if score > 10 {
+            x -= 1;
+        } else if score < -5 {
+            y += 2;
+        } else {
+            z += 1;
+        }
+
+        (x, y, z, score)
+    }
+
+    let source = r#"
+        contract BranchMaze() {
+            entrypoint function main(
+                int a,
+                int b,
+                int c,
+                int d,
+                int expected_x,
+                int expected_y,
+                int expected_z,
+                int expected_score
+            ) {
+                int x = a + b;
+                int y = c - d;
+                int z = 1;
+                int score = 0;
+
+                if (a > b) {
+                    x = x + c;
+                    if (c > 0) {
+                        y = y + a;
+                        score = score + 3;
+                    } else {
+                        z = z * 2;
+                        score = score - 2;
+                    }
+                } else {
+                    x = x - d;
+                    if ((d % 2) == 0) {
+                        y = y - b;
+                        score = score + 5;
+                    } else {
+                        z = z + 3;
+                        score = score - 1;
+                    }
+                }
+
+                if (x > y) {
+                    z = z + x - y;
+                    if ((a + d) > (b + c)) {
+                        score = score + z;
+                    } else {
+                        score = score - z;
+                    }
+                } else {
+                    x = x + z;
+                    y = y + z;
+                    if ((c - a) > d) {
+                        score = score + x;
+                    } else {
+                        score = score + y;
+                    }
+                }
+
+                if (((x + y) + z) % 2 == 0) {
+                    score = score + 7;
+                } else {
+                    score = score - 4;
+                }
+
+                if (score > 10) {
+                    x = x - 1;
+                } else if (score < -5) {
+                    y = y + 2;
+                } else {
+                    z = z + 1;
+                }
+
+                require(x == expected_x);
+                require(y == expected_y);
+                require(z == expected_z);
+                require(score == expected_score);
+            }
+        }
+    "#;
+
+    let compiled = compile_contract(source, &[], CompileOptions::default()).expect("branch-heavy contract should compile");
+    let script_len = compiled.script.len();
+    let (instruction_count, charged_op_count) = script_op_counts(&compiled.script);
+    // Snapshot these metrics exactly so compiler codegen changes must consciously
+    // acknowledge their size impact on a branch-heavy stress case.
+    assert_eq!(
+        script_len, 342,
+        "branch_maze metrics: script_len={script_len} instruction_count={instruction_count} charged_op_count={charged_op_count}"
+    );
+    assert_eq!(
+        instruction_count, 342,
+        "branch_maze metrics: script_len={script_len} instruction_count={instruction_count} charged_op_count={charged_op_count}"
+    );
+    assert_eq!(
+        charged_op_count, 234,
+        "branch_maze metrics: script_len={script_len} instruction_count={instruction_count} charged_op_count={charged_op_count}"
+    );
+    let cases = [(7, 2, 5, 4), (7, 2, -3, 4), (2, 7, 5, 4), (2, 7, 5, 3), (4, 4, 9, 2), (-3, 1, 6, -2), (10, -1, -4, 7), (0, 0, 0, 0)];
+
+    for (a, b, c, d) in cases {
+        let (expected_x, expected_y, expected_z, expected_score) = branch_maze_expected(a, b, c, d);
+        let sigscript = compiled
+            .build_sig_script(
+                "main",
+                vec![
+                    Expr::int(a),
+                    Expr::int(b),
+                    Expr::int(c),
+                    Expr::int(d),
+                    Expr::int(expected_x),
+                    Expr::int(expected_y),
+                    Expr::int(expected_z),
+                    Expr::int(expected_score),
+                ],
+            )
+            .expect("sigscript builds");
+        let result = run_script_with_sigscript(compiled.script.clone(), sigscript);
+        assert!(
+            result.is_ok(),
+            "branch-heavy case ({a}, {b}, {c}, {d}) should match Rust model ({expected_x}, {expected_y}, {expected_z}, {expected_score}): {result:?}"
+        );
+    }
+
+    let (a, b, c, d) = cases[0];
+    let (expected_x, expected_y, expected_z, expected_score) = branch_maze_expected(a, b, c, d);
+    let wrong_sigscript = compiled
+        .build_sig_script(
+            "main",
+            vec![
+                Expr::int(a),
+                Expr::int(b),
+                Expr::int(c),
+                Expr::int(d),
+                Expr::int(expected_x),
+                Expr::int(expected_y),
+                Expr::int(expected_z),
+                Expr::int(expected_score + 1),
+            ],
+        )
+        .expect("sigscript builds");
+    let err = run_script_with_sigscript(compiled.script.clone(), wrong_sigscript)
+        .expect_err("branch-heavy case with wrong expected output should fail");
+    assert!(format!("{err:?}").contains("Verify"), "wrong expected output should fail with verify error, got: {err:?}");
+}
+
+#[test]
+fn sorting_network_over_fixed_array_matches_rust_model_across_cases() {
+    fn sorted_expected(values: [i64; 8]) -> [i64; 8] {
+        let mut values = values;
+        values.sort_unstable();
+        values
+    }
+
+    let source = r#"
+        contract SortingNetworkCheck() {
+            entrypoint function main(
+                int[8] values,
+                int expected_a,
+                int expected_b,
+                int expected_c,
+                int expected_d,
+                int expected_e,
+                int expected_f,
+                int expected_g,
+                int expected_h
+            ) {
+                int a = values[0];
+                int b = values[1];
+                int c = values[2];
+                int d = values[3];
+                int e = values[4];
+                int f = values[5];
+                int g = values[6];
+                int h = values[7];
+
+                if (a > b) { int tmp = a; a = b; b = tmp; }
+                if (c > d) { int tmp = c; c = d; d = tmp; }
+                if (e > f) { int tmp = e; e = f; f = tmp; }
+                if (g > h) { int tmp = g; g = h; h = tmp; }
+
+                if (a > c) { int tmp = a; a = c; c = tmp; }
+                if (b > d) { int tmp = b; b = d; d = tmp; }
+                if (e > g) { int tmp = e; e = g; g = tmp; }
+                if (f > h) { int tmp = f; f = h; h = tmp; }
+
+                if (b > c) { int tmp = b; b = c; c = tmp; }
+                if (f > g) { int tmp = f; f = g; g = tmp; }
+                if (a > e) { int tmp = a; a = e; e = tmp; }
+                if (d > h) { int tmp = d; d = h; h = tmp; }
+
+                if (b > f) { int tmp = b; b = f; f = tmp; }
+                if (c > g) { int tmp = c; c = g; g = tmp; }
+
+                if (b > e) { int tmp = b; b = e; e = tmp; }
+                if (d > g) { int tmp = d; d = g; g = tmp; }
+
+                if (c > e) { int tmp = c; c = e; e = tmp; }
+                if (d > f) { int tmp = d; d = f; f = tmp; }
+
+                if (d > e) { int tmp = d; d = e; e = tmp; }
+
+                require(a <= b);
+                require(b <= c);
+                require(c <= d);
+                require(d <= e);
+                require(e <= f);
+                require(f <= g);
+                require(g <= h);
+
+                require(a == expected_a);
+                require(b == expected_b);
+                require(c == expected_c);
+                require(d == expected_d);
+                require(e == expected_e);
+                require(f == expected_f);
+                require(g == expected_g);
+                require(h == expected_h);
+            }
+        }
+    "#;
+
+    let compiled = compile_contract(source, &[], CompileOptions::default()).expect("sorting-network contract should compile");
+    let script_len = compiled.script.len();
+    let (instruction_count, charged_op_count) = script_op_counts(&compiled.script);
+    assert_eq!(
+        script_len, 881,
+        "sorting_network metrics: script_len={script_len} instruction_count={instruction_count} charged_op_count={charged_op_count}"
+    );
+    assert_eq!(
+        instruction_count, 881,
+        "sorting_network metrics: script_len={script_len} instruction_count={instruction_count} charged_op_count={charged_op_count}"
+    );
+    assert_eq!(
+        charged_op_count, 618,
+        "sorting_network metrics: script_len={script_len} instruction_count={instruction_count} charged_op_count={charged_op_count}"
+    );
+
+    let cases = [
+        [8, 7, 6, 5, 4, 3, 2, 1],
+        [3, 1, 4, 1, 5, 9, 2, 6],
+        [0, -3, 7, 7, -1, 4, 2, 2],
+        [10, 0, -10, 5, -5, 3, 1, 8],
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        [9, 9, 9, 1, 1, 1, 5, 5],
+    ];
+
+    for values in cases {
+        let [expected_a, expected_b, expected_c, expected_d, expected_e, expected_f, expected_g, expected_h] = sorted_expected(values);
+        let sigscript = compiled
+            .build_sig_script(
+                "main",
+                vec![
+                    values.to_vec().into(),
+                    Expr::int(expected_a),
+                    Expr::int(expected_b),
+                    Expr::int(expected_c),
+                    Expr::int(expected_d),
+                    Expr::int(expected_e),
+                    Expr::int(expected_f),
+                    Expr::int(expected_g),
+                    Expr::int(expected_h),
+                ],
+            )
+            .expect("sigscript builds");
+        let result = run_script_with_sigscript(compiled.script.clone(), sigscript);
+        assert!(result.is_ok(), "sorting-network case {values:?} should match Rust model: {result:?}");
+    }
+}
+
+#[test]
+fn debug_info_records_console_expression_args() {
+    let source = r#"
+        contract DebugConsole() {
+            entrypoint function spend(int x, int y) {
+                console.log("sum", x + y);
+                require(x + y > 0);
+            }
+        }
+    "#;
+
+    let options = CompileOptions { record_debug_infos: true, ..Default::default() };
+    let compiled = compile_contract(source, &[], options).expect("compile succeeds");
+    let debug_info = compiled.debug_info.expect("debug info should be present");
+
+    let console_step = debug_info
+        .steps
+        .iter()
+        .find(|step| matches!(step.kind, StepKind::Source {}) && !step.console_args.is_empty())
+        .expect("console step should be recorded");
+
+    assert_eq!(console_step.bytecode_start, console_step.bytecode_end, "console step should be zero-width");
+    assert_eq!(console_step.console_args.len(), 2);
+    assert!(matches!(console_step.console_args[0].kind, ExprKind::String(ref value) if value == "sum"));
+    assert!(matches!(console_step.console_args[1].kind, ExprKind::Binary { .. }));
 }
 
 #[test]
@@ -3251,9 +3620,7 @@ fn compiles_contract_fields_as_script_prolog() {
         .unwrap()
         .add_data(&[0x12, 0x34])
         .unwrap()
-        .add_i64(1)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpOver)
         .unwrap()
         .add_i64(5)
         .unwrap()
@@ -3346,11 +3713,8 @@ fn compiles_validate_output_state_to_expected_script() {
         .unwrap()
 
         // ---- Build new_state.x = x + 1 ----
-        // push depth index of x (x is second item from top: y=0, x=1)
-        .add_i64(1)
-        .unwrap()
-        // duplicate x from stack
-        .add_op(OpPick)
+        // duplicate x from stack (x is second item from top: y=0, x=1)
+        .add_op(OpOver)
         .unwrap()
         // push literal 1
         .add_i64(1)
@@ -6091,19 +6455,13 @@ fn compiles_reused_variables_and_verifies() {
         .unwrap()
         .add_op(OpAdd)
         .unwrap()
-        .add_i64(0)
+        .add_op(OpDup)
         .unwrap()
-        .add_op(OpPick)
-        .unwrap()
-        .add_i64(1)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpOver)
         .unwrap()
         .add_op(OpMul)
         .unwrap()
-        .add_i64(1)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpOver)
         .unwrap()
         .add_op(OpAdd)
         .unwrap()
@@ -6150,19 +6508,13 @@ fn return_reused_local_is_stored_once_and_reused() {
         .unwrap()
         .add_op(OpAdd)
         .unwrap()
-        .add_i64(0)
+        .add_op(OpDup)
         .unwrap()
-        .add_op(OpPick)
-        .unwrap()
-        .add_i64(1)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpOver)
         .unwrap()
         .add_op(OpMul)
         .unwrap()
-        .add_i64(1)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpOver)
         .unwrap()
         .add_op(OpAdd)
         .unwrap()
@@ -6798,21 +7150,15 @@ fn inline_argument_alias_does_not_store_param_in_addition_to_reused_local() {
 
     let body = ScriptBuilder::new()
         // Copy `x` twice and compute `x * x`, leaving the new local `y` on stack.
-        .add_i64(0)
+        .add_op(OpDup)
         .unwrap()
-        .add_op(OpPick)
-        .unwrap()
-        .add_i64(1)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpOver)
         .unwrap()
         .add_op(OpMul)
         .unwrap()
         // Inline `f(y)`: there is no explicit store for callee param `z`.
         // We just read the already-stored `y` slot, proving `z` is only an alias.
-        .add_i64(0)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpDup)
         .unwrap()
         .add_i64(1)
         .unwrap()
@@ -6821,9 +7167,7 @@ fn inline_argument_alias_does_not_store_param_in_addition_to_reused_local() {
         .add_op(OpVerify)
         .unwrap()
         // Inline `g(y)`: same again, read `y` directly instead of storing `z`.
-        .add_i64(0)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpDup)
         .unwrap()
         .add_i64(10)
         .unwrap()
@@ -6847,7 +7191,9 @@ fn inline_argument_alias_does_not_store_param_in_addition_to_reused_local() {
     let expected = wrap_with_dispatch(body, selector);
 
     assert_eq!(compiled.script, expected);
-    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpPick).count(), 4);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpDup).count(), 3);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpOver).count(), 1);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpPick).count(), 0);
     assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpMul).count(), 1);
 
     let sigscript_ok = compiled.build_sig_script("main", vec![Expr::int(2)]).expect("sigscript builds");
@@ -6884,9 +7230,7 @@ fn inline_argument_alias_reuses_entrypoint_param_without_extra_stack_storage() {
     let body = ScriptBuilder::new()
         // Inline `f(y)`: `y` is already the entrypoint param on stack, so `z`
         // is only an alias and we simply read that slot.
-        .add_i64(0)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpDup)
         .unwrap()
         .add_i64(1)
         .unwrap()
@@ -6895,9 +7239,7 @@ fn inline_argument_alias_reuses_entrypoint_param_without_extra_stack_storage() {
         .add_op(OpVerify)
         .unwrap()
         // Inline `g(y)`: same aliasing behavior, still no explicit store for `z`.
-        .add_i64(0)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpDup)
         .unwrap()
         .add_i64(10)
         .unwrap()
@@ -6915,7 +7257,9 @@ fn inline_argument_alias_reuses_entrypoint_param_without_extra_stack_storage() {
     let expected = wrap_with_dispatch(body, selector);
 
     assert_eq!(compiled.script, expected);
-    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpPick).count(), 2);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpDup).count(), 2);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpOver).count(), 0);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpPick).count(), 0);
     assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpDrop).count(), 1);
 
     let sigscript_ok = compiled.build_sig_script("main", vec![Expr::int(2)]).expect("sigscript builds");
@@ -6945,20 +7289,14 @@ fn local_alias_reuses_existing_stack_slot_without_explicit_store() {
 
     let body = ScriptBuilder::new()
         // Copy `x` twice and compute `x * x`, leaving the reused local `y` on stack.
-        .add_i64(0)
+        .add_op(OpDup)
         .unwrap()
-        .add_op(OpPick)
-        .unwrap()
-        .add_i64(1)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpOver)
         .unwrap()
         .add_op(OpMul)
         .unwrap()
         // First `require(y > 1)` reads the stored `y` value.
-        .add_i64(0)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpDup)
         .unwrap()
         .add_i64(1)
         .unwrap()
@@ -6968,9 +7306,7 @@ fn local_alias_reuses_existing_stack_slot_without_explicit_store() {
         .unwrap()
         // `int z = y` does not emit any explicit store. The next require still
         // reads the same stack slot directly, showing `z` aliases `y`.
-        .add_i64(0)
-        .unwrap()
-        .add_op(OpPick)
+        .add_op(OpDup)
         .unwrap()
         .add_i64(1)
         .unwrap()
@@ -6995,7 +7331,9 @@ fn local_alias_reuses_existing_stack_slot_without_explicit_store() {
 
     assert_eq!(compiled.script, expected);
     assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpMul).count(), 1);
-    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpPick).count(), 4);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpDup).count(), 3);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpOver).count(), 1);
+    assert_eq!(compiled.script.iter().copied().filter(|op| *op == OpPick).count(), 0);
 
     let sigscript_ok = compiled.build_sig_script("main", vec![Expr::int(2)]).expect("sigscript builds");
     let result_ok = run_script_with_sigscript(compiled.script.clone(), sigscript_ok);
@@ -7248,8 +7586,9 @@ fn compile_time_if_branch_stores_local_var_once_and_reuses_it() {
     let if_pos = script.iter().position(|op| *op == OpIf).expect("if present");
     let else_pos = script.iter().position(|op| *op == OpElse).expect("else present");
     let endif_pos = script.iter().position(|op| *op == OpEndIf).expect("endif present");
-
-    assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpPick).count(), 3);
+    assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpDup).count(), 3);
+    assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpOver).count(), 0);
+    assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpPick).count(), 0);
     assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpAdd).count(), 1);
     assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpDrop).count(), 1);
     assert_eq!(script[endif_pos + 1..].iter().copied().filter(|op| *op == OpDrop).count(), 1);
@@ -7296,8 +7635,9 @@ fn compile_time_if_branch_stores_struct_fields_once_and_reuses_them() {
     let if_pos = script.iter().position(|op| *op == OpIf).expect("if present");
     let else_pos = script.iter().position(|op| *op == OpElse).expect("else present");
     let endif_pos = script.iter().position(|op| *op == OpEndIf).expect("endif present");
-
-    assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpPick).count(), 7);
+    assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpDup).count(), 3);
+    assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpOver).count(), 3);
+    assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpPick).count(), 1);
     assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpAdd).count(), 1);
     assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpMul).count(), 1);
     assert_eq!(script[if_pos + 1..else_pos].iter().copied().filter(|op| *op == OpDrop).count(), 2);

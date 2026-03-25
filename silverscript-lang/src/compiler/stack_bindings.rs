@@ -5,12 +5,54 @@ use indexmap::IndexSet;
 use kaspa_txscript::opcodes::codes::*;
 use kaspa_txscript::script_builder::ScriptBuilder;
 
+trait ScriptBuilderStackBindingExt {
+    fn drop_from_depth(&mut self, depth_from_top: i64) -> Result<(), CompilerError>;
+    fn pick_from_depth(&mut self, depth_from_top: i64) -> Result<(), CompilerError>;
+}
+
+impl ScriptBuilderStackBindingExt for ScriptBuilder {
+    fn drop_from_depth(&mut self, depth_from_top: i64) -> Result<(), CompilerError> {
+        if depth_from_top == 0 {
+            self.add_op(OpDrop)?;
+        } else if depth_from_top == 1 {
+            self.add_op(OpNip)?;
+        } else {
+            self.add_i64(depth_from_top)?;
+            self.add_op(OpRoll)?;
+            self.add_op(OpDrop)?;
+        }
+
+        Ok(())
+    }
+
+    fn pick_from_depth(&mut self, depth_from_top: i64) -> Result<(), CompilerError> {
+        if depth_from_top == 0 {
+            self.add_op(OpDup)?;
+        } else if depth_from_top == 1 {
+            self.add_op(OpOver)?;
+        } else {
+            self.add_i64(depth_from_top)?;
+            self.add_op(OpPick)?;
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StackBindings {
     names: IndexSet<String>,
 }
 
 impl StackBindings {
+    #[cfg(test)]
+    pub(crate) fn from_order_top_to_bottom(names: Vec<String>) -> Self {
+        let input_len = names.len();
+        let names: IndexSet<_> = names.into_iter().collect();
+        assert_eq!(input_len, names.len(), "stack binding order should not contain duplicates");
+        Self { names }
+    }
+
     pub(crate) fn from_depths(depths: HashMap<String, i64>) -> Self {
         let mut ordered = depths.into_iter().collect::<Vec<_>>();
         ordered.sort_by_key(|(_, depth)| *depth);
@@ -74,13 +116,7 @@ impl StackBindings {
             }
 
             let depth_from_top = self.depth_from_top(&name).expect("binding should exist before dropping");
-            if depth_from_top == 0 {
-                builder.add_op(OpDrop)?;
-            } else {
-                builder.add_i64(depth_from_top)?;
-                builder.add_op(OpRoll)?;
-                builder.add_op(OpDrop)?;
-            }
+            builder.drop_from_depth(depth_from_top)?;
 
             self.remove_name(&name);
         }
@@ -105,9 +141,7 @@ impl StackBindings {
     pub(crate) fn emit_update_stack_for_rebinding(&mut self, name: &str, builder: &mut ScriptBuilder) -> Result<(), CompilerError> {
         let depth_from_top = self.depth_from_top(name).expect("binding should exist before stack rebinding");
 
-        builder.add_i64(depth_from_top + 1)?;
-        builder.add_op(OpRoll)?;
-        builder.add_op(OpDrop)?;
+        builder.drop_from_depth(depth_from_top + 1)?;
 
         self.move_name_to_top(name);
 
@@ -124,9 +158,8 @@ impl StackBindings {
             return Ok(false);
         };
 
-        builder.add_i64(index + *stack_depth)?;
+        builder.pick_from_depth(index + *stack_depth)?;
         *stack_depth += 1;
-        builder.add_op(OpPick)?;
         Ok(true)
     }
 
@@ -149,9 +182,7 @@ impl StackBindings {
         // same bindings, so they are just two permutations of the same set.
 
         if let Some(opcodes) = local_stack_reordering_opcodes(&current_order, target_order) {
-            for opcode in opcodes {
-                builder.add_op(opcode)?;
-            }
+            builder.add_ops(&opcodes)?;
             self.reset_to_target_order(target_order);
             return Ok(());
         }
@@ -195,21 +226,57 @@ impl StackBindings {
     }
 }
 
+/// Returns the start index in `target_order` of the longest suffix that can be
+/// left in place by the suffix-rebuild stack reordering strategy.
+///
+/// In that strategy:
+/// - a prefix of `target_order` is extracted to altstack and restored later
+/// - the bindings that are not moved stay on the main stack in their original
+///   relative order
+/// - after the restore, those untouched bindings therefore occupy a suffix of
+///   the final target layout
+///
+/// So this helper looks for the longest suffix of `target_order` that appears
+/// as a subsequence of `current_order`.
+///
+/// Example:
+/// - `current = [a, b, c, d, e]`
+/// - `target  = [c, a, b, d, e]`
+/// - the keepable suffix is `[a, b, d, e]`
+///   - it is a subsequence of `current`
+///   - it starts at index `1` in `target`
+/// - so the function returns `1`, meaning only `[c]` must move
+///
+/// Another example:
+/// - `current = [a, b, c, d]`
+/// - `target  = [d, c, b, a]`
+/// - the longest keepable suffix is `[a]`
+/// - so the function returns `3`
+///
+/// The returned value is therefore:
+/// - `0` when the whole target can be kept in place
+/// - `target.len()` when no non-empty target suffix is keepable
 fn longest_keepable_suffix_start(current_order: &[String], target_order: &[String]) -> usize {
     let mut i = current_order.len();
     let mut j = target_order.len();
 
     while j > 0 {
+        // Walk backward through `current_order` until we find the current
+        // suffix item `target_order[j - 1]`, or prove that it is missing.
         while i > 0 && current_order[i - 1] != target_order[j - 1] {
             i -= 1;
         }
         if i == 0 {
             break;
         }
+        // We matched one more suffix item, so extend the keepable suffix one
+        // step to the left in `target_order` and continue the backward scan.
         i -= 1;
         j -= 1;
     }
 
+    // `j` is now the start index of the longest keepable suffix in
+    // `target_order`, so `target_order[j..]` is the untouched portion.
     j
 }
 
@@ -274,7 +341,7 @@ fn apply_local_opcode(order: &[String], opcode: u8) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use super::{StackBindings, apply_local_opcode, local_stack_reordering_opcodes, longest_keepable_suffix_start};
     use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
@@ -292,6 +359,10 @@ mod tests {
         order.iter().map(|name| (*name).to_string()).collect()
     }
 
+    /// Executes a raw script and decodes the resulting main stack as integers.
+    ///
+    /// The returned order matches txscript's raw stack iteration order, which
+    /// is bottom-to-top in `Stack::inner`.
     fn execute_script_and_decode_stack(script: Vec<u8>) -> Vec<i64> {
         let reused_values = SigHashReusedValuesUnsync::new();
         let sig_cache = Cache::new(128);
@@ -299,12 +370,45 @@ mod tests {
             &script,
             &reused_values,
             &sig_cache,
-            EngineFlags::default(),
+            EngineFlags { covenants_enabled: true },
         )
         .execute_and_return_stacks()
         .expect("script executes");
 
         stacks.dstack.iter().map(|entry| deserialize_i64(entry, true).expect("stack entry decodes to int")).collect()
+    }
+
+    /// Executes local stack ops against a logical top-to-bottom test stack.
+    ///
+    /// This helper bridges between the test model and txscript's push/stack
+    /// ordering so the rest of the test can stay in top-to-bottom terms.
+    fn execute_local_opcode_sequence_top_to_bottom(values_top_to_bottom: &[i64], opcodes: &[u8]) -> Vec<i64> {
+        let mut script = ScriptBuilder::new();
+        for value in values_top_to_bottom.iter().rev() {
+            script.add_i64(*value).expect("push test value");
+        }
+        script.add_ops(opcodes).expect("append local opcodes");
+        let mut result = execute_script_and_decode_stack(script.drain());
+        // Normalize the engine's raw bottom-to-top order back into the logical
+        // top-to-bottom order used by `StackBindings` and `apply_local_opcode`.
+        result.reverse();
+        result
+    }
+
+    /// Enumerates the one- and two-op local sequences in planner search order.
+    ///
+    /// The sweep test uses this to compare the planner against the same
+    /// canonical ordering it uses internally.
+    fn local_opcode_sequences_in_search_order() -> Vec<Vec<u8>> {
+        let local_ops = [OpSwap, OpRot, Op2Swap, Op2Rot];
+        let mut sequences = Vec::new();
+        sequences.extend(local_ops.iter().map(|opcode| vec![*opcode]));
+        for first in local_ops {
+            for second in local_ops {
+                sequences.push(vec![first, second]);
+            }
+        }
+        sequences
     }
 
     #[test]
@@ -328,7 +432,7 @@ mod tests {
 
         stack_bindings.emit_drop_bindings(&names(&["a", "c"]), &mut builder).expect("drop selected bindings");
 
-        assert_eq!(builder.drain(), vec![OpDrop, Op1, OpRoll, OpDrop]);
+        assert_eq!(builder.drain(), vec![OpDrop, OpNip]);
         assert_eq!(stack_bindings.binding_order_top_to_bottom(), names(&["b"]));
     }
 
@@ -362,10 +466,57 @@ mod tests {
 
     #[test]
     fn longest_keepable_suffix_start_finds_maximal_target_suffix() {
-        let current = names(&["a", "c", "b", "d"]);
-        let target = names(&["a", "b", "c", "d"]);
+        let cases = [
+            (vec!["a", "b", "c"], vec!["a", "b", "c"], 0),
+            (vec!["a", "c", "b", "d"], vec!["a", "b", "c", "d"], 2),
+            // move:        ↓
+            // current: [a, b, c]
+            // target:  [b, a, c]
+            // keep:        ^^^^
+            (vec!["a", "b", "c"], vec!["b", "a", "c"], 1),
+            // move:           ↓
+            // current: [a, b, c]
+            // target:  [c, a, b]
+            // keep:        ^^^^
+            (vec!["a", "b", "c"], vec!["c", "a", "b"], 1),
+            (vec!["a", "b", "c"], vec!["a", "c", "b"], 2),
+            // move:        ↓  ↓  ↓
+            // current: [a, b, c, d]
+            // target:  [b, c, d, a]
+            // keep:              ^
+            (vec!["a", "b", "c", "d"], vec!["b", "c", "d", "a"], 3),
+            (vec!["a", "b", "c", "d"], vec!["a", "d", "b", "c"], 2),
+            (vec!["a", "b", "c", "d"], vec!["c", "d", "a", "b"], 2),
+            (vec!["x"], vec!["x"], 0),
+            (vec!["x", "y"], vec!["y", "x"], 1),
+            (vec!["a", "b", "c", "d"], vec!["a", "b", "d", "c"], 3),
+            // move:           ↓
+            // current: [a, b, c, d, e]
+            // target:  [c, a, b, d, e]
+            // keep:        ^^^^^^^^^^
+            (vec!["a", "b", "c", "d", "e"], vec!["c", "a", "b", "d", "e"], 1),
+            // move:              ↓
+            // current: [a, b, c, d]
+            // target:  [d, a, b, c]
+            // keep:        ^^^^^^^
+            (vec!["a", "b", "c", "d"], vec!["d", "a", "b", "c"], 1),
+            // move:        ↓  ↓  ↓
+            // current: [a, b, c, d]
+            // target:  [d, c, b, a]
+            // keep:              ^
+            (vec!["a", "b", "c", "d"], vec!["d", "c", "b", "a"], 3),
+            // move:                 ↓
+            // current: [a, b, c, d, e]
+            // target:  [e, a, b, c, d]
+            // keep:        ^^^^^^^^^^
+            (vec!["a", "b", "c", "d", "e"], vec!["e", "a", "b", "c", "d"], 1),
+        ];
 
-        assert_eq!(longest_keepable_suffix_start(&current, &target), 2);
+        for (current, target, expected) in cases {
+            let current = current.into_iter().map(str::to_string).collect::<Vec<_>>();
+            let target = target.into_iter().map(str::to_string).collect::<Vec<_>>();
+            assert_eq!(longest_keepable_suffix_start(&current, &target), expected, "current={current:?} target={target:?}");
+        }
     }
 
     #[test]
@@ -387,7 +538,93 @@ mod tests {
     fn apply_local_opcode_matches_stack_machine_rotation_direction() {
         assert_eq!(apply_local_opcode(&names(&["a", "b", "c"]), OpRot), Some(names(&["c", "a", "b"])));
         assert_eq!(apply_local_opcode(&names(&["a", "b", "c", "d"]), Op2Swap), Some(names(&["c", "d", "a", "b"])));
+        assert_eq!(apply_local_opcode(&names(&["a", "b", "c", "d", "e", "f"]), Op2Rot), Some(names(&["e", "f", "a", "b", "c", "d"])));
         assert_eq!(apply_local_opcode(&names(&["a"]), OpSwap), None);
+    }
+
+    #[test]
+    fn apply_local_opcode_check_against_script_engine() {
+        let executable_cases = [
+            (vec![11, 22], OpSwap),
+            (vec![11, 22, 33], OpRot),
+            (vec![11, 22, 33, 44], Op2Swap),
+            (vec![11, 22, 33, 44, 55, 66], Op2Rot),
+        ];
+
+        for (values, opcode) in executable_cases {
+            let initial_stack = execute_local_opcode_sequence_top_to_bottom(&values, &[]);
+            let current_labels = (0..initial_stack.len()).map(|index| format!("v{index}")).collect::<Vec<_>>();
+            let expected_labels = apply_local_opcode(&current_labels, opcode).expect("opcode should apply to labeled stack");
+
+            let mut expected_by_label = HashMap::new();
+            for (label, value) in current_labels.iter().cloned().zip(initial_stack.iter().copied()) {
+                expected_by_label.insert(label, value);
+            }
+            let expected_stack = expected_labels
+                .into_iter()
+                .map(|label| *expected_by_label.get(&label).expect("label should map to test value"))
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                execute_local_opcode_sequence_top_to_bottom(&values, &[opcode]),
+                expected_stack,
+                "opcode {opcode} should match apply_local_opcode permutation"
+            );
+        }
+
+        assert_eq!(apply_local_opcode(&names(&["a"]), OpSwap), None);
+    }
+
+    /// This test validates the local stack-reordering fast path in four steps:
+    ///
+    /// 1. Start from a named stack longer than any local opcode touches.
+    /// 2. Sweep every one- and two-op local sequence in planner search order.
+    /// 3. Use the script engine as the ground truth for the target order each
+    ///    sequence actually reaches, and only keep the first sequence that
+    ///    reaches each distinct target.
+    /// 4. For each non-identity target, assert that both
+    ///    `local_stack_reordering_opcodes` and `emit_stack_reordering`
+    ///    choose exactly that same sequence. For identity targets, only
+    ///    check the outer `emit_stack_reordering` fast path.
+    #[test]
+    fn local_stack_reordering_and_emit_match_canonical_one_or_two_op_sequences() {
+        let initial_values = vec![11, 22, 33, 44, 55, 66, 77, 88];
+        let initial_order = (0..initial_values.len()).map(|index| format!("v{index}")).collect::<Vec<_>>();
+        let value_to_label = initial_values.iter().copied().zip(initial_order.iter().cloned()).collect::<HashMap<_, _>>();
+        let mut seen_targets = HashSet::new();
+
+        for source_opcodes in local_opcode_sequences_in_search_order() {
+            // Derive the target layout from the real engine.
+            let target_values = execute_local_opcode_sequence_top_to_bottom(&initial_values, &source_opcodes);
+            let target_order = target_values
+                .iter()
+                .map(|value| value_to_label.get(value).expect("target value should map to initial label").clone())
+                .collect::<Vec<_>>();
+            // Only test the first sequence that reaches each target, which is
+            // the same sequence the planner should pick for that target.
+            if !seen_targets.insert(target_order.clone()) {
+                continue;
+            }
+
+            if target_order != initial_order {
+                assert_eq!(
+                    local_stack_reordering_opcodes(&initial_order, &target_order),
+                    Some(source_opcodes.clone()),
+                    "planner should choose the first matching local sequence for target {target_order:?}"
+                );
+            }
+
+            let mut stack_bindings = StackBindings::from_order_top_to_bottom(initial_order.clone());
+            let mut builder = ScriptBuilder::new();
+            stack_bindings.emit_stack_reordering(&target_order, &mut builder).expect("emit stack reordering");
+
+            assert_eq!(
+                builder.drain(),
+                if target_order == initial_order { vec![] } else { source_opcodes.clone() },
+                "emit_stack_reordering should emit the first matching local sequence for target {target_order:?}"
+            );
+            assert_eq!(stack_bindings.binding_order_top_to_bottom(), target_order);
+        }
     }
 
     #[test]
