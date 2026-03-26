@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use kaspa_txscript::opcodes::codes::*;
 use kaspa_txscript::script_builder::ScriptBuilder;
-use kaspa_txscript::serialize_i64;
+use kaspa_txscript::{deserialize_i64, serialize_i64};
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{
@@ -19,10 +19,12 @@ use covenant_declarations::lower_covenant_declarations;
 mod debug_recording;
 mod debug_value_types;
 mod stack_bindings;
+mod state_decoder_recording;
 
 use debug_recording::DebugRecorder;
 use debug_value_types::infer_debug_expr_value_type;
 use stack_bindings::StackBindings;
+use state_decoder_recording::{StagedValidationArgCapture, StateDecoderRecorder};
 
 /// Prefix used for synthetic argument bindings during inline function expansion.
 pub const SYNTHETIC_ARG_PREFIX: &str = "__arg";
@@ -73,6 +75,57 @@ pub struct CompiledStateLayout {
     pub len: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DecodedStateValue {
+    Int(i64),
+    Bool(bool),
+    Bytes(Vec<u8>),
+    Object(Vec<(String, DecodedStateValue)>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledStateFieldLayout {
+    pub name: String,
+    pub type_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledStateLayoutSchema {
+    pub fields: Vec<CompiledStateFieldLayout>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ValidationBuiltinKind {
+    ValidateOutputState,
+    ValidateOutputStateWithTemplate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ValidationObservedField {
+    OutputIdx,
+    EncodedState,
+    ExpectedTemplateHash,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledValidationArgCapture {
+    pub bytecode_offset: usize,
+    pub field: ValidationObservedField,
+    pub state_layout_id: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledValidationCall {
+    pub builtin_kind: ValidationBuiltinKind,
+    pub captures: Vec<CompiledValidationArgCapture>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompiledStateDecoderInfo {
+    pub state_layouts: Vec<CompiledStateLayoutSchema>,
+    pub validation_calls: Vec<CompiledValidationCall>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompiledContract<'i> {
     pub contract_name: String,
@@ -81,7 +134,49 @@ pub struct CompiledContract<'i> {
     pub abi: Vec<FunctionAbiEntry>,
     pub without_selector: bool,
     pub state_layout: CompiledStateLayout,
+    #[serde(default)]
+    pub state_decoder: CompiledStateDecoderInfo,
     pub debug_info: Option<DebugInfo<'i>>,
+}
+
+pub fn decode_state_layout(layout: &CompiledStateLayoutSchema, encoded: &[u8]) -> Result<DecodedStateValue, CompilerError> {
+    let mut offset = 0usize;
+    let mut fields = Vec::with_capacity(layout.fields.len());
+
+    for field in &layout.fields {
+        let type_ref = parse_type_ref(&field.type_name)?;
+        let (payload_len, decode_numeric) = fixed_state_field_payload_len_for_type_ref(&type_ref, &HashMap::new())
+            .map_err(|_| CompilerError::Unsupported(format!("decode_state_layout does not support field type {}", field.type_name)))?;
+        let prefix = data_prefix(payload_len);
+        let end_prefix = offset.saturating_add(prefix.len());
+        if encoded.get(offset..end_prefix) != Some(prefix.as_slice()) {
+            return Err(CompilerError::Unsupported(format!("encoded state prefix mismatch for field '{}'", field.name)));
+        }
+        let value_start = end_prefix;
+        let value_end = value_start.saturating_add(payload_len);
+        let payload = encoded
+            .get(value_start..value_end)
+            .ok_or_else(|| CompilerError::Unsupported(format!("encoded state truncated at field '{}'", field.name)))?;
+        let value = if decode_numeric {
+            if field.type_name == "bool" {
+                DecodedStateValue::Bool(payload.first().copied().unwrap_or_default() != 0)
+            } else {
+                let number = deserialize_i64(payload, false)
+                    .map_err(|err| CompilerError::Unsupported(format!("failed to decode field '{}': {err}", field.name)))?;
+                DecodedStateValue::Int(number)
+            }
+        } else {
+            DecodedStateValue::Bytes(payload.to_vec())
+        };
+        fields.push((field.name.clone(), value));
+        offset = value_end;
+    }
+
+    if offset != encoded.len() {
+        return Err(CompilerError::Unsupported("encoded state has trailing bytes".to_string()));
+    }
+
+    Ok(DecodedStateValue::Object(fields))
 }
 
 #[derive(Clone, Default)]
@@ -946,6 +1041,7 @@ fn compile_contract_impl<'i>(
 
         let mut recorder = DebugRecorder::new(options.record_debug_infos);
         recorder.record_contract_scope(&contract.params, constructor_args, &contract.constants);
+        let mut state_decoder_recorder = StateDecoderRecorder::default();
         let selector_prefix_len = if without_selector { 0 } else { 1 };
         let contract_field_prefix_len = selector_prefix_len + field_prolog_script.len();
         let state_layout = CompiledStateLayout { start: selector_prefix_len, len: field_prolog_script.len() };
@@ -964,6 +1060,7 @@ fn compile_contract_impl<'i>(
                     &function_order,
                     script_size,
                     &mut recorder,
+                    &mut state_decoder_recorder,
                 )?);
             }
         }
@@ -973,6 +1070,7 @@ fn compile_contract_impl<'i>(
                 .first()
                 .ok_or_else(|| CompilerError::Unsupported("contract has no entrypoint functions".to_string()))?;
             recorder.set_entrypoint_start(name, field_prolog_script.len());
+            state_decoder_recorder.set_entrypoint_start(name, field_prolog_script.len());
             let mut script = field_prolog_script.clone();
             script.extend(entrypoint_script.clone());
             script
@@ -992,6 +1090,7 @@ fn compile_contract_impl<'i>(
                 builder.add_op(OpDrop)?;
                 let start = builder.script().len();
                 recorder.set_entrypoint_start(name, start);
+                state_decoder_recorder.set_entrypoint_start(name, start);
                 builder.add_ops(script)?;
                 builder.add_op(OpElse)?;
                 if entrypoint_index == total - 1 {
@@ -1009,6 +1108,7 @@ fn compile_contract_impl<'i>(
         };
 
         let debug_info = recorder.into_debug_info(source.unwrap_or_default().to_string());
+        let state_decoder = state_decoder_recorder.into_info();
         if !uses_script_size {
             return Ok(CompiledContract {
                 contract_name: lowered_contract.name.clone(),
@@ -1017,6 +1117,7 @@ fn compile_contract_impl<'i>(
                 abi: function_abi_entries,
                 without_selector,
                 state_layout,
+                state_decoder,
                 debug_info,
             });
         }
@@ -1030,6 +1131,7 @@ fn compile_contract_impl<'i>(
                 abi: function_abi_entries,
                 without_selector,
                 state_layout,
+                state_decoder,
                 debug_info,
             });
         }
@@ -2448,6 +2550,7 @@ fn compile_entrypoint_function<'i>(
     function_order: &HashMap<String, usize>,
     script_size: Option<i64>,
     recorder: &mut DebugRecorder<'i>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<(String, Vec<u8>), CompilerError> {
     let contract_field_count = contract_fields.len();
     let mut flattened_param_names = Vec::new();
@@ -2538,6 +2641,7 @@ fn compile_entrypoint_function<'i>(
     }
 
     recorder.begin_entrypoint(&function.name, function, contract_fields, structs)?;
+    state_decoder_recorder.begin_entrypoint(function);
 
     let body_len = function.body.len();
     for (index, stmt) in function.body.iter().enumerate() {
@@ -2579,6 +2683,7 @@ fn compile_entrypoint_function<'i>(
                 function_index,
                 script_size,
                 recorder,
+                state_decoder_recorder,
             )
             .map_err(|err| err.with_span(&stmt.span()))?;
         }
@@ -2647,6 +2752,7 @@ fn compile_entrypoint_function<'i>(
     }
     let script = builder.drain();
     recorder.finish_entrypoint(script.len());
+    state_decoder_recorder.finish_entrypoint(script.len());
     Ok((function.name.clone(), script))
 }
 
@@ -2669,6 +2775,7 @@ fn compile_statement<'i>(
     function_index: usize,
     script_size: Option<i64>,
     recorder: &mut DebugRecorder<'i>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<Vec<String>, CompilerError> {
     match stmt {
         Statement::VariableDefinition { type_ref, name, expr, .. } => {
@@ -3042,6 +3149,7 @@ fn compile_statement<'i>(
             function_index,
             script_size,
             recorder,
+            state_decoder_recorder,
         )
         .map(|_| Vec::new()),
         Statement::For { ident, start, end, max_iterations, body, span, .. } => compile_for_statement(
@@ -3067,6 +3175,7 @@ fn compile_statement<'i>(
             function_index,
             script_size,
             recorder,
+            state_decoder_recorder,
         )
         .map(|_| Vec::new()),
         Statement::Return { .. } => Err(CompilerError::Unsupported("return statement must be the last statement".to_string())),
@@ -3121,6 +3230,7 @@ fn compile_statement<'i>(
                     contract_field_prefix_len,
                     script_size,
                     contract_constants,
+                    state_decoder_recorder,
                 )
                 .map(|_| Vec::new());
             }
@@ -3176,6 +3286,7 @@ fn compile_statement<'i>(
                     &layout_fields,
                     script_size,
                     contract_constants,
+                    state_decoder_recorder,
                 )
                 .map(|_| Vec::new());
             }
@@ -3198,6 +3309,7 @@ fn compile_statement<'i>(
                 function_index,
                 script_size,
                 recorder,
+                state_decoder_recorder,
             )?;
             if !returns.is_empty() {
                 let flattened_returns = flatten_runtime_return_exprs(
@@ -3289,6 +3401,7 @@ fn compile_statement<'i>(
                     function_index,
                     script_size,
                     recorder,
+                    state_decoder_recorder,
                 )?;
             }
             Ok(Vec::new())
@@ -3326,6 +3439,7 @@ fn compile_statement<'i>(
                 function_index,
                 script_size,
                 recorder,
+                state_decoder_recorder,
             )?;
             if returns.len() != bindings.len() {
                 return Err(CompilerError::Unsupported("return values count must match function return types".to_string()));
@@ -4018,6 +4132,7 @@ fn compile_validate_output_state_statement(
     contract_field_prefix_len: usize,
     script_size: Option<i64>,
     contract_constants: &HashMap<String, Expr<'_>>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<(), CompilerError> {
     let Ok([output_idx, state_expr]): Result<&[Expr<'_>; 2], _> = args.try_into() else {
         return Err(CompilerError::Unsupported("validateOutputState(output_idx, new_state) expects 2 arguments".to_string()));
@@ -4026,6 +4141,7 @@ fn compile_validate_output_state_statement(
         return Err(CompilerError::Unsupported("validateOutputState requires contract fields".to_string()));
     }
 
+    let mut captures = Vec::with_capacity(2);
     let mut stack_depth = compile_encoded_state_object(
         state_expr,
         env,
@@ -4038,6 +4154,11 @@ fn compile_validate_output_state_statement(
         contract_constants,
         "validateOutputState",
     )?;
+    let layout_fields = contract_fields
+        .iter()
+        .map(|field| StructFieldSpec { name: field.name.clone(), type_ref: field.type_ref.clone() })
+        .collect::<Vec<_>>();
+    captures.push(StagedValidationArgCapture::encoded_state(builder.script().len(), &layout_fields));
 
     let total_state_len = encoded_state_len(contract_fields, contract_constants)?;
     let state_start_offset = contract_field_prefix_len
@@ -4127,9 +4248,11 @@ fn compile_validate_output_state_statement(
         Some(script_size_value),
         contract_constants,
     )?;
+    captures.push(StagedValidationArgCapture::top_of_stack(builder.script().len(), ValidationObservedField::OutputIdx));
     builder.add_op(OpTxOutputSpk)?;
     builder.add_op(OpEqual)?;
     builder.add_op(OpVerify)?;
+    state_decoder_recorder.record_validation_call(ValidationBuiltinKind::ValidateOutputState, captures);
 
     Ok(())
 }
@@ -4144,6 +4267,7 @@ fn compile_validate_output_state_with_template_statement(
     layout_fields: &[StructFieldSpec],
     script_size: Option<i64>,
     contract_constants: &HashMap<String, Expr<'_>>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<(), CompilerError> {
     let Ok([output_idx, state_expr, template_prefix, template_suffix, expected_template_hash]): Result<&[Expr<'_>; 5], _> =
         args.try_into()
@@ -4158,6 +4282,8 @@ fn compile_validate_output_state_with_template_statement(
     }
 
     let mut stack_depth = 0i64;
+
+    let mut captures = Vec::with_capacity(3);
 
     compile_expr(
         template_prefix,
@@ -4197,6 +4323,7 @@ fn compile_validate_output_state_with_template_statement(
         script_size,
         contract_constants,
     )?;
+    captures.push(StagedValidationArgCapture::top_of_stack(builder.script().len(), ValidationObservedField::ExpectedTemplateHash));
     builder.add_op(OpSwap)?;
     builder.add_op(OpBlake2b)?;
     builder.add_op(OpEqual)?;
@@ -4213,6 +4340,7 @@ fn compile_validate_output_state_with_template_statement(
         contract_constants,
         "validateOutputStateWithTemplate",
     )?;
+    captures.push(StagedValidationArgCapture::encoded_state(builder.script().len(), layout_fields));
 
     compile_expr(
         template_prefix,
@@ -4276,9 +4404,11 @@ fn compile_validate_output_state_with_template_statement(
         script_size,
         contract_constants,
     )?;
+    captures.push(StagedValidationArgCapture::top_of_stack(builder.script().len(), ValidationObservedField::OutputIdx));
     builder.add_op(OpTxOutputSpk)?;
     builder.add_op(OpEqual)?;
     builder.add_op(OpVerify)?;
+    state_decoder_recorder.record_validation_call(ValidationBuiltinKind::ValidateOutputStateWithTemplate, captures);
 
     Ok(())
 }
@@ -4542,6 +4672,7 @@ fn compile_inline_call<'i>(
     caller_index: usize,
     script_size: Option<i64>,
     recorder: &mut DebugRecorder<'i>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<Vec<Expr<'i>>, CompilerError> {
     let function = functions.get(name).ok_or_else(|| CompilerError::Unsupported(format!("function '{}' not found", name)))?;
     let callee_index =
@@ -4713,6 +4844,7 @@ fn compile_inline_call<'i>(
                 callee_index,
                 script_size,
                 recorder,
+                state_decoder_recorder,
             )
             .map_err(|err| err.with_span(&stmt.span()))?;
         }
@@ -4756,6 +4888,7 @@ fn compile_if_statement<'i>(
     function_index: usize,
     script_size: Option<i64>,
     recorder: &mut DebugRecorder<'i>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<(), CompilerError> {
     let condition = lower_runtime_expr(condition, types, structs)?;
     let mut stack_depth = 0i64;
@@ -4799,6 +4932,7 @@ fn compile_if_statement<'i>(
         script_size,
         true,
         recorder,
+        state_decoder_recorder,
     )?;
 
     let mut else_env = original_env.clone();
@@ -4826,6 +4960,7 @@ fn compile_if_statement<'i>(
             script_size,
             true,
             recorder,
+            state_decoder_recorder,
         )?;
         else_stack_bindings.emit_stack_reordering(&then_stack_bindings, builder)?;
         *stack_bindings = then_stack_bindings;
@@ -4990,6 +5125,7 @@ fn compile_block<'i>(
     script_size: Option<i64>,
     scoped_stack_locals: bool,
     recorder: &mut DebugRecorder<'i>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<(), CompilerError> {
     let mut added_stack_locals = Vec::new();
     for stmt in statements {
@@ -5013,6 +5149,7 @@ fn compile_block<'i>(
                 function_index,
                 script_size,
                 recorder,
+                state_decoder_recorder,
             )
             .map_err(|err| err.with_span(&stmt.span()))?,
         );
@@ -5053,6 +5190,7 @@ fn compile_for_statement<'i>(
     function_index: usize,
     script_size: Option<i64>,
     recorder: &mut DebugRecorder<'i>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<(), CompilerError> {
     let max_iterations = eval_const_int(max_iterations_expr, contract_constants)
         .map_err(|_| CompilerError::Unsupported("for loop max iterations must be a compile-time integer".to_string()))?;
@@ -5094,6 +5232,7 @@ fn compile_for_statement<'i>(
                 function_index,
                 script_size,
                 recorder,
+                state_decoder_recorder,
             )
         } else {
             compile_runtime_for_statement(
@@ -5119,6 +5258,7 @@ fn compile_for_statement<'i>(
                 function_index,
                 script_size,
                 recorder,
+                state_decoder_recorder,
             )
         };
 
@@ -5167,6 +5307,7 @@ fn compile_constant_for_statement<'i>(
     function_index: usize,
     script_size: Option<i64>,
     recorder: &mut DebugRecorder<'i>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<(), CompilerError> {
     for iteration in 0..max_iterations {
         let value = start + iteration as i64;
@@ -5202,6 +5343,7 @@ fn compile_constant_for_statement<'i>(
             script_size,
             true,
             recorder,
+            state_decoder_recorder,
         )?;
     }
 
@@ -5232,6 +5374,7 @@ fn compile_runtime_for_statement<'i>(
     function_index: usize,
     script_size: Option<i64>,
     recorder: &mut DebugRecorder<'i>,
+    state_decoder_recorder: &mut StateDecoderRecorder,
 ) -> Result<(), CompilerError> {
     let mut current = resolve_expr_for_runtime(start, env, types, &mut HashSet::new())?;
     let mut current_const = eval_const_int(&current, contract_constants).ok();
@@ -5271,6 +5414,7 @@ fn compile_runtime_for_statement<'i>(
             function_index,
             script_size,
             recorder,
+            state_decoder_recorder,
         )?;
 
         if let Some(value) = env.get(ident).and_then(|expr| eval_const_int(expr, contract_constants).ok()) {

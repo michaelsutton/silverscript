@@ -12,13 +12,14 @@ use kaspa_txscript::covenants::CovenantsContext;
 use kaspa_txscript::opcodes::codes::*;
 use kaspa_txscript::script_builder::ScriptBuilder;
 use kaspa_txscript::{
-    EngineCtx, EngineFlags, SeqCommitAccessor, TxScriptEngine, parse_script, pay_to_address_script, pay_to_script_hash_script,
-    pay_to_script_hash_signature_script,
+    EngineCtx, EngineFlags, SeqCommitAccessor, TxScriptEngine, deserialize_i64, parse_script, pay_to_address_script,
+    pay_to_script_hash_script, pay_to_script_hash_signature_script,
 };
 use silverscript_lang::ast::{Expr, ExprKind, format_contract_ast, parse_contract_ast};
 use silverscript_lang::compiler::{
-    CompileOptions, CompiledContract, CovenantDeclCallOptions, FunctionAbiEntry, FunctionInputAbi, compile_contract,
-    compile_contract_ast, function_branch_index, struct_object,
+    CompileOptions, CompiledContract, CovenantDeclCallOptions, DecodedStateValue, FunctionAbiEntry, FunctionInputAbi,
+    ValidationBuiltinKind, ValidationObservedField, compile_contract, compile_contract_ast, decode_state_layout,
+    function_branch_index, struct_object,
 };
 use silverscript_lang::debug_info::{DebugParamBinding, RuntimeBinding, StepKind};
 
@@ -137,6 +138,60 @@ fn execute_input(tx: Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> 
         EngineFlags { covenants_enabled: true },
     );
     vm.execute()
+}
+
+fn execute_script_until_offset(
+    script: &[u8],
+    sigscript: &[u8],
+    bytecode_offsets: &[usize],
+) -> Result<Vec<Vec<u8>>, kaspa_txscript_errors::TxScriptError> {
+    let reused_values = SigHashReusedValuesUnsync::new();
+    let sig_cache = Cache::new(10_000);
+    let input = TransactionInput {
+        previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([2u8; 32]), index: 0 },
+        signature_script: sigscript.to_vec(),
+        sequence: 0,
+        sig_op_count: 0,
+    };
+    let output = TransactionOutput { value: 1000, script_public_key: ScriptPublicKey::new(0, script.to_vec().into()), covenant: None };
+    let tx = Transaction::new(1, vec![input.clone()], vec![output.clone()], 0, Default::default(), 0, vec![]);
+    let utxo_entry = UtxoEntry::new(output.value, output.script_public_key.clone(), 0, tx.is_coinbase(), None);
+    let populated_tx = PopulatedTransaction::new(&tx, vec![utxo_entry.clone()]);
+    let mut vm = TxScriptEngine::from_transaction_input(
+        &populated_tx,
+        &input,
+        0,
+        &utxo_entry,
+        EngineCtx::new(&sig_cache).with_reused(&reused_values),
+        EngineFlags { covenants_enabled: true },
+    );
+
+    for opcode in parse_script::<PopulatedTransaction<'_>, SigHashReusedValuesUnsync>(sigscript) {
+        vm.execute_opcode(opcode?)?;
+    }
+
+    let mut captures = Vec::with_capacity(bytecode_offsets.len());
+    let mut offset = 0usize;
+    let mut next_capture = 0usize;
+    while next_capture < bytecode_offsets.len() && offset >= bytecode_offsets[next_capture] {
+        captures.push(vm.stacks().dstack.last().cloned().unwrap_or_default());
+        next_capture += 1;
+    }
+    for opcode in parse_script::<PopulatedTransaction<'_>, SigHashReusedValuesUnsync>(script) {
+        if next_capture >= bytecode_offsets.len() {
+            break;
+        }
+        let opcode = opcode?;
+        let len = opcode.serialize().len();
+        vm.execute_opcode(opcode)?;
+        offset = offset.saturating_add(len);
+        while next_capture < bytecode_offsets.len() && offset >= bytecode_offsets[next_capture] {
+            captures.push(vm.stacks().dstack.last().cloned().unwrap_or_default());
+            next_capture += 1;
+        }
+    }
+
+    Ok(captures)
 }
 
 #[test]
@@ -574,6 +629,116 @@ fn debug_info_records_console_expression_args() {
     assert_eq!(console_step.console_args.len(), 2);
     assert!(matches!(console_step.console_args[0].kind, ExprKind::String(ref value) if value == "sum"));
     assert!(matches!(console_step.console_args[1].kind, ExprKind::Binary { .. }));
+}
+
+#[test]
+fn validate_output_state_site_decodes_encoded_state_at_recorded_offset() {
+    let source = r#"pragma silverscript ^0.1.0;
+
+contract Probe(int current) {
+    int amount = current;
+    byte[2] code = 0x1234;
+
+    entrypoint function emit() {
+        State next_state = {
+            amount: 7,
+            code: 0xabcd
+        };
+        validateOutputState(0, next_state);
+    }
+}
+"#;
+
+    let compiled = compile_contract(source, &[Expr::int(3)], CompileOptions::default()).expect("compile succeeds");
+    assert_eq!(compiled.state_decoder.validation_calls.len(), 1);
+    let call = &compiled.state_decoder.validation_calls[0];
+    assert_eq!(call.builtin_kind, ValidationBuiltinKind::ValidateOutputState);
+    assert_eq!(call.captures.len(), 2);
+    assert_eq!(call.captures[0].field, ValidationObservedField::EncodedState);
+    assert_eq!(call.captures[1].field, ValidationObservedField::OutputIdx);
+
+    let sigscript = compiled.build_sig_script("emit", vec![]).expect("sigscript builds");
+    let captures = execute_script_until_offset(&compiled.script, &sigscript, &[call.captures[0].bytecode_offset])
+        .expect("script executes to validation site");
+    let encoded_state = captures[0].clone();
+    let layout = &compiled.state_decoder.state_layouts[call.captures[0].state_layout_id.expect("state layout id present")];
+    let decoded = decode_state_layout(layout, &encoded_state).expect("decode state layout");
+
+    assert_eq!(
+        decoded,
+        DecodedStateValue::Object(vec![
+            ("amount".to_string(), DecodedStateValue::Int(7)),
+            ("code".to_string(), DecodedStateValue::Bytes(vec![0xab, 0xcd])),
+        ])
+    );
+}
+
+#[test]
+fn validate_output_state_with_template_site_decodes_state_and_flags_missing_full_arg_snapshot() {
+    let source = r#"pragma silverscript ^0.1.0;
+
+contract Probe(byte[32] init_template_hash) {
+    byte[32] template_hash = init_template_hash;
+    int amount = 1;
+    byte[2] code = 0x1234;
+
+    entrypoint function emit(byte[] template_prefix, byte[] template_suffix) {
+        State next_state = {
+            template_hash: template_hash,
+            amount: 9,
+            code: 0xbeef
+        };
+        validateOutputStateWithTemplate(0, next_state, template_prefix, template_suffix, template_hash);
+    }
+}
+"#;
+    let template_prefix = vec![0xaa, 0xbb];
+    let template_suffix = vec![0xcc];
+    let template_hash = Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(&template_prefix)
+        .update(&template_suffix)
+        .finalize()
+        .as_bytes()
+        .to_vec();
+
+    let compiled =
+        compile_contract(source, &[Expr::bytes(template_hash.clone())], CompileOptions::default()).expect("compile succeeds");
+    assert_eq!(compiled.state_decoder.validation_calls.len(), 1);
+    let call = &compiled.state_decoder.validation_calls[0];
+    assert_eq!(call.builtin_kind, ValidationBuiltinKind::ValidateOutputStateWithTemplate);
+    assert_eq!(call.captures.len(), 3);
+    assert_eq!(call.captures[0].field, ValidationObservedField::ExpectedTemplateHash);
+    assert_eq!(call.captures[1].field, ValidationObservedField::EncodedState);
+    assert_eq!(call.captures[2].field, ValidationObservedField::OutputIdx);
+
+    let sigscript = compiled
+        .build_sig_script("emit", vec![Expr::bytes(template_prefix.clone()), Expr::bytes(template_suffix.clone())])
+        .expect("sigscript builds");
+    let captures = execute_script_until_offset(
+        &compiled.script,
+        &sigscript,
+        &[call.captures[0].bytecode_offset, call.captures[1].bytecode_offset, call.captures[2].bytecode_offset],
+    )
+    .expect("script executes to validation captures");
+    let encoded_state = captures[1].clone();
+    let layout = &compiled.state_decoder.state_layouts[call.captures[1].state_layout_id.expect("state layout id present")];
+    let decoded = decode_state_layout(layout, &encoded_state).expect("decode state layout");
+
+    assert_eq!(
+        decoded,
+        DecodedStateValue::Object(vec![
+            ("template_hash".to_string(), DecodedStateValue::Bytes(template_hash.clone())),
+            ("amount".to_string(), DecodedStateValue::Int(9)),
+            ("code".to_string(), DecodedStateValue::Bytes(vec![0xbe, 0xef])),
+        ])
+    );
+
+    assert_eq!(&captures[0], &template_hash);
+
+    let output_idx = deserialize_i64(&captures[2], false).expect("output_idx decodes");
+    assert_eq!(output_idx, 0);
 }
 
 #[test]
