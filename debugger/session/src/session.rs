@@ -190,7 +190,11 @@ impl<'a, 'i> DebugSession<'a, 'i> {
     // --- Session construction + stepping ---
 
     /// Creates a debug session simulating a full transaction spend.
+    ///
     /// Executes sigscript first to seed the stack, then debugs lockscript execution.
+    ///
+    /// `lockscript` must be the full executed locking script (for example the
+    /// redeem script in a P2SH spend), not a P2SH input script.
     pub fn full(
         sigscript: &[u8],
         lockscript: &[u8],

@@ -94,6 +94,18 @@ where
     f(&mut session)
 }
 
+fn collect_console_output_via_opcodes(session: &mut DebugSession<'_, '_>, max_steps: usize) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut out = Vec::new();
+    for _ in 0..max_steps {
+        out.extend(session.take_console_output());
+        if session.step_opcode()?.is_none() {
+            break;
+        }
+    }
+    out.extend(session.take_console_output());
+    Ok(out)
+}
+
 #[test]
 fn debug_session_provides_source_context_and_vars() -> Result<(), Box<dyn Error>> {
     with_session(|session| {
@@ -129,6 +141,126 @@ contract ConsoleStep() {
 
         session.step_opcode()?;
         assert!(session.take_console_output().is_empty(), "single-opcode stepping should move past the zero-width console step");
+        Ok(())
+    })
+}
+
+#[test]
+fn debug_session_console_logs_reflect_updated_variable_values() -> Result<(), Box<dyn Error>> {
+    let source = r#"pragma silverscript ^0.1.0;
+
+contract ConsoleUpdated() {
+    struct Pair {
+        int x;
+        int y;
+    }
+
+    entrypoint function inspect(int a, int b) {
+        int sum = a + b;
+        int delta = b;
+        console.log("before", sum, delta);
+        sum = sum + a;
+        delta = sum - 1;
+        console.log("after", sum, delta);
+        Pair pair = { x: sum, y: delta };
+        console.log("pair", pair.x, pair.y);
+        require(sum > 0);
+    }
+}
+"#;
+
+    with_session_for_source(source, vec![], "inspect", vec![Expr::int(2), Expr::int(3)], |session| {
+        session.run_to_first_executed_statement()?;
+        session.step_over()?; // int sum = a + b;
+        session.step_over()?; // int delta = b;
+        session.step_over()?; // console.log("before", ...)
+        assert_eq!(session.take_console_output(), vec!["before 5 3"]);
+
+        session.step_over()?; // sum = sum + a;
+        session.step_over()?; // delta = sum - 1;
+        session.step_over()?; // console.log("after", ...)
+        assert_eq!(session.take_console_output(), vec!["after 7 6"]);
+
+        session.step_over()?; // Pair pair = { ... };
+        session.step_over()?; // console.log("pair", ...)
+        assert_eq!(session.take_console_output(), vec!["pair 7 6"]);
+
+        let sum = session.variable_by_name("sum")?;
+        let delta = session.variable_by_name("delta")?;
+        assert_eq!(format_value(&sum.type_name, &sum.value), "7");
+        assert_eq!(format_value(&delta.type_name, &delta.value), "6");
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "branch-local console.log currently skips if/else body logs under debugger stepping"]
+fn debug_session_console_logs_reflect_updated_values_inside_if_else() -> Result<(), Box<dyn Error>> {
+    let source = r#"pragma silverscript ^0.1.0;
+
+contract ConsoleIfElse() {
+    entrypoint function inspect(int a, int b) {
+        int sum = a + b;
+        console.log("start", sum);
+        if (sum > 5) {
+            sum = sum + 10;
+            console.log("then", sum);
+        } else {
+            sum = sum - 1;
+            console.log("else", sum);
+        }
+        console.log("after", sum);
+        require(sum > 0);
+    }
+}
+"#;
+
+    with_session_for_source(source, vec![], "inspect", vec![Expr::int(2), Expr::int(5)], |session| {
+        let console = collect_console_output_via_opcodes(session, 256)?;
+        assert_eq!(console, vec!["start 7", "then 17", "after 17"]);
+
+        let sum = session.variable_by_name("sum")?;
+        assert_eq!(format_value(&sum.type_name, &sum.value), "17");
+        Ok(())
+    })?;
+
+    with_session_for_source(source, vec![], "inspect", vec![Expr::int(2), Expr::int(3)], |session| {
+        let console = collect_console_output_via_opcodes(session, 256)?;
+        assert_eq!(console, vec!["start 5", "else 4", "after 4"]);
+
+        let sum = session.variable_by_name("sum")?;
+        assert_eq!(format_value(&sum.type_name, &sum.value), "4");
+        Ok(())
+    })
+}
+
+#[test]
+fn debug_session_console_logs_reflect_branch_updated_values_after_if_else() -> Result<(), Box<dyn Error>> {
+    let source = r#"pragma silverscript ^0.1.0;
+
+contract ConsoleAfterIfElse() {
+    entrypoint function inspect(int a, int b) {
+        int sum = a + b;
+        if (sum > 5) {
+            sum = sum + 10;
+        } else {
+            sum = sum - 1;
+        }
+        console.log("after", sum);
+        require(sum > 0);
+    }
+}
+"#;
+
+    with_session_for_source(source, vec![], "inspect", vec![Expr::int(2), Expr::int(5)], |session| {
+        let console = collect_console_output_via_opcodes(session, 256)?;
+        assert_eq!(console, vec!["after 17"]);
+        Ok(())
+    })?;
+
+    with_session_for_source(source, vec![], "inspect", vec![Expr::int(2), Expr::int(3)], |session| {
+        let console = collect_console_output_via_opcodes(session, 256)?;
+        assert_eq!(console, vec!["after 4"]);
         Ok(())
     })
 }
