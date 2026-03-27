@@ -140,7 +140,7 @@ fn execute_input(tx: Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> 
     vm.execute()
 }
 
-fn execute_script_until_offset(
+fn execute_script_with_offsets_capture(
     script: &[u8],
     sigscript: &[u8],
     bytecode_offsets: &[usize],
@@ -173,22 +173,27 @@ fn execute_script_until_offset(
     let mut captures = Vec::with_capacity(bytecode_offsets.len());
     let mut offset = 0usize;
     let mut next_capture = 0usize;
-    while next_capture < bytecode_offsets.len() && offset >= bytecode_offsets[next_capture] {
-        captures.push(vm.stacks().dstack.last().cloned().unwrap_or_default());
-        next_capture += 1;
-    }
-    for opcode in parse_script::<PopulatedTransaction<'_>, SigHashReusedValuesUnsync>(script) {
-        if next_capture >= bytecode_offsets.len() {
-            break;
-        }
-        let opcode = opcode?;
-        let len = opcode.serialize().len();
-        vm.execute_opcode(opcode)?;
-        offset = offset.saturating_add(len);
+    let mut opcodes = parse_script::<PopulatedTransaction<'_>, SigHashReusedValuesUnsync>(script);
+
+    loop {
+        // The compiler is not expected to emit the same bytecode offset multiple times,
+        // but we loop here so the helper remains generic if several captures share one offset.
         while next_capture < bytecode_offsets.len() && offset >= bytecode_offsets[next_capture] {
             captures.push(vm.stacks().dstack.last().cloned().unwrap_or_default());
             next_capture += 1;
         }
+
+        if next_capture >= bytecode_offsets.len() {
+            break;
+        }
+
+        let Some(opcode) = opcodes.next() else {
+            break;
+        };
+        let opcode = opcode?;
+        let len = opcode.serialize().len();
+        vm.execute_opcode(opcode)?;
+        offset = offset.saturating_add(len);
     }
 
     Ok(captures)
@@ -658,7 +663,7 @@ contract Probe(int current) {
     assert_eq!(call.captures[1].field, ValidationObservedField::OutputIdx);
 
     let sigscript = compiled.build_sig_script("emit", vec![]).expect("sigscript builds");
-    let captures = execute_script_until_offset(&compiled.script, &sigscript, &[call.captures[0].bytecode_offset])
+    let captures = execute_script_with_offsets_capture(&compiled.script, &sigscript, &[call.captures[0].bytecode_offset])
         .expect("script executes to validation site");
     let encoded_state = captures[0].clone();
     let layout = &compiled.state_decoder.state_layouts[call.captures[0].state_layout_id.expect("state layout id present")];
@@ -716,7 +721,7 @@ contract Probe(byte[32] init_template_hash) {
     let sigscript = compiled
         .build_sig_script("emit", vec![Expr::bytes(template_prefix.clone()), Expr::bytes(template_suffix.clone())])
         .expect("sigscript builds");
-    let captures = execute_script_until_offset(
+    let captures = execute_script_with_offsets_capture(
         &compiled.script,
         &sigscript,
         &[call.captures[0].bytecode_offset, call.captures[1].bytecode_offset, call.captures[2].bytecode_offset],
