@@ -144,7 +144,7 @@ fn execute_script_with_offsets_capture(
     script: &[u8],
     sigscript: &[u8],
     bytecode_offsets: &[usize],
-) -> Result<Vec<Vec<u8>>, kaspa_txscript_errors::TxScriptError> {
+) -> Result<Vec<Option<Vec<u8>>>, kaspa_txscript_errors::TxScriptError> {
     let reused_values = SigHashReusedValuesUnsync::new();
     let sig_cache = Cache::new(10_000);
     let input = TransactionInput {
@@ -179,7 +179,7 @@ fn execute_script_with_offsets_capture(
         // The compiler is not expected to emit the same bytecode offset multiple times,
         // but we loop here so the helper remains generic if several captures share one offset.
         while next_capture < bytecode_offsets.len() && offset >= bytecode_offsets[next_capture] {
-            captures.push(vm.stacks().dstack.last().cloned().unwrap_or_default());
+            captures.push(vm.is_executing().then(|| vm.stacks().dstack.last().cloned().unwrap_or_default()));
             next_capture += 1;
         }
 
@@ -665,7 +665,7 @@ contract Probe(int current) {
     let sigscript = compiled.build_sig_script("emit", vec![]).expect("sigscript builds");
     let captures = execute_script_with_offsets_capture(&compiled.script, &sigscript, &[call.captures[0].bytecode_offset])
         .expect("script executes to validation site");
-    let encoded_state = captures[0].clone();
+    let encoded_state = captures[0].clone().expect("capture is on live path");
     let layout = &compiled.state_decoder.state_layouts[call.captures[0].state_layout_id.expect("state layout id present")];
     let decoded = decode_state_layout(layout, &encoded_state).expect("decode state layout");
 
@@ -727,7 +727,7 @@ contract Probe(byte[32] init_template_hash) {
         &[call.captures[0].bytecode_offset, call.captures[1].bytecode_offset, call.captures[2].bytecode_offset],
     )
     .expect("script executes to validation captures");
-    let encoded_state = captures[1].clone();
+    let encoded_state = captures[1].clone().expect("capture is on live path");
     let layout = &compiled.state_decoder.state_layouts[call.captures[1].state_layout_id.expect("state layout id present")];
     let decoded = decode_state_layout(layout, &encoded_state).expect("decode state layout");
 
@@ -740,10 +740,57 @@ contract Probe(byte[32] init_template_hash) {
         ])
     );
 
-    assert_eq!(&captures[0], &template_hash);
+    assert_eq!(captures[0].as_ref().expect("capture is on live path"), &template_hash);
 
-    let output_idx = deserialize_i64(&captures[2], false).expect("output_idx decodes");
+    let output_idx = deserialize_i64(captures[2].as_ref().expect("capture is on live path"), false).expect("output_idx decodes");
     assert_eq!(output_idx, 0);
+}
+
+#[test]
+fn validate_output_state_captures_none_for_skipped_branch_before_live_branch() {
+    let source = r#"pragma silverscript ^0.1.0;
+
+contract Probe() {
+    int amount = 0;
+
+    entrypoint function emit(bool choose_then) {
+        if (choose_then) {
+            State next_state = {
+                amount: 11
+            };
+            validateOutputState(0, next_state);
+        } else {
+            State next_state = {
+                amount: 22
+            };
+            validateOutputState(0, next_state);
+        }
+    }
+}
+"#;
+
+    let compiled = compile_contract(source, &[], CompileOptions::default()).expect("compile succeeds");
+    assert_eq!(compiled.state_decoder.validation_calls.len(), 2);
+    let then_call = &compiled.state_decoder.validation_calls[0];
+    let else_call = &compiled.state_decoder.validation_calls[1];
+    assert_eq!(then_call.captures[0].field, ValidationObservedField::EncodedState);
+    assert_eq!(else_call.captures[0].field, ValidationObservedField::EncodedState);
+
+    let else_sigscript = compiled.build_sig_script("emit", vec![Expr::bool(false)]).expect("sigscript builds");
+    let else_captures = execute_script_with_offsets_capture(
+        &compiled.script,
+        &else_sigscript,
+        &[then_call.captures[0].bytecode_offset, else_call.captures[0].bytecode_offset],
+    )
+    .expect("script executes for else branch");
+    let then_dead = &else_captures[0];
+    let else_live = &else_captures[1];
+    assert!(then_dead.is_none(), "then branch capture should be dead");
+    assert!(else_live.is_some(), "else branch capture should be live");
+    let else_layout = &compiled.state_decoder.state_layouts[else_call.captures[0].state_layout_id.expect("state layout id present")];
+    let else_decoded =
+        decode_state_layout(else_layout, else_live.as_ref().expect("capture is on live path")).expect("decode else state");
+    assert_eq!(else_decoded, DecodedStateValue::Object(vec![("amount".to_string(), DecodedStateValue::Int(22)),]));
 }
 
 #[test]
