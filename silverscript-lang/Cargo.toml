@@ -11,6 +11,10 @@ rust-version.workspace = true
 name = "silverscript_lang"
 path = "src/lib.rs"
 
+[[bench]]
+name = "chess_workloads"
+harness = false
+
 [dependencies]
 kaspa-consensus-core.workspace = true
 kaspa-txscript.workspace = true
@@ -31,3 +35,5 @@ semver = "1.0"
 
 [dev-dependencies]
 kaspa-addresses.workspace = true
+criterion = { version = "0.5.1", default-features = false }
+rayon = "1.10"
