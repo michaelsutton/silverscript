@@ -2,6 +2,7 @@ use std::fs;
 
 use blake2b_simd::Params as Blake2bParams;
 use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
+use kaspa_consensus_core::mass::units::SigopCount;
 use kaspa_consensus_core::tx::{
     CovenantBinding, GenesisCovenantGroup, PopulatedTransaction, Transaction, TransactionId, TransactionInput, TransactionOutpoint,
     TransactionOutput, UtxoEntry, VerifiableTransaction,
@@ -33,7 +34,7 @@ fn test_input(index: u32, signature_script: Vec<u8>) -> TransactionInput {
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([index as u8 + 1; 32]), index },
         signature_script,
         sequence: 0,
-        sig_op_count: 1,
+        mass: SigopCount(1).into(),
     }
 }
 
@@ -54,7 +55,7 @@ fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> H
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x42u8; 32]), index: 0 },
         signature_script: vec![],
         sequence: 0,
-        sig_op_count: 0,
+        mass: SigopCount(0).into(),
     };
     let output = TransactionOutput { value: 1_000, script_public_key: pay_to_script_hash_script(&compiled.script), covenant: None };
     let mut tx = Transaction::new(1, vec![input], vec![output], 0, Default::default(), 0, vec![]);
@@ -79,7 +80,7 @@ fn execute_input_with_covenants(tx: Transaction, entries: Vec<UtxoEntry>, input_
         input_idx,
         utxo,
         EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
-        EngineFlags { covenants_enabled: true },
+        EngineFlags { covenants_enabled: true, ..Default::default() },
     );
     vm.execute()
 }

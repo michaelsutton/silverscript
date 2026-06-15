@@ -6,6 +6,7 @@ use blake2b_simd::Params as Blake2bParams;
 use kaspa_consensus_core::hashing::sighash::calc_schnorr_signature_hash;
 use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
 use kaspa_consensus_core::hashing::sighash_type::SIG_HASH_ALL;
+use kaspa_consensus_core::mass::units::SigopCount;
 use kaspa_consensus_core::tx::{
     CovenantBinding, PopulatedTransaction, Transaction, TransactionId, TransactionInput, TransactionOutpoint, TransactionOutput,
     UtxoEntry, VerifiableTransaction,
@@ -1141,7 +1142,7 @@ impl TxArena {
             previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes(txid), index },
             signature_script: vec![],
             sequence: 0,
-            sig_op_count: 1,
+            mass: SigopCount(1).into(),
         };
         let placeholder = entry_sigscript(
             &self.league,
@@ -1606,7 +1607,7 @@ impl TxArena {
                 previous_outpoint: active_worker.outpoint,
                 signature_script: timeout_sigscript,
                 sequence: DEFAULT_MOVE_TIMEOUT as u64,
-                sig_op_count: 0,
+                mass: SigopCount(0).into(),
             }],
             vec![covenant_output(&routed_settle, 0, self.covenant_id)],
             0,
@@ -2576,7 +2577,7 @@ fn entry_sigscript(compiled: &CompiledContract<'_>, function: &str, args: Vec<Ex
 }
 
 fn tx_input(previous_outpoint: TransactionOutpoint, signature_script: Vec<u8>, sig_op_count: u8) -> TransactionInput {
-    TransactionInput { previous_outpoint, signature_script, sequence: 0, sig_op_count }
+    TransactionInput { previous_outpoint, signature_script, sequence: 0, mass: SigopCount(sig_op_count).into() }
 }
 
 fn covenant_output_with_value(
@@ -2609,7 +2610,7 @@ fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> H
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x77u8; 32]), index: 0 },
         signature_script: vec![],
         sequence: 0,
-        sig_op_count: 0,
+        mass: SigopCount(0).into(),
     };
     let covenant_id = kaspa_consensus_core::hashing::covenant_id::covenant_id(
         input.previous_outpoint,
@@ -2642,7 +2643,7 @@ fn execute_input_with_covenants(tx: Transaction, entries: Vec<UtxoEntry>, input_
         input_idx,
         utxo,
         EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
-        EngineFlags { covenants_enabled: true },
+        EngineFlags { covenants_enabled: true, ..Default::default() },
     );
     vm.execute()
 }
