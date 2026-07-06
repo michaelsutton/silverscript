@@ -14,7 +14,9 @@ use kaspa_consensus_core::tx::{
 use kaspa_consensus_core::Hash;
 use kaspa_txscript::caches::Cache;
 use kaspa_txscript::covenants::CovenantsContext;
-use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script, EngineCtx, EngineFlags, TxScriptEngine};
+use kaspa_txscript::{
+    pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags, EngineCtx, EngineFlags, TxScriptEngine,
+};
 use kaspa_txscript_errors::TxScriptError;
 use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use silverscript_lang::ast::Expr;
@@ -1142,7 +1144,7 @@ impl TxArena {
             previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes(txid), index },
             signature_script: vec![],
             sequence: 0,
-            mass: SigopCount(1).into(),
+            compute_commit: SigopCount(1).into(),
         };
         let placeholder = entry_sigscript(
             &self.league,
@@ -1607,7 +1609,7 @@ impl TxArena {
                 previous_outpoint: active_worker.outpoint,
                 signature_script: timeout_sigscript,
                 sequence: DEFAULT_MOVE_TIMEOUT as u64,
-                mass: SigopCount(0).into(),
+                compute_commit: SigopCount(0).into(),
             }],
             vec![covenant_output(&routed_settle, 0, self.covenant_id)],
             0,
@@ -2573,11 +2575,16 @@ fn compile_settle_state(
 
 fn entry_sigscript(compiled: &CompiledContract<'_>, function: &str, args: Vec<Expr<'_>>) -> Vec<u8> {
     let sigscript = compiled.build_sig_script(function, args).expect("sigscript builds");
-    pay_to_script_hash_signature_script(compiled.script.clone(), sigscript).expect("wrap p2sh sigscript")
+    pay_to_script_hash_signature_script_with_flags(
+        compiled.script.clone(),
+        sigscript,
+        EngineFlags { covenants_enabled: true, ..Default::default() },
+    )
+    .expect("wrap p2sh sigscript")
 }
 
 fn tx_input(previous_outpoint: TransactionOutpoint, signature_script: Vec<u8>, sig_op_count: u8) -> TransactionInput {
-    TransactionInput { previous_outpoint, signature_script, sequence: 0, mass: SigopCount(sig_op_count).into() }
+    TransactionInput { previous_outpoint, signature_script, sequence: 0, compute_commit: SigopCount(sig_op_count).into() }
 }
 
 fn covenant_output_with_value(
@@ -2610,7 +2617,7 @@ fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> H
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x77u8; 32]), index: 0 },
         signature_script: vec![],
         sequence: 0,
-        mass: SigopCount(0).into(),
+        compute_commit: SigopCount(0).into(),
     };
     let covenant_id = kaspa_consensus_core::hashing::covenant_id::covenant_id(
         input.previous_outpoint,

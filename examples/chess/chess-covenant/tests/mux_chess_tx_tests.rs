@@ -10,7 +10,9 @@ use kaspa_consensus_core::tx::{
 use kaspa_consensus_core::Hash;
 use kaspa_txscript::caches::Cache;
 use kaspa_txscript::covenants::CovenantsContext;
-use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script, EngineCtx, EngineFlags, TxScriptEngine};
+use kaspa_txscript::{
+    pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags, EngineCtx, EngineFlags, TxScriptEngine,
+};
 use kaspa_txscript_errors::TxScriptError;
 use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
 use silverscript_lang::ast::Expr;
@@ -418,7 +420,12 @@ fn compile_league_state(
 
 fn entry_sigscript(compiled: &CompiledContract<'_>, function: &str, args: Vec<Expr<'_>>) -> Vec<u8> {
     let sigscript = compiled.build_sig_script(function, args).expect("sigscript builds");
-    pay_to_script_hash_signature_script(compiled.script.clone(), sigscript).expect("wrap p2sh sigscript")
+    pay_to_script_hash_signature_script_with_flags(
+        compiled.script.clone(),
+        sigscript,
+        EngineFlags { covenants_enabled: true, ..Default::default() },
+    )
+    .expect("wrap p2sh sigscript")
 }
 
 fn tx_input(index: u32, signature_script: Vec<u8>, sig_op_count: u8) -> TransactionInput {
@@ -426,7 +433,7 @@ fn tx_input(index: u32, signature_script: Vec<u8>, sig_op_count: u8) -> Transact
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([index as u8 + 1; 32]), index },
         signature_script,
         sequence: 0,
-        mass: SigopCount(sig_op_count).into(),
+        compute_commit: SigopCount(sig_op_count).into(),
     }
 }
 
@@ -460,7 +467,7 @@ fn populate_single_output_genesis_covenant(compiled: &CompiledContract<'_>) -> H
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x77u8; 32]), index: 0 },
         signature_script: vec![],
         sequence: 0,
-        mass: SigopCount(0).into(),
+        compute_commit: SigopCount(0).into(),
     };
     let covenant_id = kaspa_consensus_core::hashing::covenant_id::covenant_id(
         input.previous_outpoint,
@@ -1133,7 +1140,7 @@ fn run_worker_timeout(
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([1u8; 32]), index: 0 },
         signature_script: sigscript,
         sequence,
-        mass: SigopCount(0).into(),
+        compute_commit: SigopCount(0).into(),
     };
     let tx = Transaction::new(1, vec![input], outputs, lock_time, Default::default(), 0, vec![]);
     let result = execute_input_with_covenants(tx, entries, 0);
@@ -1170,7 +1177,7 @@ fn run_mux_timeout(
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([1u8; 32]), index: 0 },
         signature_script: placeholder_sigscript,
         sequence,
-        mass: SigopCount(1).into(),
+        compute_commit: SigopCount(1).into(),
     };
     let mut tx = Transaction::new(1, vec![input], outputs, lock_time, Default::default(), 0, vec![]);
     let sig = sign_tx_input_schnorr(&tx, &entries, 0, player);
@@ -5537,7 +5544,7 @@ fn league_registers_a_real_player_contract() {
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([0xabu8; 32]), index: 7 },
         signature_script: vec![],
         sequence: 0,
-        mass: SigopCount(1).into(),
+        compute_commit: SigopCount(1).into(),
     };
 
     let player_id = blake2b_bytes(&[player_id_domain.as_slice(), &[0xabu8; 32], &7u32.to_le_bytes()].concat());
@@ -5655,7 +5662,7 @@ fn league_register_rejects_mutated_lane_output() {
         previous_outpoint: TransactionOutpoint { transaction_id: TransactionId::from_bytes([0xabu8; 32]), index: 7 },
         signature_script: vec![],
         sequence: 0,
-        mass: SigopCount(1).into(),
+        compute_commit: SigopCount(1).into(),
     };
 
     let player_id = blake2b_bytes(&[player_id_domain.as_slice(), &[0xabu8; 32], &7u32.to_le_bytes()].concat());
