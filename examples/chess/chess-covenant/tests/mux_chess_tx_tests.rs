@@ -211,8 +211,7 @@ fn player_template_hash(fix: &MuxChessFixture) -> Hash {
             losses: 0,
         },
     );
-    let layout = compiled.state_layout;
-    blake2b_bytes(&[compiled.script[..layout.start].as_ref(), compiled.script[layout.start + layout.len..].as_ref()].concat())
+    Hash::from_bytes(compiled.template_hash())
 }
 
 fn load_contract_source(path: &'static str) -> &'static str {
@@ -233,7 +232,7 @@ fn template_fixture(source: &'static str, ctor: &[Expr<'_>]) -> TemplateFixture 
     let layout = compiled.state_layout;
     let prefix = compiled.script[..layout.start].to_vec();
     let suffix = compiled.script[layout.start + layout.len..].to_vec();
-    let hash = blake2b_bytes(&[prefix.as_slice(), suffix.as_slice()].concat());
+    let hash = Hash::from_bytes(compiled.template_hash());
     TemplateFixture { source, prefix, suffix, hash }
 }
 
@@ -546,13 +545,7 @@ fn assert_terminal_mux_settlement(status: i64, expected_white: (i64, i64, i64, i
         },
     );
     let player_layout = player_contract.state_layout;
-    let player_template = blake2b_bytes(
-        &[
-            player_contract.script[..player_layout.start].as_ref(),
-            player_contract.script[player_layout.start + player_layout.len..].as_ref(),
-        ]
-        .concat(),
-    );
+    let player_template = Hash::from_bytes(player_contract.template_hash());
     let white_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
@@ -776,13 +769,7 @@ fn build_draw_settlement_tx_with_values(
         },
     );
     let player_layout = player_contract.state_layout;
-    let player_template = blake2b_bytes(
-        &[
-            player_contract.script[..player_layout.start].as_ref(),
-            player_contract.script[player_layout.start + player_layout.len..].as_ref(),
-        ]
-        .concat(),
-    );
+    let player_template = Hash::from_bytes(player_contract.template_hash());
     let white_player = compile_player_state(
         player_source(),
         PlayerStateArgs {
@@ -5524,7 +5511,7 @@ fn league_registers_a_real_player_contract() {
     let layout = player_template.state_layout;
     let player_prefix = player_template.script[..layout.start].to_vec();
     let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
-    let player_template = blake2b_bytes(&[player_prefix.as_slice(), player_suffix.as_slice()].concat());
+    let player_template = Hash::from_bytes(player_template.template_hash());
 
     let league = compile_contract(
         league_source(),
@@ -5628,7 +5615,7 @@ fn league_register_rejects_mutated_lane_output() {
     let layout = player_template.state_layout;
     let player_prefix = player_template.script[..layout.start].to_vec();
     let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
-    let player_template = blake2b_bytes(&[player_prefix.as_slice(), player_suffix.as_slice()].concat());
+    let player_template = Hash::from_bytes(player_template.template_hash());
 
     let league = compile_contract(
         league_source(),
@@ -5746,7 +5733,7 @@ fn league_register_rejects_changed_lane_value() {
     let layout = player_template.state_layout;
     let player_prefix = player_template.script[..layout.start].to_vec();
     let player_suffix = player_template.script[layout.start + layout.len..].to_vec();
-    let player_template = blake2b_bytes(&[player_prefix.as_slice(), player_suffix.as_slice()].concat());
+    let player_template = Hash::from_bytes(player_template.template_hash());
 
     let league = compile_league_state(
         league_source(),
@@ -6013,13 +6000,7 @@ fn players_can_start_a_real_mux_game() {
         },
     );
     let player_layout = player_contract.state_layout;
-    let player_template = blake2b_bytes(
-        &[
-            player_contract.script[..player_layout.start].as_ref(),
-            player_contract.script[player_layout.start + player_layout.len..].as_ref(),
-        ]
-        .concat(),
-    );
+    let player_template = Hash::from_bytes(player_contract.template_hash());
     let player_prefix_len = player_layout.start as i64;
     let player_suffix_len = (player_contract.script.len() - (player_layout.start + player_layout.len)) as i64;
 

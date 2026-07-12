@@ -1642,6 +1642,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaspa-addresses"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "borsh",
+ "js-sys",
+ "serde",
+ "smallvec",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+ "workflow-log",
+ "workflow-wasm",
+]
+
+[[package]]
 name = "kaspa-consensus-core"
 version = "1.1.1-toc.1"
 source = "git+https://github.com/kaspanet/rusty-kaspa?branch=tn12#42b734f16e2e09078175028ab33158a9f75e91cf"
@@ -1656,15 +1671,54 @@ dependencies = [
  "getrandom 0.2.17",
  "itertools 0.13.0",
  "js-sys",
- "kaspa-addresses",
- "kaspa-core",
- "kaspa-hashes",
- "kaspa-math",
- "kaspa-merkle",
- "kaspa-muhash",
- "kaspa-smt",
- "kaspa-txscript-errors",
- "kaspa-utils",
+ "kaspa-addresses 1.1.1-toc.1",
+ "kaspa-core 1.1.1-toc.1",
+ "kaspa-hashes 1.1.1-toc.1",
+ "kaspa-math 1.1.1-toc.1",
+ "kaspa-merkle 1.1.1-toc.1",
+ "kaspa-muhash 1.1.1-toc.1",
+ "kaspa-smt 1.1.1-toc.1",
+ "kaspa-txscript-errors 1.1.1-toc.1",
+ "kaspa-utils 1.1.1-toc.1",
+ "rand 0.8.5",
+ "secp256k1",
+ "serde",
+ "serde-value",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+ "workflow-core",
+ "workflow-log",
+ "workflow-serializer",
+ "workflow-wasm",
+]
+
+[[package]]
+name = "kaspa-consensus-core"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "bitflags 2.11.0",
+ "borsh",
+ "cfg-if",
+ "faster-hex 0.9.0",
+ "futures-util",
+ "getrandom 0.2.17",
+ "itertools 0.13.0",
+ "js-sys",
+ "kaspa-addresses 2.0.1",
+ "kaspa-core 2.0.1",
+ "kaspa-hashes 2.0.1",
+ "kaspa-math 2.0.1",
+ "kaspa-merkle 2.0.1",
+ "kaspa-muhash 2.0.1",
+ "kaspa-smt 2.0.1",
+ "kaspa-txscript-errors 2.0.1",
+ "kaspa-utils 2.0.1",
  "rand 0.8.5",
  "secp256k1",
  "serde",
@@ -1701,6 +1755,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kaspa-core"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "ctrlc",
+ "downcast",
+ "futures-util",
+ "log",
+ "log4rs",
+ "num_cpus",
+ "thiserror 2.0.18",
+ "tokio",
+ "triggered",
+ "wasm-bindgen",
+ "workflow-log",
+]
+
+[[package]]
 name = "kaspa-hashes"
 version = "1.1.1-toc.1"
 source = "git+https://github.com/kaspanet/rusty-kaspa?branch=tn12#42b734f16e2e09078175028ab33158a9f75e91cf"
@@ -1710,7 +1784,26 @@ dependencies = [
  "borsh",
  "cc",
  "faster-hex 0.9.0",
- "kaspa-utils",
+ "kaspa-utils 1.1.1-toc.1",
+ "keccak",
+ "serde",
+ "sha2",
+ "sha2-const-stable",
+ "wasm-bindgen",
+ "zerocopy",
+]
+
+[[package]]
+name = "kaspa-hashes"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "blake2b_simd",
+ "blake3",
+ "borsh",
+ "cc",
+ "faster-hex 0.9.0",
+ "kaspa-utils 2.0.1",
  "keccak",
  "serde",
  "sha2",
@@ -1727,7 +1820,27 @@ dependencies = [
  "borsh",
  "faster-hex 0.9.0",
  "js-sys",
- "kaspa-utils",
+ "kaspa-utils 1.1.1-toc.1",
+ "malachite-base",
+ "malachite-nz",
+ "serde",
+ "serde-wasm-bindgen",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+ "workflow-core",
+ "workflow-log",
+ "workflow-wasm",
+]
+
+[[package]]
+name = "kaspa-math"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "borsh",
+ "faster-hex 0.9.0",
+ "js-sys",
+ "kaspa-utils 2.0.1",
  "malachite-base",
  "malachite-nz",
  "serde",
@@ -1744,7 +1857,15 @@ name = "kaspa-merkle"
 version = "1.1.1-toc.1"
 source = "git+https://github.com/kaspanet/rusty-kaspa?branch=tn12#42b734f16e2e09078175028ab33158a9f75e91cf"
 dependencies = [
- "kaspa-hashes",
+ "kaspa-hashes 1.1.1-toc.1",
+]
+
+[[package]]
+name = "kaspa-merkle"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "kaspa-hashes 2.0.1",
 ]
 
 [[package]]
@@ -1752,8 +1873,19 @@ name = "kaspa-muhash"
 version = "1.1.1-toc.1"
 source = "git+https://github.com/kaspanet/rusty-kaspa?branch=tn12#42b734f16e2e09078175028ab33158a9f75e91cf"
 dependencies = [
- "kaspa-hashes",
- "kaspa-math",
+ "kaspa-hashes 1.1.1-toc.1",
+ "kaspa-math 1.1.1-toc.1",
+ "rand_chacha 0.3.1",
+ "serde",
+]
+
+[[package]]
+name = "kaspa-muhash"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "kaspa-hashes 2.0.1",
+ "kaspa-math 2.0.1",
  "rand_chacha 0.3.1",
  "serde",
 ]
@@ -1764,7 +1896,18 @@ version = "1.1.1-toc.1"
 source = "git+https://github.com/kaspanet/rusty-kaspa?branch=tn12#42b734f16e2e09078175028ab33158a9f75e91cf"
 dependencies = [
  "blake3",
- "kaspa-hashes",
+ "kaspa-hashes 1.1.1-toc.1",
+ "thiserror 2.0.18",
+ "zerocopy",
+]
+
+[[package]]
+name = "kaspa-smt"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "blake3",
+ "kaspa-hashes 2.0.1",
  "thiserror 2.0.18",
  "zerocopy",
 ]
@@ -1789,11 +1932,54 @@ dependencies = [
  "hexplay",
  "indexmap 2.13.0",
  "itertools 0.13.0",
- "kaspa-addresses",
- "kaspa-consensus-core",
- "kaspa-hashes",
- "kaspa-txscript-errors",
- "kaspa-utils",
+ "kaspa-addresses 1.1.1-toc.1",
+ "kaspa-consensus-core 1.1.1-toc.1",
+ "kaspa-hashes 1.1.1-toc.1",
+ "kaspa-txscript-errors 1.1.1-toc.1",
+ "kaspa-utils 1.1.1-toc.1",
+ "log",
+ "parking_lot",
+ "rand 0.8.5",
+ "risc0-binfmt",
+ "risc0-circuit-recursion",
+ "risc0-core",
+ "risc0-zkp",
+ "secp256k1",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+ "workflow-wasm",
+]
+
+[[package]]
+name = "kaspa-txscript"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-groth16",
+ "ark-relations",
+ "ark-serialize",
+ "ark-snark",
+ "blake2b_simd",
+ "blake3",
+ "borsh",
+ "cc",
+ "cfg-if",
+ "faster-hex 0.9.0",
+ "hexplay",
+ "indexmap 2.13.0",
+ "itertools 0.13.0",
+ "kaspa-addresses 2.0.1",
+ "kaspa-consensus-core 2.0.1",
+ "kaspa-hashes 2.0.1",
+ "kaspa-txscript-errors 2.0.1",
+ "kaspa-utils 2.0.1",
  "log",
  "parking_lot",
  "rand 0.8.5",
@@ -1818,7 +2004,18 @@ version = "1.1.1-toc.1"
 source = "git+https://github.com/kaspanet/rusty-kaspa?branch=tn12#42b734f16e2e09078175028ab33158a9f75e91cf"
 dependencies = [
  "borsh",
- "kaspa-hashes",
+ "kaspa-hashes 1.1.1-toc.1",
+ "secp256k1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "kaspa-txscript-errors"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "borsh",
+ "kaspa-hashes 2.0.1",
  "secp256k1",
  "thiserror 2.0.18",
 ]
@@ -1832,6 +2029,28 @@ dependencies = [
  "borsh",
  "cfg-if",
  "duct",
+ "faster-hex 0.9.0",
+ "ipnet",
+ "itertools 0.13.0",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "serde",
+ "sha2",
+ "smallvec",
+ "thiserror 2.0.18",
+ "uuid",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "kaspa-utils"
+version = "2.0.1"
+source = "git+https://github.com/kaspanet/rusty-kaspa?tag=v2.0.1#cfafeb4c093fa37a303f1b9f19c58f986b870ce3"
+dependencies = [
+ "async-channel 2.5.0",
+ "borsh",
+ "cfg-if",
  "faster-hex 0.9.0",
  "ipnet",
  "itertools 0.13.0",
@@ -2047,10 +2266,9 @@ checksum = "dce6dd36094cac388f119d2e9dc82dc730ef91c32a6222170d630e5414b956e6"
 name = "mux-covenant"
 version = "0.1.0"
 dependencies = [
- "blake2b_simd",
- "kaspa-consensus-core",
- "kaspa-txscript",
- "kaspa-txscript-errors",
+ "kaspa-consensus-core 1.1.1-toc.1",
+ "kaspa-txscript 1.1.1-toc.1",
+ "kaspa-txscript-errors 1.1.1-toc.1",
  "silverscript-lang",
 ]
 
@@ -3029,9 +3247,9 @@ dependencies = [
  "clap",
  "faster-hex 0.10.0",
  "indexmap 2.13.0",
- "kaspa-consensus-core",
- "kaspa-txscript",
- "kaspa-txscript-errors",
+ "kaspa-consensus-core 2.0.1",
+ "kaspa-txscript 2.0.1",
+ "kaspa-txscript-errors 2.0.1",
  "pest",
  "pest_derive",
  "rand 0.8.5",

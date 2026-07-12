@@ -1023,7 +1023,7 @@ impl TxArena {
         let layout = player_contract.state_layout;
         let player_prefix = player_contract.script[..layout.start].to_vec();
         let player_suffix = player_contract.script[layout.start + layout.len..].to_vec();
-        let player_template = blake2b([player_prefix.as_slice(), player_suffix.as_slice()].concat().as_slice());
+        let player_template = Hash::from_bytes(player_contract.template_hash());
         let league = compile_league_state(
             league_static_source(),
             &league_template,
@@ -2218,7 +2218,7 @@ fn template_fixture(source: &'static str, ctor: &[Expr<'_>]) -> TemplateFixture 
     let layout = compiled.state_layout;
     let prefix = compiled.script[..layout.start].to_vec();
     let suffix = compiled.script[layout.start + layout.len..].to_vec();
-    let hash = blake2b([prefix.as_slice(), suffix.as_slice()].concat().as_slice());
+    let hash = Hash::from_bytes(compiled.template_hash());
     TemplateFixture { source, prefix, suffix, hash }
 }
 
@@ -2241,12 +2241,7 @@ fn packed_execution_route_templates(fix: &ExecutionFixture) -> Vec<u8> {
                 losses: 0,
             },
         );
-        let layout = player_template.state_layout;
-        blake2b(
-            [player_template.script[..layout.start].as_ref(), player_template.script[layout.start + layout.len..].as_ref()]
-                .concat()
-                .as_slice(),
-        )
+        Hash::from_bytes(player_template.template_hash())
     };
     let mut out = Vec::with_capacity(32 * 9);
     out.extend_from_slice(&fix.pawn.hash.as_bytes());
@@ -2710,7 +2705,7 @@ fn compile_template(path: &str, args: &[Expr<'static>]) -> Result<TemplateWitnes
     let layout = compiled.state_layout;
     let prefix = compiled.script[..layout.start].to_vec();
     let suffix = compiled.script[layout.start + layout.len..].to_vec();
-    let hash = blake2b([prefix.as_slice(), suffix.as_slice()].concat().as_slice());
+    let hash = Hash::from_bytes(compiled.template_hash());
     Ok(TemplateWitness { prefix, suffix, hash })
 }
 

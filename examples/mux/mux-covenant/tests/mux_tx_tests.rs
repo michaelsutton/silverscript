@@ -1,6 +1,5 @@
 use std::fs;
 
-use blake2b_simd::Params as Blake2bParams;
 use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
 use kaspa_consensus_core::mass::units::SigopCount;
 use kaspa_consensus_core::tx::{
@@ -25,7 +24,7 @@ fn template_parts_and_hash(source: &str, state: &[Expr<'_>]) -> (Vec<u8>, Vec<u8
     let layout = compiled.state_layout;
     let prefix = compiled.script[..layout.start].to_vec();
     let suffix = compiled.script[layout.start + layout.len..].to_vec();
-    let template = Blake2bParams::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize().as_bytes().to_vec();
+    let template = compiled.template_hash().to_vec();
     (prefix, suffix, template)
 }
 
