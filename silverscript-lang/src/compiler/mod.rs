@@ -387,6 +387,24 @@ fn input_sigscript_substr_expr<'i>(input_idx: &Expr<'i>, start: Expr<'i>, end: E
     Expr::call("OpTxInputScriptSigSubstr", vec![input_idx.clone(), start, end])
 }
 
+fn input_template_parts_exprs<'i>(
+    input_idx: &Expr<'i>,
+    template_prefix_len: &Expr<'i>,
+    template_suffix_len: &Expr<'i>,
+    state_len: usize,
+) -> (Expr<'i>, Expr<'i>) {
+    let script_size = binary_expr(
+        BinaryOp::Add,
+        binary_expr(BinaryOp::Add, template_prefix_len.clone(), Expr::int(state_len as i64)),
+        template_suffix_len.clone(),
+    );
+    let script_base = input_sigscript_base_expr(input_idx, script_size.clone());
+    let prefix_end = binary_expr(BinaryOp::Add, script_base.clone(), template_prefix_len.clone());
+    let suffix_start = binary_expr(BinaryOp::Add, prefix_end.clone(), Expr::int(state_len as i64));
+    let suffix_end = binary_expr(BinaryOp::Add, suffix_start.clone(), template_suffix_len.clone());
+    (input_sigscript_substr_expr(input_idx, script_base, prefix_end), input_sigscript_substr_expr(input_idx, suffix_start, suffix_end))
+}
+
 fn input_script_pubkey_expr<'i>(input_idx: &Expr<'i>) -> Expr<'i> {
     Expr::new(
         ExprKind::Introspection {

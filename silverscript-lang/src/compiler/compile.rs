@@ -109,7 +109,7 @@ pub(super) fn compile_contract_impl<'i>(
     let covenant_lowered_contract = lower_covenant_declarations(&inferred_lowered_contract, &constants)?;
     let inline_lowered_contract = lower_inline_functions(&covenant_lowered_contract, &mut debug_recorder)?;
     let structs = build_struct_registry(&inline_lowered_contract)?;
-    let validate_output_state_lowered_contract = lower_validate_output_state(&inline_lowered_contract, &structs)?;
+    let validate_output_state_lowered_contract = lower_validate_output_state(&inline_lowered_contract, &structs, &constants)?;
     let struct_lowered_contract = lower_structs_contract(&validate_output_state_lowered_contract, &structs, &constants)?;
     let append_lowered_contract = lower_array_appends(&struct_lowered_contract)?;
     let for_lowered_contract = lower_for_loops(&append_lowered_contract, &constants)?;
@@ -1594,7 +1594,7 @@ fn encoded_state_len<'i>(
     contract_fields.iter().try_fold(0usize, |acc, field| Ok(acc + encoded_field_chunk_size(field, contract_constants)?))
 }
 
-fn encoded_state_len_for_layout_field_types<'i>(
+pub(super) fn encoded_state_len_for_layout_field_types<'i>(
     layout_field_types: &[TypeRef],
     contract_constants: &HashMap<String, Expr<'i>>,
 ) -> Result<usize, CompilerError> {
