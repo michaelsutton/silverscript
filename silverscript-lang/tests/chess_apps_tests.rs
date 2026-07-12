@@ -686,10 +686,10 @@ fn size_snapshots() -> Vec<SizeSnapshot> {
         SizeSnapshot {
             name: "chess_settle.sil",
             ctor: settle_constructor_args,
-            expected_script_len: 2656,
-            expected_sigscript_len: 13407,
-            expected_instruction_count: 2068,
-            expected_charged_op_count: 1347,
+            expected_script_len: 2865,
+            expected_sigscript_len: 10424,
+            expected_instruction_count: 2195,
+            expected_charged_op_count: 1429,
         },
         SizeSnapshot {
             name: "chess_pawn.sil",
@@ -1737,8 +1737,8 @@ fn settle_runtime_matches_expected_output_states() {
         &routed_settle,
         "settle",
         vec![
-            Expr::bytes(player_contract.script[..player_layout.start].to_vec()),
-            Expr::bytes(player_contract.script[player_layout.start + player_layout.len..].to_vec()),
+            Expr::int(player_layout.start as i64),
+            Expr::int((player_contract.script.len() - player_layout.start - player_layout.len) as i64),
         ],
     );
     let settle_prefix_len = fix.settle.prefix.len() as i64;
