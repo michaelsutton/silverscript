@@ -132,7 +132,7 @@ pub(super) fn compile_contract_impl<'i>(
     for _ in 0..32 {
         debug_recorder.record_contract_scope(&inline_lowered_contract, constructor_args, &structs)?;
 
-        let (script, state_layout) = compile_contract_script_iteration(
+        let (script, state_layout, state_field_end_offsets) = compile_contract_script_iteration(
             &lowered_contract,
             &lowered_constants,
             options,
@@ -151,6 +151,7 @@ pub(super) fn compile_contract_impl<'i>(
                 without_selector,
                 script,
                 state_layout,
+                state_field_end_offsets,
                 debug_info,
             ));
         }
@@ -164,6 +165,7 @@ pub(super) fn compile_contract_impl<'i>(
                 without_selector,
                 script,
                 state_layout,
+                state_field_end_offsets,
                 debug_info,
             ));
         }
@@ -182,13 +184,12 @@ fn compile_contract_script_iteration<'i>(
     without_selector: bool,
     structs: &StructRegistry,
     debug_recorder: &mut DebugRecorder<'i>,
-) -> Result<(Vec<u8>, CompiledStateLayout), CompilerError> {
-    let (_contract_fields, field_prolog_script) =
-        compile_contract_fields(&lowered_contract.fields, lowered_constants, options, script_size)?;
+) -> Result<(Vec<u8>, CompiledStateLayout, Vec<usize>), CompilerError> {
+    let compiled_fields = compile_contract_fields(&lowered_contract.fields, lowered_constants, options, script_size)?;
 
     let selector_prefix_len = if without_selector { 0 } else { 1 };
-    let contract_field_prefix_len = selector_prefix_len + field_prolog_script.len();
-    let state_layout = CompiledStateLayout { start: selector_prefix_len, len: field_prolog_script.len() };
+    let contract_field_prefix_len = selector_prefix_len + compiled_fields.script.len();
+    let state_layout = CompiledStateLayout { start: selector_prefix_len, len: compiled_fields.script.len() };
     let compiled_entrypoints = compile_entrypoint_scripts(
         lowered_contract,
         contract_field_prefix_len,
@@ -198,8 +199,8 @@ fn compile_contract_script_iteration<'i>(
         script_size,
         debug_recorder,
     )?;
-    let script = build_contract_script(debug_recorder, without_selector, &field_prolog_script, &compiled_entrypoints)?;
-    Ok((script, state_layout))
+    let script = build_contract_script(debug_recorder, without_selector, &compiled_fields.script, &compiled_entrypoints)?;
+    Ok((script, state_layout, compiled_fields.end_offsets))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -286,6 +287,7 @@ fn build_compiled_contract<'i>(
     without_selector: bool,
     script: Vec<u8>,
     state_layout: CompiledStateLayout,
+    state_field_end_offsets: Vec<usize>,
     debug_info: Option<DebugInfo<'i>>,
 ) -> CompiledContract<'i> {
     CompiledContract {
@@ -296,6 +298,7 @@ fn build_compiled_contract<'i>(
         abi: function_abi_entries,
         without_selector,
         state_layout,
+        state_field_end_offsets,
         debug_info,
     }
 }
@@ -310,15 +313,20 @@ fn contract_uses_script_size<'i>(contract: &ContractAst<'i>) -> bool {
     contract.functions.iter().any(|func| func.body.iter().any(statement_uses_script_size))
 }
 
+struct CompiledContractFields {
+    script: Vec<u8>,
+    end_offsets: Vec<usize>,
+}
+
 fn compile_contract_fields<'i>(
     fields: &[ContractFieldAst<'i>],
     base_constants: &HashMap<String, Expr<'i>>,
     options: CompileOptions,
     script_size: Option<i64>,
-) -> Result<(HashMap<String, Expr<'i>>, Vec<u8>), CompilerError> {
-    let mut field_values = HashMap::new();
+) -> Result<CompiledContractFields, CompilerError> {
     let mut field_types = HashMap::new();
     let mut builder = script_builder();
+    let mut field_end_offsets = Vec::with_capacity(fields.len());
     let stack_bindings = StackBindings::default();
 
     for field in fields {
@@ -347,11 +355,11 @@ fn compile_contract_fields<'i>(
             )?;
         }
 
-        field_values.insert(field.name.clone(), resolved);
         field_types.insert(field.name.clone(), type_name);
+        field_end_offsets.push(builder.script().len());
     }
 
-    Ok((field_values, builder.drain()))
+    Ok(CompiledContractFields { script: builder.drain(), end_offsets: field_end_offsets })
 }
 
 fn statement_uses_script_size(stmt: &Statement<'_>) -> bool {

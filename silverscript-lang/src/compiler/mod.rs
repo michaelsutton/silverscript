@@ -102,6 +102,8 @@ pub struct CompiledContract<'i> {
     pub abi: Vec<FunctionAbiEntry>,
     pub without_selector: bool,
     pub state_layout: CompiledStateLayout,
+    /// End offsets of each encoded contract field, relative to `state_layout.start`.
+    pub state_field_end_offsets: Vec<usize>,
     pub debug_info: Option<DebugInfo<'i>>,
 }
 
@@ -183,6 +185,29 @@ impl<'i> CompiledContract<'i> {
     pub fn template_hash(&self) -> [u8; 32] {
         let state_end = self.state_layout.start + self.state_layout.len;
         crate::template::template_hash(&self.script[..self.state_layout.start], &self.script[state_end..])
+    }
+
+    /// Return a template cut that absorbs the first `field_count` state fields
+    /// into the fixed prefix.
+    pub fn template_parts_after_state_fields(&self, field_count: usize) -> Result<(&[u8], &[u8]), CompilerError> {
+        let absorbed_len = match field_count {
+            0 => 0,
+            count => *self.state_field_end_offsets.get(count - 1).ok_or_else(|| {
+                CompilerError::Unsupported(format!(
+                    "template cut absorbs {field_count} state fields, but contract has {}",
+                    self.state_field_end_offsets.len()
+                ))
+            })?,
+        };
+        let prefix_end = self.state_layout.start + absorbed_len;
+        let state_end = self.state_layout.start + self.state_layout.len;
+        Ok((&self.script[..prefix_end], &self.script[state_end..]))
+    }
+
+    /// Calculate the template hash for a cut after `field_count` state fields.
+    pub fn template_hash_after_state_fields(&self, field_count: usize) -> Result<[u8; 32], CompilerError> {
+        let (prefix, suffix) = self.template_parts_after_state_fields(field_count)?;
+        Ok(crate::template::template_hash(prefix, suffix))
     }
 
     pub fn build_sig_script(&self, function_name: &str, args: Vec<Expr<'i>>) -> Result<Vec<u8>, CompilerError> {

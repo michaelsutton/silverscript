@@ -8791,6 +8791,77 @@ fn template_hash_binds_prefix_suffix_boundary() {
 }
 
 #[test]
+fn template_cut_after_state_fields_tracks_compiled_push_boundaries() {
+    let source = r#"
+        contract Cut(
+            byte[1] tagArg,
+            byte[32] routeArg,
+            byte[76] payloadArg,
+            int balanceArg
+        ) {
+            byte[1] tag = tagArg;
+            byte[32] route = routeArg;
+            byte[76] payload = payloadArg;
+            int balance = balanceArg;
+
+            entrypoint function main() {
+                require(balance >= 0);
+            }
+
+            entrypoint function alternate() {
+                require(tag == 0x11);
+            }
+        }
+    "#;
+    let compile = |route: u8, balance: i64| {
+        compile_contract(
+            source,
+            &[vec![0x11_u8].into(), vec![route; 32].into(), vec![0x33_u8; 76].into(), Expr::int(balance)],
+            CompileOptions::default(),
+        )
+        .expect("contract compiles")
+    };
+
+    let compiled = compile(0x22, 7);
+    assert!(!compiled.without_selector);
+    assert_eq!(compiled.script[0], OpToAltStack);
+    let encoded_fields = [
+        script_builder().add_data_with_push_opcode(&[0x11]).unwrap().drain(),
+        script_builder().add_data_with_push_opcode(&[0x22; 32]).unwrap().drain(),
+        script_builder().add_data_with_push_opcode(&[0x33; 76]).unwrap().drain(),
+        script_builder().add_data_with_push_opcode(serialize_i64(7, Some(8)).unwrap().as_ref()).unwrap().drain(),
+    ];
+    let mut expected_end_offsets = Vec::new();
+    let mut encoded_state = Vec::new();
+    for field in encoded_fields {
+        encoded_state.extend(field);
+        expected_end_offsets.push(encoded_state.len());
+    }
+
+    assert_eq!(compiled.state_field_end_offsets, expected_end_offsets);
+    let state_end = compiled.state_layout.start + compiled.state_layout.len;
+    assert_eq!(&compiled.script[compiled.state_layout.start..state_end], encoded_state);
+
+    let absorbed_len = expected_end_offsets[1];
+    let (prefix, suffix) = compiled.template_parts_after_state_fields(2).expect("two-field cut exists");
+    assert_eq!(prefix, &compiled.script[..compiled.state_layout.start + absorbed_len]);
+    assert_eq!(suffix, &compiled.script[state_end..]);
+    assert_eq!(compiled.template_hash_after_state_fields(2).unwrap(), template_hash(prefix, suffix));
+
+    assert_ne!(
+        compiled.template_hash_after_state_fields(2).unwrap(),
+        compile(0x44, 7).template_hash_after_state_fields(2).unwrap(),
+        "absorbed route fields must affect the wider template hash"
+    );
+    assert_eq!(
+        compiled.template_hash_after_state_fields(2).unwrap(),
+        compile(0x22, 9).template_hash_after_state_fields(2).unwrap(),
+        "state after the cut must remain variable"
+    );
+    assert!(compiled.template_parts_after_state_fields(5).is_err());
+}
+
+#[test]
 fn executes_opcode_builtins_covenants() {
     let source = r#"
         contract Test() {
